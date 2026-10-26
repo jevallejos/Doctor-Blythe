@@ -168,9 +168,9 @@ async def bucle_stream_par(
     while not evento_apagado.is_set():
         try:
             if hasattr(exchange, "watch_order_book"):
-                ob = await exchange.watch_order_book(symbol, limit=25)
+                ob = await exchange.watch_order_book(symbol, limit=50)
             else:
-                ob = await exchange.fetch_order_book(symbol, limit=25)
+                ob = await exchange.fetch_order_book(symbol, limit=50)
                 await asyncio.sleep(cfg.INTERVALO_RADAR_SEG)
 
             ahora = time.time()

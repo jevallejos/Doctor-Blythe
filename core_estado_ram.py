@@ -301,10 +301,11 @@ class EstadoGlobalRAM:
             self.whitelist_pares[par] = PermisoParRAM(symbol=par)
             if par not in self.metricas_ticks:
                 self.metricas_ticks[par] = MetricaTick(symbol=par)
-        log_operativo(
-            f"[RAM SHIELD] O(1) Whitelist initialized with {len(cfg.PARES_CAMPEONES)} "
-            f"Alpha Champion pairs (+1 Macro Leader)."
-        )
+        if not (sys.argv and sys.argv[0] == "-c"):
+            log_operativo(
+                f"[RAM SHIELD] O(1) Whitelist initialized with {len(cfg.PARES_CAMPEONES)} "
+                f"Alpha Champion pairs (+1 Macro Leader)."
+            )
 
     @property
     def total_usdt(self) -> float:

@@ -127,7 +127,7 @@ class EjecutorSniperBybit:
         if cfg.es_modo_test() or exchange is None or not hasattr(exchange, "fetch_order_book"):
             return
         try:
-            ob = await exchange.fetch_order_book(symbol, limit=5)
+            ob = await exchange.fetch_order_book(symbol, limit=50)
             rad.RADAR_GLOBAL.procesar_instantanea_libro(symbol, ob, time.time())
         except Exception:
             pass
