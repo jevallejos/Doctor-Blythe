@@ -1,10 +1,12 @@
 """
 Level 4 DAG: Asynchronous Tri-Cortex Groq LPU Ensemble, Structural Anti-LUNA
-Collapse Filter, and Asymmetric Anti-Fragile Kelly Sizing Engine for
+Collapse Filter, and Asymmetric Anti-Fragile Kelly Sizing Engine with Outlier
+Convex Expansion (|Z| >= 8.0 -> gamma_outlier <= 1.15) for
 HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
 
+import math
 import os
 import time
 from typing import Tuple
@@ -19,10 +21,6 @@ load_dotenv()
 
 
 def evaluar_filtro_anti_luna(symbol: str, caida_pct: float, ofi: float) -> Tuple[bool, str]:
-    """
-    Deterministic structural anti-collapse guard (Anti-LUNA).
-    Vetoes pairs experiencing free-fall liquidation cascades (drop <= -5.5% and OFI <= -0.80).
-    """
     if caida_pct <= -0.055 and ofi <= -0.80:
         ram.ESTADO_GLOBAL.aplicar_matriz_direccional_lpu(
             symbol=symbol,
@@ -44,10 +42,6 @@ def evaluar_matriz_direccional_cuantitativa(
     ofi: float,
     hurst: float = 0.42,
 ) -> str:
-    """
-    Deterministic fallback directional matrix when LPU is offline or between cycles.
-    Switches to SHORT_ONLY on persistent bearish cascades and LONG_ONLY on strong squeezes.
-    """
     vetado, _ = evaluar_filtro_anti_luna(symbol, dp_pct, ofi)
     if vetado:
         return ram.MODO_DIRECCIONAL_VETO
@@ -70,11 +64,6 @@ def calcular_fraccion_kelly_antifragil(
     side: str = "LONG",
     symbol: str = "",
 ) -> float:
-    """
-    Terpsichora V1.0 Asymmetric & Anti-Fragile Kelly Sizing:
-    Rewards extreme V-bottom / exhausted-top dislocations with strong OFI absorption
-    and low Hurst persistence while respecting [KELLY_FRACCION_MIN, KELLY_FRACCION_MAX].
-    """
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
     dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
 
@@ -90,8 +79,8 @@ def calcular_fraccion_kelly_antifragil(
     ofi_abs = abs(float(ofi))
     h_val = max(0.15, min(0.80, float(hurst)))
 
-    exceso_z = max(0.0, z_abs - 2.60)
-    bono_conviccion = min(0.10, exceso_z * 0.028 + max(0.0, ofi_abs - 0.20) * 0.08)
+    exceso_z = max(0.0, z_abs - 2.50)
+    bono_conviccion = min(0.12, exceso_z * 0.028 + max(0.0, ofi_abs - 0.18) * 0.08)
     penalizacion_hurst = max(0.0, (h_val - 0.44) * 0.35)
 
     mult_ia = max(
@@ -111,7 +100,8 @@ def calcular_dimension_kelly(
     symbol: str = "",
 ) -> Tuple[float, float, float]:
     """
-    Returns (kelly_fraction, margin_usdt, notional_3x_usdt).
+    Returns (kelly_fraction, margin_usdt, notional_3x_usdt) with Moallemi-Wald
+    Outlier Convex Expansion (|Z| >= 8.0 and |OFI| >= 0.25 -> gamma_outlier <= 1.15).
     """
     frac = calcular_fraccion_kelly_antifragil(
         z_score=z_score,
@@ -120,8 +110,14 @@ def calcular_dimension_kelly(
         side=side,
         symbol=symbol,
     )
+    z_abs = abs(float(z_score))
+    ofi_abs = abs(float(ofi))
+    gamma_outlier = 1.0
+    if z_abs >= 8.0 and ofi_abs >= 0.25 and float(hurst) <= 0.485:
+        gamma_outlier = 1.0 + (0.15 * math.tanh((z_abs - 8.0) / 6.0))
+
     cap_utilizable = max(0.0, float(capital_libre_usdt) * (1.0 - cfg.MARGEN_SEGURIDAD_LIQUIDACION))
-    margen_usdt = round(float(capital_libre_usdt) * frac, 4)
+    margen_usdt = round(float(capital_libre_usdt) * frac * gamma_outlier, 4)
     if cap_utilizable > 0.0:
         margen_usdt = min(margen_usdt, round(cap_utilizable, 4))
     nocional_usdt = round(margen_usdt * float(cfg.APALANCAMIENTO_OPERATIVO), 4)
@@ -129,13 +125,6 @@ def calcular_dimension_kelly(
 
 
 class OrquestadorTriCortexLPU:
-    """
-    Asynchronous Groq LPU Pool (4 models) running 100% off the critical path:
-      - Cortex 1: Directional Matrix & Macro Regime Filter.
-      - Cortex 2: Bayesian Kelly Multiplier Calibration.
-      - Cortex 3: Post-Loss Forensic Quarantine.
-    """
-
     def __init__(self) -> None:
         self.api_key: str = os.environ.get("GROQ_API_KEY", "").strip()
         self.modelos_cortex1: Tuple[str, ...] = tuple(

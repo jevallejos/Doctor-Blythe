@@ -1,7 +1,7 @@
 """
-Level 6A DAG: 100% Passive Maker (Limit PostOnly) Execution Engine with
-Penny-Jump Quoting, Live L1 Book Refresh & 2-Step Smart Passive Re-Peg
-(0.65s / 1.40s), Early Queue Abort (0.80s), Minimum Fill Guard (<15%), and
+Level 6A DAG: Pure Moallemi-Stoikov Passive Maker (Limit PostOnly) Execution
+Engine with Zero-RTT Micro-Price Pre-Lead (0ms), 250ms Queue-Jump Re-Peg,
+Adverse L1 Queue Depletion Abort (<15% Q_L1), Minimum Fill Guard (<15%), and
 Pre-Validated Bybit V5 MarkPrice Stop-Loss Geometry (SEI-02) for
 HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
@@ -46,19 +46,29 @@ def calcular_precio_penny_jump(
     best_ask: float,
     tick_size: float,
     side: str,
+    micro_price: float = 0.0,
 ) -> float:
+    """
+    Moallemi-Stoikov Zero-RTT Pre-Lead Quoting (t = 0ms):
+    Steps 1 tick inside the spread when spread >= 2 ticks (or when Stoikov
+    micro-price leads the mid-price), strictly bounded by best_ask - tick_size
+    (LONG) or best_bid + tick_size (SHORT) to guarantee 100% PostOnly safety.
+    """
     t_size = max(1e-8, float(tick_size))
     spread = best_ask - best_bid
+    mid = 0.5 * (best_bid + best_ask)
     dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
 
     if dir_norm == "LONG":
-        if spread >= (t_size * 1.95):
+        pre_lead = (micro_price > (mid + 0.15 * spread)) if micro_price > 0.0 else False
+        if spread >= (t_size * 1.95) or ( pre_lead and spread >= (t_size * 1.50) ):
             candidato = min(best_ask - t_size, best_bid + (cfg.OFFSET_PENNY_JUMP_TICKS * t_size))
         else:
             candidato = best_bid
         return cuantizar_tick(candidato, t_size, modo="floor")
 
-    if spread >= (t_size * 1.95):
+    pre_lead_s = (micro_price < (mid - 0.15 * spread)) if micro_price > 0.0 else False
+    if spread >= (t_size * 1.95) or ( pre_lead_s and spread >= (t_size * 1.50) ):
         candidato = max(best_bid + t_size, best_ask - (cfg.OFFSET_PENNY_JUMP_TICKS * t_size))
     else:
         candidato = best_ask
@@ -85,7 +95,7 @@ def calcular_niveles_sl_iniciales(
 
 class EjecutorSniperBybit:
     """
-    Zero-Adverse-Selection PostOnly Execution Engine for Terpsichora V1.0.
+    Moallemi-Stoikov Zero-Adverse-Selection PostOnly Execution Engine.
     """
 
     def __init__(self) -> None:
@@ -155,10 +165,20 @@ class EjecutorSniperBybit:
         try:
             best_bid = float(senal.get("bid") or senal.get("precio_ref") or 0.0)
             best_ask = float(senal.get("ask") or senal.get("precio_ref") or 0.0)
+            micro_px = float(senal.get("micro_price") or 0.0)
             if best_bid <= 0.0 or best_ask <= 0.0:
                 return None
 
-            precio_inicial = calcular_precio_penny_jump(best_bid, best_ask, tick_size, dir_norm)
+            m_snap = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
+            q_l1_init = float(
+                senal.get("bid_qty" if dir_norm == "LONG" else "ask_qty")
+                or (m_snap.bid_qty if (m_snap and dir_norm == "LONG") else (m_snap.ask_qty if m_snap else 0.0))
+                or 100.0
+            )
+
+            precio_inicial = calcular_precio_penny_jump(
+                best_bid, best_ask, tick_size, dir_norm, micro_price=micro_px
+            )
             precio_orden = precio_inicial
             z_val = float(senal.get("z_score", 0.0))
             ofi_val = float(senal.get("ofi", 0.0))
@@ -209,7 +229,7 @@ class EjecutorSniperBybit:
             repegs_hechos = 0
             ultimo_repeg_elapsed = 0.0
             ts_inicio = time.perf_counter()
-            paso_poll = min(0.10, max(0.02, ttl_max / 8.0))
+            paso_poll = min(0.08, max(0.02, ttl_max / 10.0))
 
             estado_orden = orden
             while (time.perf_counter() - ts_inicio) < ttl_max:
@@ -234,48 +254,75 @@ class EjecutorSniperBybit:
                         break
 
                 elapsed = time.perf_counter() - ts_inicio
-                if permitir_repeg and filled_actual <= 0.0 and elapsed >= cfg.REPEG_PASIVO_ENTRADA_SEG:
+                if permitir_repeg and filled_actual <= 0.0 and elapsed >= 0.25:
                     await self._refrescar_punta_libro_en_cola(exchange, symbol)
 
                 ahora_wall = time.time()
                 m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
                 if m_live is not None and filled_actual <= 0.0 and permitir_repeg:
-                    if elapsed >= cfg.EARLY_QUEUE_ABORT_SEG and not fue_cancelada_postonly:
-                        veto_btc_activo = (
-                            (dir_norm == "LONG" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_long_hasta)
-                            or (dir_norm == "SHORT" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_short_hasta)
+                    q_l1_now = m_live.bid_qty if dir_norm == "LONG" else m_live.ask_qty
+                    erosion_adversa = (
+                        q_l1_init > 0.0
+                        and q_l1_now > 0.0
+                        and (q_l1_now / q_l1_init) < 0.15
+                        and (
+                            (dir_norm == "LONG" and m_live.ofi_profundo <= -0.10)
+                            or (dir_norm == "SHORT" and m_live.ofi_profundo >= 0.10)
                         )
-                        cola_toxica = (
-                            m_live.hurst > cfg.HURST_TECHO_DURO_ABSOLUTO
-                            or veto_btc_activo
-                            or (dir_norm == "LONG" and m_live.ofi_profundo <= -0.25)
-                            or (dir_norm == "SHORT" and m_live.ofi_profundo >= 0.25)
-                        )
-                        if cola_toxica:
-                            try:
-                                await exchange.cancel_order(orden_id, symbol)
-                            except Exception:
-                                pass
-                            self.disparos_abortados_cola += 1
-                            ram.log_operativo(
-                                f"{etiqueta_log} [EARLY QUEUE ABORT] {symbol} order cancelled at "
-                                f"{elapsed:.2f}s due to adverse queue shift (H={m_live.hurst:.2f}, "
-                                f"OFI={m_live.ofi_profundo:+.2f})."
-                            )
-                            return None
-
-                    listo_repeg = fue_cancelada_postonly or (
-                        elapsed >= cfg.REPEG_PASIVO_ENTRADA_SEG
-                        and (elapsed - ultimo_repeg_elapsed) >= cfg.REPEG_PASIVO_ENTRADA_SEG
                     )
-                    if repegs_hechos < 2 and listo_repeg:
-                        nuevo_px = calcular_precio_penny_jump(
-                            m_live.bid, m_live.ask, tick_size, dir_norm
+                    veto_btc_activo = (
+                        (dir_norm == "LONG" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_long_hasta)
+                        or (dir_norm == "SHORT" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_short_hasta)
+                    )
+                    cola_toxica = (
+                        erosion_adversa
+                        or (
+                            elapsed >= cfg.EARLY_QUEUE_ABORT_SEG
+                            and (
+                                m_live.hurst > cfg.HURST_TECHO_DURO_ABSOLUTO
+                                or veto_btc_activo
+                                or (dir_norm == "LONG" and m_live.ofi_profundo <= -0.25)
+                                or (dir_norm == "SHORT" and m_live.ofi_profundo >= 0.25)
+                            )
                         )
+                    )
+                    if cola_toxica and not fue_cancelada_postonly:
+                        try:
+                            await exchange.cancel_order(orden_id, symbol)
+                        except Exception:
+                            pass
+                        self.disparos_abortados_cola += 1
+                        tag_ab = "[MOALLEMI EARLY-ABORT]" if erosion_adversa else "[EARLY QUEUE ABORT]"
+                        ram.log_operativo(
+                            f"{etiqueta_log} {tag_ab} {symbol} order cancelled at "
+                            f"{elapsed:.2f}s due to adverse queue erosion/shift "
+                            f"(Q_L1={q_l1_now:.1f}/{q_l1_init:.1f}, H={m_live.hurst:.2f}, OFI={m_live.ofi_profundo:+.2f})."
+                        )
+                        return None
+
+                    cola_enterrada = (
+                        q_l1_init > 0.0
+                        and q_l1_now > (q_l1_init * 2.4)
+                        and (m_live.ask - m_live.bid) >= (tick_size * 1.95)
+                    )
+                    listo_jump_250ms = fue_cancelada_postonly or (
+                        elapsed >= 0.25
+                        and (elapsed - ultimo_repeg_elapsed) >= 0.25
+                    )
+                    if repegs_hechos < 2 and listo_jump_250ms:
+                        nuevo_px = calcular_precio_penny_jump(
+                            m_live.bid, m_live.ask, tick_size, dir_norm, micro_price=m_live.micro_price
+                        )
+                        if cola_enterrada and nuevo_px == precio_orden:
+                            if dir_norm == "LONG" and (m_live.ask - precio_orden) >= (tick_size * 1.95):
+                                nuevo_px = cuantizar_tick(precio_orden + tick_size, tick_size, modo="floor")
+                            elif dir_norm == "SHORT" and (precio_orden - m_live.bid) >= (tick_size * 1.95):
+                                nuevo_px = cuantizar_tick(precio_orden - tick_size, tick_size, modo="ceil")
+
                         drift_pct = abs(nuevo_px - precio_inicial) / precio_inicial if precio_inicial > 0.0 else 0.0
                         favorable_escape = (
-                            (dir_norm == "LONG" and nuevo_px > precio_orden and m_live.ofi_profundo >= (cfg.OFI_MIN_ENTRADA * 0.75))
-                            or (dir_norm == "SHORT" and nuevo_px < precio_orden and m_live.ofi_profundo <= (cfg.OFI_MAX_ENTRADA_SHORT * 0.75))
+                            (dir_norm == "LONG" and nuevo_px > precio_orden and m_live.ofi_profundo >= (cfg.OFI_MIN_ENTRADA * 0.70))
+                            or (dir_norm == "SHORT" and nuevo_px < precio_orden and m_live.ofi_profundo <= (cfg.OFI_MAX_ENTRADA_SHORT * 0.70))
                         )
                         if favorable_escape and 0.0 < drift_pct <= cfg.REPEG_DRIFT_MAX_PCT:
                             try:
@@ -292,12 +339,13 @@ class EjecutorSniperBybit:
                                 orden_id = str(nueva_orden.get("id", orden_id))
                                 precio_orden = nuevo_px
                                 estado_orden = nueva_orden
+                                q_l1_init = max(1.0, q_l1_now)
                                 repegs_hechos += 1
                                 ultimo_repeg_elapsed = elapsed
                                 self.disparos_repeg_ejecutados += 1
                                 ram.log_operativo(
-                                    f"[PASSIVE ALIGN {elapsed:.1f}S] {symbol} {dir_norm} re-pegged step #{repegs_hechos} "
-                                    f"to {nuevo_px} (OFI={m_live.ofi_profundo:+.2f} | Order {orden_id})."
+                                    f"[MOALLEMI QUEUE-JUMP 250ms] {symbol} {dir_norm} re-pegged step #{repegs_hechos} "
+                                    f"to {nuevo_px} at {elapsed:.2f}s (OFI={m_live.ofi_profundo:+.2f} | Order {orden_id})."
                                 )
                             except Exception:
                                 repegs_hechos = 2

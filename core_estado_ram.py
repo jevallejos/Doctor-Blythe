@@ -186,6 +186,7 @@ class PosicionActiva:
     volatilidad_bv_entrada: float = cfg.VOLATILIDAD_BV_PISO_MIN
     percentil_entrada: float = 0.50
     latencia_rtt_ms: float = 0.0
+    lambda_wald: float = 0.0
     trayectoria_pnl: Dict[str, float] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self) -> None:

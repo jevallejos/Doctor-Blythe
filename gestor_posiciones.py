@@ -1,13 +1,14 @@
 """
-Level 6B DAG: Abraham Wald SPRT Optimal Stopping Exit Governor, Tick-Quantized
-Net-of-Fee Zero-Loss Floor (SCAR-LOCK-14), Terpsichora Active Maker Chase
-50/50 & 100% Harvest Ratchet, 100% Maker Scratch Custody, Startup Orphan
-Reconciler, and Live CLI HUD (verbot) for HFT Doctor Blythe Engine -
-Production Baseline Terpsichora V1.0.
+Level 6B DAG: Pure Single-Ticket Moallemi-Wald SPRT Optimal Stopping Exit
+Governor, Hyperbolic Convex MFE Ratchet kappa(MFE_t), Tick-Quantized Net-of-Fee
+Zero-Loss Floor (SCAR-LOCK-14), +0.11% Early Break-Even Shield, 18.0s Passive
+Maker Scratch, Startup Orphan Reconciler, and Colorized Live CLI HUD (verbot)
+for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from typing import Any, Dict, Optional
 
@@ -47,18 +48,37 @@ def calcular_piso_be_maker(
     return techo
 
 
+def calcular_kappa_convexo_wald(mfe_pct: float) -> float:
+    """
+    Hyperbolic Convex Ratchet Retention Factor kappa(MFE_t) in [0.35, 0.78]:
+      - At MFE = +0.22%, retains 35% of MFE (wide breathing room for +1%..+8% runners).
+      - As MFE expands above +0.45%..+1.00%, tightens smoothly up to 78% of MFE.
+    """
+    exceso = max(0.0, float(mfe_pct) - float(cfg.COSECHA_TRIZ_ACTIVACION_PCT))
+    return round(0.35 + (0.43 * math.tanh(exceso / 0.0045)), 4)
+
+
 def calcular_lambda_wald_sprt(
     pnl_pct: float,
     mfe_pct: float,
     ofi_5s: float,
     edad_seg: float,
+    lambda_prev: float = 0.0,
+    vol_bv: float = cfg.VOLATILIDAD_BV_PISO_MIN,
+    hurst: float = 0.42,
 ) -> float:
-    impulso_pnl = (pnl_pct - 0.0004) * 950.0
-    impulso_ofi = ofi_5s * 3.8
-    decaimiento_tiempo = max(0.0, (edad_seg - 15.0) * 0.065)
-    retroceso_mfe = max(0.0, (mfe_pct - pnl_pct) * 650.0)
-    val = impulso_pnl + impulso_ofi - decaimiento_tiempo - retroceso_mfe
-    return round(max(-4.00, min(4.00, val)), 2)
+    """
+    Autoregressive Abraham Wald Sequential Probability Ratio Test (SPRT) Log-Likelihood:
+      Lambda_t = clip(0.86 * Lambda_{t-1} + dLambda_t, -5.0, +5.0)
+    """
+    sigma = max(float(vol_bv or cfg.VOLATILIDAD_BV_PISO_MIN), 0.00045)
+    ofi_term = float(ofi_5s) / 0.35
+    ret_term = (float(pnl_pct) - (0.55 * float(mfe_pct))) / sigma
+    hurst_drag = 0.14 * max(0.0, float(hurst) - 0.48) * math.sqrt(max(0.0, float(edad_seg)) / 18.0)
+    time_drag = max(0.0, (float(edad_seg) - 20.0) * 0.035)
+    d_lambda = ofi_term + ret_term - hurst_drag - time_drag
+    val = (0.86 * float(lambda_prev)) + d_lambda
+    return round(max(-5.00, min(5.00, val)), 2)
 
 
 def _es_error_posicion_cerrada_bybit(exc: Exception) -> bool:
@@ -74,7 +94,7 @@ def _es_error_posicion_cerrada_bybit(exc: Exception) -> bool:
 
 class GestorPosicionesChronosTriz:
     """
-    Terpsichora V1.0 Position Lifecycle & Active Maker Harvest Governor.
+    Pure Single-Ticket Moallemi-Wald Position Lifecycle & Convex Ratchet Governor.
     """
 
     def __init__(self) -> None:
@@ -200,10 +220,9 @@ class GestorPosicionesChronosTriz:
         else:
             self.cierres_taker += 1
 
+        # Pure Moallemi-Wald Rule: 0s cooldown after WIN to harvest consecutive cascades!
         if pnl_neto_usdt > 0.0:
             etiqueta = "[WIN]"
-            cd_seg = float(cfg.obtener_aux("COOLDOWN_POST_CIERRE_GANADOR_SEG", 25.0))
-            ram.ESTADO_GLOBAL.activar_cooldown_par(pos.symbol, cd_seg, motivo="WIN_COOLDOWN")
         elif "SCRATCH" in motivo.upper():
             etiqueta = "[SCRATCH]"
             cd_seg = float(cfg.obtener_aux("COOLDOWN_MAKER_SCRATCH_18S", 75.0))
@@ -522,6 +541,19 @@ class GestorPosicionesChronosTriz:
         edad = ts_now - pos.timestamp_apertura
         pnl_pct = pos.actualizar_excursion(precio_actual, ts_now)
         ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
+        m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(pos.symbol)
+        h_live = m_live.hurst if m_live is not None else pos.hurst_entrada
+
+        pos.lambda_wald = calcular_lambda_wald_sprt(
+            pnl_pct=pnl_pct,
+            mfe_pct=pos.max_pnl_pct_alcanzado,
+            ofi_5s=ofi_5s,
+            edad_seg=edad,
+            lambda_prev=pos.lambda_wald,
+            vol_bv=pos.volatilidad_bv_entrada,
+            hurst=h_live,
+        )
+        lambda_w = pos.lambda_wald
 
         if edad >= cfg.TIEMPO_MAX_HOLD_SEG:
             ram.log_operativo(
@@ -547,6 +579,7 @@ class GestorPosicionesChronosTriz:
         umbral_cosecha = float(ctrl.get("w3_tp_maker_pct", cfg.COSECHA_TRIZ_ACTIVACION_PCT))
         umbral_stall = float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT))
 
+        # 1. Early Break-Even Shield at +0.11% MFE (Protects #101, #116, #131, #134)
         if pos.max_pnl_pct_alcanzado >= umbral_stall and not pos.trinquete_be_activo and pnl_pct < umbral_cosecha:
             piso_be_early = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
             pos.sl_interno = piso_be_early
@@ -557,66 +590,69 @@ class GestorPosicionesChronosTriz:
             )
             await self._actualizar_sl_bybit(exchange, pos, piso_be_early, tick_size=tick_size)
 
-        if pnl_pct >= umbral_cosecha and not pos.cosecha_activa and not pos.cosecha_50_ejecutada:
-            if not pos.trinquete_be_activo:
-                piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
-                pos.sl_interno = piso_be
-                pos.trinquete_be_activo = True
-                ram.log_operativo(
-                    f"[SNIPER] [SHIELD] {pos.symbol} Break-Even Ratchet armed: "
-                    f"SL {piso_be} (PnL {pnl_pct * 100:+.2f}%)"
+        # 2. Pure Single-Ticket Moallemi-Wald Convex Ratchet (or 50/50 Ladder when modo_escalera_50_50=True)
+        if pos.max_pnl_pct_alcanzado >= umbral_cosecha:
+            piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
+            kappa = calcular_kappa_convexo_wald(pos.max_pnl_pct_alcanzado)
+            if pos.direccion == "LONG":
+                piso_convexo = eje.cuantizar_tick(
+                    pos.precio_entrada * (1.0 + (kappa * pos.max_pnl_pct_alcanzado)),
+                    tick_size,
+                    modo="floor",
                 )
-                sl_srv_be = (
-                    eje.cuantizar_tick(
-                        pos.precio_entrada * (1.0 + float(cfg.obtener_aux("TRINQUETE_BE_BYBIT_OFFSET_PCT", 0.00060))),
-                        tick_size,
-                        modo="ceil",
-                    )
-                    if pos.direccion == "LONG"
-                    else eje.cuantizar_tick(
-                        pos.precio_entrada * (1.0 - float(cfg.obtener_aux("TRINQUETE_BE_BYBIT_OFFSET_PCT", 0.00060))),
-                        tick_size,
-                        modo="floor",
-                    )
+                nuevo_piso = max(piso_be, piso_convexo)
+                mejoro_piso = nuevo_piso > pos.sl_interno
+            else:
+                piso_convexo = eje.cuantizar_tick(
+                    pos.precio_entrada * (1.0 - (kappa * pos.max_pnl_pct_alcanzado)),
+                    tick_size,
+                    modo="ceil",
                 )
-                await self._actualizar_sl_bybit(exchange, pos, sl_srv_be, tick_size=tick_size)
+                nuevo_piso = min(piso_be, piso_convexo)
+                mejoro_piso = (pos.sl_interno <= 0.0) or (nuevo_piso < pos.sl_interno)
 
-            if modo_escalera_50_50 or cfg.COSECHA_TRIZ_FRACCION_LOTE < 0.99:
+            primera_activacion_wald = not pos.trailing_activo
+            if primera_activacion_wald or mejoro_piso:
+                pos.sl_interno = nuevo_piso
+                pos.trinquete_be_activo = True
+
+            if modo_escalera_50_50 and not pos.cosecha_50_ejecutada:
                 await self._ejecutar_cosecha_50_triz(
                     exchange, pos, best_bid, best_ask, tick_size, step_size
                 )
                 return None
-            else:
-                pos.cosecha_activa = True
-                pos.motivo_salida_pendiente = "MAKER_UNWIND"
-                ram.log_operativo(
-                    f"[SNIPER] [DIAMOND] {pos.symbol} Full-Maker Harvest 100% PostOnly executed @ "
-                    f"{best_ask if pos.direccion == 'LONG' else best_bid} "
-                    f"(PnL {pnl_pct * 100:+.2f}%, OFI={ofi_5s:+.2f}, age {int(edad)}s)"
-                )
-                return await self._iniciar_o_actualizar_salida_maker(
-                    exchange, pos, best_bid, best_ask, tick_size, "MAKER_UNWIND", ts_now
-                )
 
-        if pos.trinquete_be_activo and pnl_pct >= 0.0042:
-            if not pos.trailing_activo:
+            if primera_activacion_wald:
                 pos.trailing_activo = True
+                ram.log_operativo(
+                    f"[SNIPER] [SHIELD] {pos.symbol} Single-Ticket Wald Convex Ratchet armed (100% lot): "
+                    f"Zero-Loss Floor {pos.sl_interno} (PnL {pnl_pct * 100:+.2f}%, "
+                    f"MFE {pos.max_pnl_pct_alcanzado * 100:+.2f}%, kappa={kappa:.2f}, Lambda={lambda_w:+.2f})"
+                )
+                await self._actualizar_sl_bybit(exchange, pos, pos.sl_interno, tick_size=tick_size)
+
+            if pos.max_pnl_pct_alcanzado >= 0.0042 and pnl_pct >= 0.0042:
                 ram.log_operativo(f"[SNIPER] {pos.symbol} Trailing Stop activated (PnL {pnl_pct * 100:+.2f}%)")
-            p_trail = (
-                eje.cuantizar_tick(pos.precio_entrada * (1.0 + (pos.max_pnl_pct_alcanzado * 0.65)), tick_size)
-                if pos.direccion == "LONG"
-                else eje.cuantizar_tick(pos.precio_entrada * (1.0 - (pos.max_pnl_pct_alcanzado * 0.65)), tick_size)
+
+            flujo_agotado_cresta = (
+                (pos.max_pnl_pct_alcanzado >= 0.0042 and (pnl_pct <= (pos.max_pnl_pct_alcanzado * 0.72) or ofi_5s <= -0.10))
+                or (edad >= 20.0 and (lambda_w <= -0.25 or ofi_5s <= -0.12))
+                or (pnl_pct <= (kappa * pos.max_pnl_pct_alcanzado))
             )
-            if (pos.direccion == "LONG" and p_trail > pos.sl_interno) or (
-                pos.direccion == "SHORT" and p_trail < pos.sl_interno
-            ):
-                pos.sl_interno = p_trail
-            if pnl_pct <= (pos.max_pnl_pct_alcanzado * 0.72) or ofi_5s <= -0.10:
+            if flujo_agotado_cresta:
+                pos.cosecha_activa = True
+                pos.motivo_salida_pendiente = "TRAILING_RATCHET_MAKER"
+                ram.log_operativo(
+                    f"[WALD-SPRT CREST] {pos.symbol} 100% Single-Ticket exit on flow exhaustion @ "
+                    f"{best_ask if pos.direccion == 'LONG' else best_bid} "
+                    f"(PnL {pnl_pct * 100:+.2f}%, MFE {pos.max_pnl_pct_alcanzado * 100:+.2f}%, "
+                    f"kappa={kappa:.2f}, Lambda={lambda_w:+.2f})"
+                )
                 return await self._iniciar_o_actualizar_salida_maker(
                     exchange, pos, best_bid, best_ask, tick_size, "TRAILING_RATCHET_MAKER", ts_now
                 )
 
-        lambda_w = calcular_lambda_wald_sprt(pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, edad)
+        # 3. Phase 2 Stall Harvest (16s+) when MFE reached +0.11%..+0.21% and momentum stalls
         if edad >= 16.0 and pnl_pct >= umbral_stall and (lambda_w <= 0.15 or ofi_5s <= 0.08):
             if not pos.trinquete_be_activo:
                 piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
@@ -635,6 +671,7 @@ class GestorPosicionesChronosTriz:
                 exchange, pos, best_bid, best_ask, tick_size, "MAKER_UNWIND", ts_now
             )
 
+        # 4. Pre-Escape Passive Evacuation at 72s
         if edad >= float(cfg.obtener_aux("PRE_ESCAPE_MAKER_SEG", 72.0)):
             motivo_72s = (
                 "MAKER_UNWIND"
@@ -651,6 +688,7 @@ class GestorPosicionesChronosTriz:
                 exchange, pos, best_bid, best_ask, tick_size, motivo_72s, ts_now
             )
 
+        # 5. Law 2 (RF-18): 18.0s Passive Maker-Scratch on Dead Fills
         t_scratch = float(cfg.obtener_aux("MAKER_SCRATCH_TIEMPO_SEG", 18.0))
         ofi_adv = float(cfg.obtener_aux("MAKER_SCRATCH_OFI_ADVERSO", -0.15))
         flujo_contra = (
@@ -686,7 +724,7 @@ class GestorPosicionesChronosTriz:
                 best_bid,
                 best_ask,
                 tick_size,
-                pos.motivo_salida_pendiente or "MAKER_UNWIND",
+                pos.motivo_salida_pendiente or "TRAILING_RATCHET_MAKER",
                 ts_now,
             )
 
@@ -769,6 +807,7 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
         ram.log_operativo(f"[RECONCILER] Warning during startup scan: {exc}")
     return procesadas
 
+
 # ==============================================================================
 # ANSI COLORIZER FOR LIVE CLI HUD (verbot) ? ZERO DISK CONTAMINATION
 # ==============================================================================
@@ -788,7 +827,6 @@ def colorear_linea_log_mobaxterm(linea: str) -> str:
     if not s:
         return ""
 
-    # 1. Wins, Approvals, Active Fills & Ready States -> Bright Green
     if (
         "[WIN]" in s
         or "[TARGET] Active" in s
@@ -798,7 +836,6 @@ def colorear_linea_log_mobaxterm(linea: str) -> str:
     ):
         return f"{_ANSI_BOLD_GREEN}{s}{_ANSI_RESET}"
 
-    # 2. Losses, Stop-Losses, Circuit Breakers & Errors -> Bright Red
     if (
         "[LOSS]" in s
         or "SL_INTERNO_CHRONOS" in s
@@ -811,18 +848,18 @@ def colorear_linea_log_mobaxterm(linea: str) -> str:
     ):
         return f"{_ANSI_BOLD_RED}{s}{_ANSI_RESET}"
 
-    # 3. Harvests, Break-Even Ratchets, Trailing & Passive Re-Pegs -> Bright Cyan
     if (
         "[DIAMOND]" in s
         or "[SHIELD]" in s
+        or "[WALD-SPRT CREST]" in s
         or "Break-Even Ratchet" in s
         or "Trailing Stop" in s
         or "Bybit server SL" in s
+        or "[MOALLEMI QUEUE-JUMP" in s
         or "[PASSIVE ALIGN" in s
     ):
         return f"{_ANSI_BOLD_CYAN}{s}{_ANSI_RESET}"
 
-    # 4. Radar Triggers & Order Shots -> Bright Magenta
     if (
         "[RADAR]" in s
         or "[SNIPER] Order " in s
@@ -830,10 +867,10 @@ def colorear_linea_log_mobaxterm(linea: str) -> str:
     ):
         return f"{_ANSI_BOLD_MAGENTA}{s}{_ANSI_RESET}"
 
-    # 5. Scratches, Queue Aborts, Unfilled Releases & Warnings -> Bright Yellow
     if (
         "[SCRATCH]" in s
         or "[MAKER-SCRATCH" in s
+        or "[MOALLEMI EARLY-ABORT]" in s
         or "[EARLY QUEUE ABORT]" in s
         or "[MIN FILL GUARD]" in s
         or "[PHANTOM" in s
@@ -843,14 +880,12 @@ def colorear_linea_log_mobaxterm(linea: str) -> str:
     ):
         return f"{_ANSI_BOLD_YELLOW}{s}{_ANSI_RESET}"
 
-    # 6. Black Box Panel Lines inside Log -> Cyan / Dynamic PnL
     if "+===" in s or "|  [BLACK BOX]" in s or "|  MAP:" in s or "|  Balance:" in s:
         return f"{_ANSI_BOLD_CYAN}{s}{_ANSI_RESET}"
     if "|  Total PnL:" in s:
         color_pnl = _ANSI_BOLD_RED if "Total PnL: -" in s else _ANSI_BOLD_GREEN
         return f"{color_pnl}{s}{_ANSI_RESET}"
 
-    # 7. Background LPU / Hot-Reload / Parity Sync -> Soft Cyan/Gray
     if (
         "[TRI-CORTEX" in s
         or "[HOT-RELOAD OOS]" in s
@@ -881,9 +916,9 @@ def imprimir_hud_verbot_cli(lineas_log: int = 18) -> None:
     print(f"{_ANSI_DIM_CYAN}{'-' * 82}{_ANSI_RESET}")
     print(
         f" {_ANSI_BOLD_GREEN}[WIN/FILL]{_ANSI_RESET} | "
-        f"{_ANSI_BOLD_CYAN}[BE/HARVEST/RE-PEG]{_ANSI_RESET} | "
+        f"{_ANSI_BOLD_CYAN}[WALD-CREST/BE/JUMP]{_ANSI_RESET} | "
         f"{_ANSI_BOLD_MAGENTA}[RADAR/ORDER]{_ANSI_RESET} | "
-        f"{_ANSI_BOLD_YELLOW}[SCRATCH/TTL]{_ANSI_RESET} | "
+        f"{_ANSI_BOLD_YELLOW}[SCRATCH/ABORT]{_ANSI_RESET} | "
         f"{_ANSI_BOLD_RED}[LOSS/SL/VETO]{_ANSI_RESET}"
     )
     print(f"{_ANSI_DIM_CYAN}{'-' * 82}{_ANSI_RESET}")
