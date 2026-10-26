@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # HFT DOCTOR BLYTHE ENGINE - PRODUCTION BASELINE TERPSICHORA V1.0
-# Low-Jitter Linux Infrastructure & Zero-Buffer Colorized CLI HUD (verbot)
+# Low-Jitter Linux Infrastructure & Native Python Colorized HUD (verbot)
 # ==============================================================================
 set -e
 
@@ -27,23 +27,19 @@ verbot() {
     fi
     (
         set +e
-        trap 'echo -e "
-[1;92m [OK] Live HUD closed safely (Doctor Blythe daemon continues running in background).[0m"; exit 0' INT TERM
-        cd "${repo_dir}" || exit 1
+        cd "${repo_dir}" || exit 0
         if [ "${1}" = "-s" ]; then
-            ./venv/bin/python -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=22)"
+            ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=22)"
         elif [ "${1}" = "-q" ]; then
-            ./venv/bin/python evaluador_cuantico_oos.py
+            ./venv/bin/python -u evaluador_cuantico_oos.py
         elif [ "${1}" = "-l" ]; then
-            ./venv/bin/python evaluador_cuantico_oos.py --lab
+            ./venv/bin/python -u evaluador_cuantico_oos.py --lab
         else
-            ./venv/bin/python -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=16)"
-            echo -e "[1;96m [STREAMING COLORIZED TELEMETRY (25Hz) - Press Ctrl+C to exit view without stopping bot][0m"
-            tail -n 5 -f "${repo_dir}/bot_hft.log" 2>/dev/null | ./venv/bin/python -u -c "import sys, signal, gestor_posiciones as gp; signal.signal(signal.SIGINT, lambda *_: sys.exit(0)); [print(gp.colorear_linea_log_mobaxterm(line), flush=True) for line in iter(sys.stdin.readline, '')]" 2>/dev/null
+            ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.seguir_log_en_vivo_cli(lineas_iniciales=16)"
         fi
     )
 }
 # === DOCTOR-BLYTHE CLI END ===
 EOF
 
-echo "[OK] Zero-Buffer Colorized Infrastructure & verbot CLI configured for Doctor Blythe V1.0"
+echo "[OK] Native Python Colorized verbot HUD configured for Doctor Blythe V1.0"

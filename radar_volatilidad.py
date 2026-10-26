@@ -169,9 +169,10 @@ def calcular_ofi_profundo(
             delta_a = -aq_p
 
         ofi_lvl = delta_b - delta_a
-        cap_lvl = bq_c + aq_c + bq_p + aq_p + 1e-9
+        flujo_activo = abs(delta_b) + abs(delta_a)
+        reg_liquidez = (bq_c + aq_c) * 0.035
         num += w * ofi_lvl
-        den += w * (cap_lvl * 0.5)
+        den += w * max(flujo_activo + reg_liquidez, 1e-9)
 
     if den <= 1e-9:
         return 0.0
@@ -392,9 +393,10 @@ class RadarVolatilidadHFT:
             est.bids_prev = bids
             est.asks_prev = asks
         elif top5_cambio:
-            ofi_inst = calcular_ofi_profundo(est.bids_prev, est.asks_prev, bids, asks)
+            ofi_raw = calcular_ofi_profundo(est.bids_prev, est.asks_prev, bids, asks)
             est.bids_prev = bids
             est.asks_prev = asks
+            ofi_inst = round((0.65 * ofi_raw) + (0.35 * est.ofi_ema_5s), 4) if abs(ofi_raw) < 0.08 else ofi_raw
             if ofi_inst >= cfg.OFI_MIN_ENTRADA:
                 est.ofi_ticks_pos += 1
                 est.ofi_ticks_neg = 0

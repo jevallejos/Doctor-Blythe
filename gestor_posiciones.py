@@ -892,6 +892,7 @@ def colorear_linea_log_mobaxterm(linea: str) -> str:
         or "[BLACK BOX 1:1]" in s
         or "[RECONCILER]" in s
         or "[QUANTUM OOS EVALUATOR]" in s
+        or "[RADAR LIVE 25Hz]" in s
     ):
         return f"{_ANSI_DIM_CYAN}{s}{_ANSI_RESET}"
 
@@ -930,6 +931,35 @@ def imprimir_hud_verbot_cli(lineas_log: int = 18) -> None:
     else:
         print(f" {_ANSI_BOLD_YELLOW}[INFO] bot_hft.log not yet created.{_ANSI_RESET}")
     print(f"{_ANSI_BOLD_CYAN}{'=' * 82}{_ANSI_RESET}")
+
+
+def seguir_log_en_vivo_cli(lineas_iniciales: int = 16) -> None:
+    imprimir_hud_verbot_cli(lineas_log=lineas_iniciales)
+    print(
+        f"{_ANSI_BOLD_CYAN} [STREAMING COLORIZED TELEMETRY (25Hz) - "
+        f"Press Ctrl+C to exit view without stopping bot]{_ANSI_RESET}",
+        flush=True,
+    )
+    ruta_log = cfg.obtener_ruta_archivo("ARCHIVO_LOG")
+    try:
+        while not ruta_log.exists():
+            time.sleep(0.2)
+        with open(ruta_log, mode="r", encoding="utf-8", errors="replace") as fh:
+            fh.seek(0, 2)
+            while True:
+                linea = fh.readline()
+                if linea:
+                    col = colorear_linea_log_mobaxterm(linea)
+                    if col:
+                        print(col, flush=True)
+                else:
+                    time.sleep(0.05)
+    except KeyboardInterrupt:
+        print(
+            f"\n{_ANSI_BOLD_GREEN} [OK] Live HUD closed safely "
+            f"(Doctor Blythe daemon continues running in background).{_ANSI_RESET}",
+            flush=True,
+        )
 
 
 def imprimir_radiografia_uta_cli() -> None:

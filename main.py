@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Level 7 DAG: Central 25.0 Hz Asynchronous WebSocket Orchestrator, Single-Instance
-Physical PID Lock, Bybit UTA Startup Auditor, Autonomous Hot-Reload Loop, and
-Atomic os.execv Auto-Respawn for HFT Doctor Blythe Engine -
-Production Baseline Terpsichora V1.0.
+Physical PID Lock, Bybit UTA Startup Auditor, 5.0s Live L2 Telemetry Pulse,
+Fault-Tolerant Maintenance Governor, and Atomic os.execv Auto-Respawn for
+HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
 
@@ -30,11 +30,6 @@ load_dotenv()
 
 
 class CerrojoInstanciaUnica:
-    """
-    Physical PID single-instance lock (.tribrain.lock) preventing split-brain
-    daemon collisions. Automatically routes to .tribrain_test.lock in test mode.
-    """
-
     def __init__(self, ruta_lock: Optional[pathlib.Path] = None) -> None:
         self.ruta: pathlib.Path = (
             ruta_lock if ruta_lock is not None else cfg.obtener_ruta_archivo("ARCHIVO_LOCK")
@@ -81,7 +76,7 @@ class CerrojoInstanciaUnica:
 
 def _capturar_mtimes_codigo() -> Dict[str, float]:
     mtimes: Dict[str, float] = {}
-    base = cfg.obtener_ruta_base()
+    base_dir = cfg.obtener_ruta_base()
     for nombre in (
         "config_parametros.py",
         "core_estado_ram.py",
@@ -94,7 +89,7 @@ def _capturar_mtimes_codigo() -> Dict[str, float]:
         "evaluador_cuantico_oos.py",
         "main.py",
     ):
-        p = base / nombre
+        p = base_dir / nombre
         if p.exists():
             try:
                 mtimes[nombre] = p.stat().st_mtime
@@ -218,68 +213,86 @@ async def bucle_gobernador_mantenimiento(
     evento_apagado: asyncio.Event,
     mtimes_iniciales: Dict[str, float],
 ) -> None:
-    ts_ultimo_panel = time.time()
-    ts_ultimo_lpu = 0.0
-    ts_ultimo_oos = 0.0
-    ts_ultimo_pulso_radar = time.time()
+    ts_ultimo_panel: float = time.time()
+    ts_ultimo_lpu: float = 0.0
+    ts_ultimo_oos: float = 0.0
+    ts_ultimo_pulso_radar: float = 0.0
 
     while not evento_apagado.is_set():
-        await asyncio.sleep(1.0)
-        ahora = time.time()
+        try:
+            await asyncio.sleep(1.0)
+            ahora = time.time()
 
-        ram.ESTADO_GLOBAL.procesar_cola_forense_15s(ahora)
+            ram.ESTADO_GLOBAL.procesar_cola_forense_15s(ahora)
 
-        if (ahora - ts_ultimo_lpu) >= 45.0:
-            ts_ultimo_lpu = ahora
-            await tri.ORQUESTADOR_TRICORTEX.sincronizar_matriz_direccional()
-            await tri.ORQUESTADOR_TRICORTEX.sincronizar_multiplicador_kelly()
+            if (ahora - ts_ultimo_lpu) >= 45.0:
+                ts_ultimo_lpu = ahora
+                await tri.ORQUESTADOR_TRICORTEX.sincronizar_matriz_direccional()
+                await tri.ORQUESTADOR_TRICORTEX.sincronizar_multiplicador_kelly()
 
-        if (ahora - ts_ultimo_oos) >= 30.0:
-            ts_ultimo_oos = ahora
-            recargado, _, aplicados = cfg.recargar_calibracion_oos_si_cambio()
-            if recargado:
-                ram.log_operativo(
-                    f"[HOT-RELOAD OOS] Autonomous parameters synchronized from calibracion_oos.json: "
-                    f"{aplicados} | Ctrl={ram.ESTADO_GLOBAL.controlador_autonomo}"
+            if (ahora - ts_ultimo_oos) >= 30.0:
+                ts_ultimo_oos = ahora
+                recargado, _, aplicados = cfg.recargar_calibracion_oos_si_cambio()
+                if recargado:
+                    ram.log_operativo(
+                        f"[HOT-RELOAD OOS] Autonomous parameters synchronized from calibracion_oos.json: "
+                        f"{aplicados} | Ctrl={ram.ESTADO_GLOBAL.controlador_autonomo}"
+                    )
+
+            if (ahora - ts_ultimo_pulso_radar) >= 5.0:
+                ts_ultimo_pulso_radar = ahora
+                m_btc = ram.ESTADO_GLOBAL.metricas_ticks.get(cfg.PAR_LIDER_MACRO)
+                btc_str = (
+                    f"BTC {m_btc.mid:.1f} (Z={m_btc.z_score:+.2f} OFI={m_btc.ofi_profundo:+.2f})"
+                    if (m_btc and m_btc.mid > 0.0)
+                    else "BTC warming"
                 )
+                activos = [
+                    ram.ESTADO_GLOBAL.metricas_ticks[p]
+                    for p in cfg.PARES_CAMPEONES
+                    if p in ram.ESTADO_GLOBAL.metricas_ticks and ram.ESTADO_GLOBAL.metricas_ticks[p].mid > 0.0
+                ]
+                if activos:
+                    ordenados = sorted(activos, key=lambda x: abs(x.z_score), reverse=True)
+                    top1 = ordenados[0]
+                    p1 = top1.symbol.split("/")[0]
+                    resumen_top = (
+                        f"{p1}@{top1.mid:.5g} Z={top1.z_score:+.2f} "
+                        f"DP={top1.dp_pct * 100:+.2f}% EMA={top1.ema900_dist_pct * 100:+.2f}% "
+                        f"OFI={top1.ofi_profundo:+.2f} H={top1.hurst:.2f}"
+                    )
+                    if len(ordenados) > 1:
+                        top2 = ordenados[1]
+                        p2 = top2.symbol.split("/")[0]
+                        resumen_top += f" | {p2} Z={top2.z_score:+.2f} OFI={top2.ofi_profundo:+.2f} H={top2.hurst:.2f}"
+                    ram.log_operativo(
+                        f"[RADAR LIVE 25Hz] {btc_str} | {resumen_top} | "
+                        f"Slots: {len(ram.ESTADO_GLOBAL.posiciones_activas)}/{cfg.SLOTS_CONCURRENTES_MAX}"
+                    )
 
-        if (ahora - ts_ultimo_pulso_radar) >= 15.0:
-            ts_ultimo_pulso_radar = ahora
-            m_btc = ram.ESTADO_GLOBAL.metricas_ticks.get(cfg.PAR_LIDER_MACRO)
-            btc_str = f"BTC Z={m_btc.z_score:+.2f} OFI={m_btc.ofi_profundo:+.2f}" if (m_btc and m_btc.mid > 0.0) else "BTC init"
-            activos = [
-                ram.ESTADO_GLOBAL.metricas_ticks[p]
-                for p in cfg.PARES_CAMPEONES
-                if p in ram.ESTADO_GLOBAL.metricas_ticks and ram.ESTADO_GLOBAL.metricas_ticks[p].mid > 0.0
-            ]
-            if activos:
-                top_p = max(activos, key=lambda x: abs(x.z_score))
-                par_corto = top_p.symbol.split("/")[0]
-                ram.log_operativo(
-                    f"[RADAR LIVE 25Hz] {btc_str} | Top Dislocation: {par_corto} "
-                    f"Z={top_p.z_score:+.2f} (DP={top_p.dp_pct * 100:+.2f}% | EMA900={top_p.ema900_dist_pct * 100:+.2f}% | "
-                    f"OFI={top_p.ofi_profundo:+.2f} | H={top_p.hurst:.2f}) | Open Slots: {len(ram.ESTADO_GLOBAL.posiciones_activas)}/{cfg.SLOTS_CONCURRENTES_MAX}"
-                )
+            if (ahora - ts_ultimo_panel) >= 300.0:
+                ts_ultimo_panel = ahora
+                await auditar_balance_uta_bybit(exchange, silencioso=True)
+                st.imprimir_panel_caja_negra()
 
-        if (ahora - ts_ultimo_panel) >= 300.0:
-            ts_ultimo_panel = ahora
-            await auditar_balance_uta_bybit(exchange, silencioso=True)
-            st.imprimir_panel_caja_negra()
-        tel.notificar_inicio_servicio(total_u, free_u, nocional_k, os.getpid())
-
-        if not ram.ESTADO_GLOBAL.posiciones_activas:
-            actuales = _capturar_mtimes_codigo()
-            if any(actuales.get(k, 0.0) > (v + 0.5) for k, v in mtimes_iniciales.items()):
-                ram.log_operativo(
-                    "[AUTO-RESPAWN] Updated Python bytecode detected on disk with 0 open positions: "
-                    "executing atomic os.execv reload..."
-                )
-                try:
-                    await exchange.close()
-                except Exception:
-                    pass
-                ram.cerrar_descriptores_log()
-                os.execv(sys.executable, [sys.executable] + sys.argv)
+            if not ram.ESTADO_GLOBAL.posiciones_activas:
+                actuales = _capturar_mtimes_codigo()
+                if any(actuales.get(k, 0.0) > (v + 0.5) for k, v in mtimes_iniciales.items()):
+                    ram.log_operativo(
+                        "[AUTO-RESPAWN] Updated Python bytecode detected on disk with 0 open positions: "
+                        "executing atomic os.execv reload..."
+                    )
+                    try:
+                        await exchange.close()
+                    except Exception:
+                        pass
+                    ram.cerrar_descriptores_log()
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            ram.log_operativo(f"[WARN] [GOVERNOR LOOP] {type(exc).__name__}: {exc}")
+            await asyncio.sleep(1.0)
 
 
 async def ejecutar_orquestador_principal() -> int:
