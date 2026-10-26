@@ -24,6 +24,7 @@ import escudo_tricortex as tri
 import gestor_posiciones as gp
 import radar_volatilidad as rad
 import stats_tracker as st
+import telemetria_telegram as tel
 
 load_dotenv()
 
@@ -245,6 +246,7 @@ async def bucle_gobernador_mantenimiento(
             ts_ultimo_panel = ahora
             await auditar_balance_uta_bybit(exchange, silencioso=True)
             st.imprimir_panel_caja_negra()
+        tel.notificar_inicio_servicio(total_u, free_u, nocional_k, os.getpid())
 
         if not ram.ESTADO_GLOBAL.posiciones_activas:
             actuales = _capturar_mtimes_codigo()
@@ -322,6 +324,7 @@ async def ejecutar_orquestador_principal() -> int:
             f"{', '.join(cfg.UNIVERSO_PARES_TOTAL)}"
         )
         st.imprimir_panel_caja_negra()
+        tel.notificar_inicio_servicio(total_u, free_u, nocional_k, os.getpid())
 
         mtimes_ini = _capturar_mtimes_codigo()
         tareas = [

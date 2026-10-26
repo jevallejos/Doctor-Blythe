@@ -1,17 +1,28 @@
 """
-Level 2 DAG: 1:1 Transactional Telegram Notifier with In-Memory Pending-Open
-Buffer, 12s Canonical Deduplication, and Zero-Spam Test Inbox for
+Level 2 DAG: 1:1 Transactional Telegram Notifier with Startup Service Alert,
+12s Canonical Deduplication, Status Icons, and Zero-Spam Test Inbox for
 HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
-import urllib.parse
 import urllib.request
 from typing import Any, Dict, List
 
+from dotenv import load_dotenv
+
 import config_parametros as cfg
+import core_estado_ram as ram
+
+load_dotenv()
+
+ICONO_VERDE: str = "\U0001f7e9"
+ICONO_ROJO: str = "\U0001f534"
+ICONO_AMARILLO: str = "\U0001f7e8"
+ICONO_DIAMANTE: str = "\U0001f48e"
+ICONO_COHETE: str = "\U0001f680"
 
 BUZON_TEST: List[Dict[str, Any]] = []
 _CACHE_DEDUP_12S: Dict[str, float] = {}
@@ -24,21 +35,68 @@ def _purgar_dedup(ahora: float) -> None:
         _CACHE_DEDUP_12S.pop(k, None)
 
 
+def _obtener_credenciales_telegram() -> tuple[str, str]:
+    load_dotenv(cfg.obtener_ruta_base() / ".env")
+    token = (
+        os.environ.get("TELEGRAM_BOT_TOKEN")
+        or os.environ.get("TELEGRAM_TOKEN")
+        or ""
+    ).strip()
+    chat_id = (
+        os.environ.get("TELEGRAM_CHAT_ID")
+        or os.environ.get("CHAT_ID")
+        or ""
+    ).strip()
+    return token, chat_id
+
+
 def _enviar_http_telegram(texto: str) -> bool:
     if cfg.es_modo_test() or cfg.MODO_PAPER_TRADING:
         return True
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    token, chat_id = _obtener_credenciales_telegram()
     if not token or not chat_id:
+        ram.log_operativo("[WARN] [TELEGRAM] Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in .env")
         return False
-    try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = urllib.parse.urlencode({"chat_id": chat_id, "text": texto}).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, method="POST")
-        with urllib.request.urlopen(req, timeout=3.5) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    body = json.dumps({"chat_id": chat_id, "text": texto}).encode("utf-8")
+    for intento in range(2):
+        try:
+            req = urllib.request.Request(
+                url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception as exc:
+            if intento == 1:
+                ram.log_operativo(f"[WARN] [TELEGRAM NET ERROR] {exc}")
+    return False
+
+
+def notificar_inicio_servicio(
+    total_usdt: float,
+    free_usdt: float,
+    nocional_usdt: float,
+    pid: int,
+) -> bool:
+    msg = (
+        f"{ICONO_COHETE} [DOCTOR-BLYTHE TERPSICHORA V1.0 ONLINE]\n"
+        f"PID: {pid} | Radar: {cfg.FRECUENCIA_RADAR_HZ:.1f}Hz (L2 orderbook.50)\n"
+        f"UTA Balance: {total_usdt:.4f} USDT (Free: {free_usdt:.4f} USDT)\n"
+        f"Notional 3x: ~{nocional_usdt:.2f} USDT | Champions: {len(cfg.PARES_CAMPEONES)}\n"
+        f"Z_HB: {cfg.Z_SCORE_UMBRAL_HIGH_BETA} | Z_T1: {cfg.Z_SCORE_UMBRAL_TIER1} | "
+        f"EarlyBE: +{cfg.COSECHA_ESTANCAMIENTO_MFE_PCT * 100:.2f}% | Harvest: +{cfg.COSECHA_TRIZ_ACTIVACION_PCT * 100:.2f}%"
+    )
+    if cfg.es_modo_test():
+        BUZON_TEST.append({"tipo": "BOOT", "symbol": "GLOBAL", "texto": msg})
+        return True
+    ok = _enviar_http_telegram(msg)
+    if ok:
+        ram.log_operativo("[TELEGRAM] Startup notification delivered successfully.")
+    return ok
 
 
 def notificar_apertura_confirmada(
@@ -62,9 +120,10 @@ def notificar_apertura_confirmada(
 
     nocional = round(abs(contratos * precio_entrada), 2)
     msg = (
-        f"[DOCTOR-BLYTHE V1.0] OPEN {dir_norm} {symbol}\n"
+        f"{ICONO_VERDE} [DOCTOR-BLYTHE V1.0] OPEN {dir_norm} {symbol}\n"
         f"Qty: {contratos} @ {precio_entrada} (~{nocional:.2f} USDT)\n"
-        f"SL: {sl_interno} | Kelly: {kelly_frac * 100:.0f}% | Z: {z_score:+.2f} | OFI: {ofi:+.2f}"
+        f"SL: {sl_interno} | Kelly: {kelly_frac * 100:.0f}% | Z: {z_score:+.2f} | OFI: {ofi:+.2f}\n"
+        f"ID: {orden_id}"
     )
     _APERTURAS_CONFIRMABLES[symbol] = {
         "symbol": symbol,
@@ -93,7 +152,7 @@ def notificar_cosecha_parcial(
         return False
     _CACHE_DEDUP_12S[clave] = ahora
     msg = (
-        f"[DOCTOR-BLYTHE V1.0] 50% TRIZ HARVEST {symbol}\n"
+        f"{ICONO_DIAMANTE} [DOCTOR-BLYTHE V1.0] 50% TRIZ HARVEST {symbol}\n"
         f"Closed: {contratos_cerrados} @ {precio_cosecha} ({pnl_pct * 100:+.2f}% | {pnl_usdt:+.4f} USDT)"
     )
     if cfg.es_modo_test():
@@ -124,16 +183,16 @@ def notificar_cierre_confirmado(
 
     if pnl_usdt > 0.0:
         tipo_ev = "CLOSE_WIN"
-        icono = "[WIN]"
+        icono = f"{ICONO_VERDE} [WIN]"
     elif "SCRATCH" in motivo.upper():
         tipo_ev = "CLOSE_SCRATCH"
-        icono = "[SCRATCH]"
+        icono = f"{ICONO_AMARILLO} [SCRATCH]"
     else:
         tipo_ev = "CLOSE_LOSS"
-        icono = "[LOSS]"
+        icono = f"{ICONO_ROJO} [LOSS]"
 
     msg = (
-        f"[DOCTOR-BLYTHE V1.0] {icono} CLOSE {dir_norm} {symbol} [{motivo}]\n"
+        f"{icono} [DOCTOR-BLYTHE V1.0] CLOSE {dir_norm} {symbol} [{motivo}]\n"
         f"{precio_entrada} -> {precio_salida} | {pnl_pct * 100:+.2f}% ({pnl_usdt:+.4f} USDT) in {int(duracion_seg)}s\n"
         f"UTA Balance: {balance_uta:.4f} USDT"
     )
