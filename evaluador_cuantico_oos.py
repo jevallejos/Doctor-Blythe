@@ -125,19 +125,19 @@ def ejecutar_calibracion_walk_forward_oos(
     pf = m72["profit_factor"]
 
     prior_kelly = 0.5500
-    prior_z_hb = -2.8300
-    prior_z_t1 = -2.5800
+    prior_z_hb = -2.5000
+    prior_z_t1 = -2.1500
     prior_scratch = 18.0
 
     if pf >= 1.15:
         obs_kelly = 0.5800
-        obs_z_hb = -2.7800
-        obs_z_t1 = -2.5300
-        obs_scratch = 22.0
+        obs_z_hb = -2.4500
+        obs_z_t1 = -2.1000
+        obs_scratch = 20.0
     elif pf < 0.85 and m72["total_trades"] >= 1:
         obs_kelly = 0.3500
-        obs_z_hb = -2.9500
-        obs_z_t1 = -2.7000
+        obs_z_hb = -2.6200
+        obs_z_t1 = -2.2500
         obs_scratch = 18.0
     else:
         obs_kelly = prior_kelly
@@ -226,8 +226,8 @@ def ejecutar_laboratorio_gemelo_digital_3456(escribir_disco: bool = True) -> Dic
         if ev.get("veredicto_oraculo_15s") == "FALSE_REJECTION_OPPORTUNITY_LOST"
     ]
 
-    grid_z_hb = (-2.75, -2.83, -2.92, -3.05)
-    grid_ofi = (0.14, 0.16, 0.19)
+    grid_z_hb = (-2.40, -2.50, -2.62, -2.75)
+    grid_ofi = (0.12, 0.13, 0.15)
     grid_hurst_s = (0.465, 0.475, 0.485)
     grid_tp = (0.0016, 0.0019, 0.0022, 0.0025)
     grid_stall = (0.0011, 0.0013)
@@ -255,7 +255,7 @@ def ejecutar_laboratorio_gemelo_digital_3456(escribir_disco: bool = True) -> Dic
                 pnl_sim += pnl_real * (0.85 if sc_t <= 22.0 else 1.0)
 
         bono_escudos = len(salvamentos) * 0.042
-        score = pnl_sim + bono_escudos - (abs(z_hb + 2.83) * 0.02)
+        score = pnl_sim + bono_escudos - (abs(z_hb + 2.50) * 0.02)
         if score > mejor_score:
             mejor_score = score
             mejor_combo = {
