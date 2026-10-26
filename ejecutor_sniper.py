@@ -1,8 +1,8 @@
 """
 Level 6A DAG: 100% Passive Maker (Limit PostOnly) Execution Engine with
-Penny-Jump Quoting, Terpsichora 1-Step Smart Passive Re-Peg (1.00s),
-Early Queue Abort (0.80s), Minimum Fill Guard (<15%), and Pre-Validated
-Bybit V5 MarkPrice Stop-Loss Geometry (SEI-02) for
+Penny-Jump Quoting, Live L1 Book Refresh & 2-Step Smart Passive Re-Peg
+(0.65s / 1.40s), Early Queue Abort (0.80s), Minimum Fill Guard (<15%), and
+Pre-Validated Bybit V5 MarkPrice Stop-Loss Geometry (SEI-02) for
 HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, Tuple
 import config_parametros as cfg
 import core_estado_ram as ram
 import escudo_tricortex as tri
+import radar_volatilidad as rad
 import telemetria_telegram as tel
 
 
@@ -46,11 +47,6 @@ def calcular_precio_penny_jump(
     tick_size: float,
     side: str,
 ) -> float:
-    """
-    Maker-First (PostOnly) Penny-Jump Quoting:
-    Steps 1 tick inside the spread when spread >= 2 ticks; otherwise joins
-    best_bid (LONG) or best_ask (SHORT) to guarantee zero PostOnly rejection.
-    """
     t_size = max(1e-8, float(tick_size))
     spread = best_ask - best_bid
     dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
@@ -74,9 +70,6 @@ def calcular_niveles_sl_iniciales(
     side: str,
     tick_size: float = 0.0001,
 ) -> Tuple[float, float]:
-    """
-    Returns (sl_interno, sl_bybit_server) quantized to tick_size.
-    """
     sl_int_pct = float(cfg.SL_INTERNO_PCT)
     sl_bybit_pct = float(cfg.obtener_aux("SL_EMERGENCIA_BYBIT_PCT", 0.0068))
     dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
@@ -130,6 +123,15 @@ class EjecutorSniperBybit:
         except Exception:
             return False
 
+    async def _refrescar_punta_libro_en_cola(self, exchange: Any, symbol: str) -> None:
+        if cfg.es_modo_test() or exchange is None or not hasattr(exchange, "fetch_order_book"):
+            return
+        try:
+            ob = await exchange.fetch_order_book(symbol, limit=5)
+            rad.RADAR_GLOBAL.procesar_instantanea_libro(symbol, ob, time.time())
+        except Exception:
+            pass
+
     async def ejecutar_disparo_maker(
         self,
         exchange: Any,
@@ -156,7 +158,8 @@ class EjecutorSniperBybit:
             if best_bid <= 0.0 or best_ask <= 0.0:
                 return None
 
-            precio_orden = calcular_precio_penny_jump(best_bid, best_ask, tick_size, dir_norm)
+            precio_inicial = calcular_precio_penny_jump(best_bid, best_ask, tick_size, dir_norm)
+            precio_orden = precio_inicial
             z_val = float(senal.get("z_score", 0.0))
             ofi_val = float(senal.get("ofi", 0.0))
             hurst_val = float(senal.get("hurst", 0.42))
@@ -203,7 +206,8 @@ class EjecutorSniperBybit:
                 and ttl_override is None
                 and ttl_max >= 1.50
             )
-            repeg_hecho = False
+            repegs_hechos = 0
+            ultimo_repeg_elapsed = 0.0
             ts_inicio = time.perf_counter()
             paso_poll = min(0.10, max(0.02, ttl_max / 8.0))
 
@@ -215,7 +219,7 @@ class EjecutorSniperBybit:
                     break
 
                 fue_cancelada_postonly = status_actual in ("canceled", "cancelled", "rejected", "expired")
-                if fue_cancelada_postonly and (not permitir_repeg or repeg_hecho or filled_actual > 0.0):
+                if fue_cancelada_postonly and (not permitir_repeg or repegs_hechos >= 2 or filled_actual > 0.0):
                     break
 
                 if not fue_cancelada_postonly:
@@ -226,10 +230,13 @@ class EjecutorSniperBybit:
                     if status_actual in ("closed", "filled") or filled_actual >= contratos:
                         break
                     fue_cancelada_postonly = status_actual in ("canceled", "cancelled", "rejected", "expired")
-                    if fue_cancelada_postonly and (not permitir_repeg or repeg_hecho or filled_actual > 0.0):
+                    if fue_cancelada_postonly and (not permitir_repeg or repegs_hechos >= 2 or filled_actual > 0.0):
                         break
 
                 elapsed = time.perf_counter() - ts_inicio
+                if permitir_repeg and filled_actual <= 0.0 and elapsed >= cfg.REPEG_PASIVO_ENTRADA_SEG:
+                    await self._refrescar_punta_libro_en_cola(exchange, symbol)
+
                 ahora_wall = time.time()
                 m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
                 if m_live is not None and filled_actual <= 0.0 and permitir_repeg:
@@ -257,14 +264,18 @@ class EjecutorSniperBybit:
                             )
                             return None
 
-                    if not repeg_hecho and (fue_cancelada_postonly or elapsed >= cfg.REPEG_PASIVO_ENTRADA_SEG):
+                    listo_repeg = fue_cancelada_postonly or (
+                        elapsed >= cfg.REPEG_PASIVO_ENTRADA_SEG
+                        and (elapsed - ultimo_repeg_elapsed) >= cfg.REPEG_PASIVO_ENTRADA_SEG
+                    )
+                    if repegs_hechos < 2 and listo_repeg:
                         nuevo_px = calcular_precio_penny_jump(
                             m_live.bid, m_live.ask, tick_size, dir_norm
                         )
-                        drift_pct = abs(nuevo_px - precio_orden) / precio_orden if precio_orden > 0.0 else 0.0
+                        drift_pct = abs(nuevo_px - precio_inicial) / precio_inicial if precio_inicial > 0.0 else 0.0
                         favorable_escape = (
-                            (dir_norm == "LONG" and nuevo_px > precio_orden and m_live.ofi_profundo >= cfg.OFI_MIN_ENTRADA)
-                            or (dir_norm == "SHORT" and nuevo_px < precio_orden and m_live.ofi_profundo <= cfg.OFI_MAX_ENTRADA_SHORT)
+                            (dir_norm == "LONG" and nuevo_px > precio_orden and m_live.ofi_profundo >= (cfg.OFI_MIN_ENTRADA * 0.75))
+                            or (dir_norm == "SHORT" and nuevo_px < precio_orden and m_live.ofi_profundo <= (cfg.OFI_MAX_ENTRADA_SHORT * 0.75))
                         )
                         if favorable_escape and 0.0 < drift_pct <= cfg.REPEG_DRIFT_MAX_PCT:
                             try:
@@ -281,14 +292,15 @@ class EjecutorSniperBybit:
                                 orden_id = str(nueva_orden.get("id", orden_id))
                                 precio_orden = nuevo_px
                                 estado_orden = nueva_orden
-                                repeg_hecho = True
+                                repegs_hechos += 1
+                                ultimo_repeg_elapsed = elapsed
                                 self.disparos_repeg_ejecutados += 1
                                 ram.log_operativo(
-                                    f"[PASSIVE ALIGN 1.0S] {symbol} {dir_norm} re-pegged 1 step to "
-                                    f"{nuevo_px} (OFI={m_live.ofi_profundo:+.2f} | Order {orden_id})."
+                                    f"[PASSIVE ALIGN {elapsed:.1f}S] {symbol} {dir_norm} re-pegged step #{repegs_hechos} "
+                                    f"to {nuevo_px} (OFI={m_live.ofi_profundo:+.2f} | Order {orden_id})."
                                 )
                             except Exception:
-                                repeg_hecho = True
+                                repegs_hechos = 2
                         elif fue_cancelada_postonly:
                             break
 
@@ -309,7 +321,7 @@ class EjecutorSniperBybit:
             if filled_final <= 0.0:
                 ram.log_operativo(
                     f"{etiqueta_log} Order on {symbol} unfilled after {ttl_max:.1f}s "
-                    f"(Zero Re-Quote): margin released."
+                    f"(RePegs={repegs_hechos}): margin released."
                 )
                 return None
 

@@ -1,8 +1,8 @@
 """
 Level 5 DAG: 25.0 Hz L2 Microstructural Radar, Bipower Variation Z-Score Engine,
-24-Hour Elastic Seasonality Curve, Immutable SCAR_BASE (SCAR-LOCK-00..18), and
-Terpsichora V1.0 Puppeteer Phase-Latched Envelope (1800 ms) for
-HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+24-Hour Elastic Seasonality Curve, Immutable SCAR_BASE (SCAR-LOCK-00..18),
+4.50s Puppeteer Phase-Latched Envelope, and Top-Rollover SHORT-SNIPER Capture
+for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
 
@@ -97,7 +97,8 @@ class VentanaZ:
         if self.precios:
             prev = self.precios[-1]
             ret = (p - prev) / prev if prev > 0.0 else 0.0
-            self.retornos.append(ret)
+            if abs(ret) > 1e-9:
+                self.retornos.append(ret)
         self.precios.append(p)
 
         alpha_fast = 2.0 / (cfg.EMA_RAPIDA_TICKS + 1.0)
@@ -125,11 +126,12 @@ class VentanaZ:
             ]
             media_bv = (math.pi / 2.0) * (sum(pares_bv) / len(pares_bv))
             sigma_tick = math.sqrt(max(0.0, media_bv))
-            self.volatilidad_bv = max(self.piso_volatilidad, sigma_tick)
+            sigma_horizonte = sigma_tick * math.sqrt(min(12.0, float(len(rets_activos))))
+            self.volatilidad_bv = max(self.piso_volatilidad, min(0.00110, sigma_horizonte))
         else:
             self.volatilidad_bv = max(self.piso_volatilidad, cfg.VOLATILIDAD_BV_PISO_MIN)
 
-        desviacion_compuesta = 0.65 * self.dp_pct + 0.35 * ((p - self.ema_rapida) / self.ema_rapida)
+        desviacion_compuesta = 0.72 * self.dp_pct + 0.28 * ((p - self.ema_rapida) / self.ema_rapida)
         self.z_score = round(desviacion_compuesta / self.volatilidad_bv, 4)
         return self.z_score, round(self.dp_pct, 6), round(self.volatilidad_bv, 6)
 
@@ -178,10 +180,6 @@ def calcular_ofi_profundo(
 
 
 def calcular_exponente_hurst(precios_activos: List[float], z_score_actual: float = 0.0) -> float:
-    """
-    Jump-Robust Active-Tick First-Order Autocorrelation Hurst Estimator over
-    the last 28 price transitions with Local 16-Tick De-Trending on Braking.
-    """
     cambios = [precios_activos[0]] if precios_activos else []
     for p in precios_activos[1:]:
         if abs(p - cambios[-1]) > 1e-12:
@@ -226,7 +224,12 @@ def calcular_exponente_hurst(precios_activos: List[float], z_score_actual: float
     return round(max(0.20, min(0.80, h_raw)), 4)
 
 
-def calcular_aceleracion_lyapunov(precios: List[float]) -> float:
+def calcular_aceleracion_lyapunov(precios: List[float], spread_pct: float = 0.0) -> float:
+    """
+    Tick-Aware Multi-Step Second-Order Price Kinematics (Lyapunov Acceleration/Braking).
+    Suppresses single-tick micro-noise on low-priced assets (ZEREBRO/WAL) while
+    catching genuine multi-tick waterfalls.
+    """
     if len(precios) < 5:
         return 0.0
     ventana = precios[-max(5, cfg.LYAPUNOV_VENTANA_TICKS):]
@@ -235,7 +238,11 @@ def calcular_aceleracion_lyapunov(precios: List[float]) -> float:
         return 0.0
     v1 = (p_mid - p0) / p0
     v2 = (p_end - p_mid) / p_mid
-    return round(v2 - v1, 6)
+    acel = v2 - v1
+    # Suppress single-tick micro-noise in LONG when v2 is within 1.25x spread
+    if acel < 0.0 and v2 < 0.0 and spread_pct > 0.0 and abs(v2) <= (spread_pct * 1.15):
+        return round(max(acel, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO * 0.5), 6)
+    return round(acel, 6)
 
 
 class EstadoRadarPar:
@@ -256,13 +263,17 @@ class EstadoRadarPar:
         self.ultimo_hurst_alto_short_ts: float = 0.0
         self.px_squeeze_max: float = 0.0
         self.ultimo_rally_squeeze_ts: float = 0.0
+        self.vigilancia_short_hasta_ts: float = 0.0
+        self.max_z_pump_short: float = 0.0
+        self.max_ema_pump_short: float = 0.0
+        self.px_pico_pump_short: float = 0.0
 
 
 class RadarVolatilidadHFT:
     """
-    Terpsichora V1.0 L2 Microstructural Radar with 1800ms Puppeteer Phase-Latched
-    Envelope, Strict Sign Coherence (RF-06), Minimum EMA900 Dislocation Law, and
-    12s Macro BTC-Veto Cooldown.
+    Terpsichora V1.0 L2 Microstructural Radar with 4.50s Puppeteer Phase-Latched
+    Envelope, Top-Rollover SHORT-SNIPER Capture, Strict Sign Coherence (RF-06),
+    and 12s Macro BTC-Veto Cooldown.
     """
 
     def __init__(self) -> None:
@@ -401,7 +412,7 @@ class RadarVolatilidadHFT:
             est.ultimo_pulso_toxico_ts = ahora
 
         hurst = calcular_exponente_hurst(list(est.precios_activos), z_score_actual=z_score)
-        acel_lyap = calcular_aceleracion_lyapunov(list(est.precios_activos))
+        acel_lyap = calcular_aceleracion_lyapunov(list(est.precios_activos), spread_pct=spread_pct)
         tox_inst = min(
             1.0,
             (spread_pct / max(1e-6, cfg.SPREAD_MAX_PERMITIDO_PCT)) * 0.30
@@ -475,15 +486,15 @@ class RadarVolatilidadHFT:
         ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
 
         # ======================================================================
-        # PATH A: TERPSICHORA V1.0 PHASE-LATCHED LONG V-BOTTOM ENGINE
+        # PATH A: TERPSICHORA V1.0 PHASE-LATCHED LONG V-BOTTOM ENGINE (4.50s)
         # ======================================================================
         z_umbral_long = cfg.Z_SCORE_UMBRAL_HIGH_BETA if es_hb else cfg.Z_SCORE_UMBRAL_TIER1
         dp_min_long = cfg.DP_MIN_EXCURSION_LONG_HB if es_hb else cfg.DP_MIN_EXCURSION_LONG_T1
         ema_piso_base = cfg.EMA900_DISTANCIA_MIN_LONG_HB if es_hb else cfg.EMA900_DISTANCIA_MIN_LONG_T1
-        recorrido_req = min(dp_min_long, ema_piso_base * 0.80)
-        piso_anti_ruido = -0.0022 if es_hb else -0.0018
+        recorrido_req = min(dp_min_long, ema_piso_base * 0.85)
+        piso_anti_ruido = -0.0018 if es_hb else -0.0014
         h_cap_long = cfg.HURST_MAX_ENTRADA_LONG if es_hb else cfg.HURST_MAX_ENTRADA_LONG_T1
-        ofi_min_long = max(cfg.OFI_MIN_ENTRADA, float(ctrl.get("w1_ofi_long", cfg.OFI_MIN_ENTRADA)))
+        ofi_min_long = max(cfg.OFI_MIN_ENTRADA, min(0.18, float(ctrl.get("w1_ofi_long", cfg.OFI_MIN_ENTRADA))))
 
         if ema900_dist_pct > cfg.EMA900_MAX_SOBRECOMPRA_LONG and z_score < 0.0:
             return False, "ANTI_PUMP_TOP_VETO", None
@@ -508,10 +519,10 @@ class RadarVolatilidadHFT:
             metrica.phase_latched
             and metrica.phase_latch_dir == "LONG"
             and (ahora - metrica.phase_latch_ts) <= cfg.PHASE_LATCH_VENTANA_SEG
-            and z_score < 0.0
-            and dp_pct <= (dp_min_long * 0.75)
-            and min(dp_pct, ema900_dist_pct) <= (recorrido_req * 0.85)
-            and ema900_dist_pct <= (piso_anti_ruido * 0.90)
+            and z_score <= (z_umbral_long * 0.72)
+            and dp_pct <= (dp_min_long * 0.70)
+            and min(dp_pct, ema900_dist_pct) <= (recorrido_req * 0.80)
+            and ema900_dist_pct <= (piso_anti_ruido * 0.85)
         )
 
         if dislocacion_long_activa or latch_long_vigente:
@@ -589,7 +600,7 @@ class RadarVolatilidadHFT:
             }
 
         # ======================================================================
-        # PATH B: TERPSICHORA V1.0 EXHAUSTED-TOP SHORT-SNIPER ENGINE
+        # PATH B: TERPSICHORA V1.0 EXHAUSTED-TOP & ROLLOVER SHORT-SNIPER ENGINE
         # ======================================================================
         ema_min_short = cfg.EMA900_SOBREEXTENSION_SHORT_HB if es_hb else cfg.EMA900_SOBREEXTENSION_SHORT_T1
         dp_min_short = cfg.DP_MIN_EXCURSION_SHORT_HB if es_hb else cfg.DP_MIN_EXCURSION_SHORT_T1
@@ -609,17 +620,32 @@ class RadarVolatilidadHFT:
             metrica.phase_latch_dir = "SHORT"
             metrica.phase_latch_z_peak = max(metrica.phase_latch_z_peak or z_score, z_score)
             metrica.phase_latch_ema_dist = max(metrica.phase_latch_ema_dist or ema900_dist_pct, ema900_dist_pct)
+            est.vigilancia_short_hasta_ts = ahora + 15.0
+            est.max_z_pump_short = max(est.max_z_pump_short, z_score)
+            est.max_ema_pump_short = max(est.max_ema_pump_short, ema900_dist_pct)
+            est.px_pico_pump_short = max(est.px_pico_pump_short, mid)
 
         latch_short_vigente = (
             metrica.phase_latched
             and metrica.phase_latch_dir == "SHORT"
             and (ahora - metrica.phase_latch_ts) <= cfg.PHASE_LATCH_VENTANA_SEG
             and z_score > 0.0
-            and dp_pct >= (dp_min_short * 0.75)
+            and dp_pct >= (dp_min_short * 0.65)
             and ema900_dist_pct >= (ema_min_short * 0.85)
         )
 
-        if sobreextension_short or latch_short_vigente:
+        # Top-Rollover Capture (Catch-22 Fix): captures the initial roll off the pump top
+        # while still >= 85% overextended above EMA900, but blocks stale dumps (dp < -0.05%).
+        rollover_techo_vigente = (
+            ahora <= est.vigilancia_short_hasta_ts
+            and est.max_z_pump_short >= cfg.Z_SCORE_SHORT_UMBRAL
+            and ema900_dist_pct >= (ema_min_short * 0.88)
+            and dp_pct >= -0.0005
+            and mid <= (est.px_pico_pump_short * 0.9998)
+            and ofi_inst <= (cfg.OFI_MAX_ENTRADA_SHORT - 0.06)
+        )
+
+        if sobreextension_short or latch_short_vigente or rollover_techo_vigente:
             vector_snap_s = {
                 "z_entry": z_score,
                 "dp_pct": round(dp_pct * 100.0, 4),
@@ -677,8 +703,9 @@ class RadarVolatilidadHFT:
                 f"OFI={ofi_inst:+.2f} ({est.ofi_ticks_neg}t) | H={hurst:.2f} | "
                 f"a_Lyap={acel_lyap * 100:+.4f}% -> RAM SHIELD O(1): APPROVED ({lat_us_s:.1f} us)"
             )
-            z_eff_s = max(z_score, metrica.phase_latch_z_peak or z_score)
+            z_eff_s = max(z_score, metrica.phase_latch_z_peak or est.max_z_pump_short or z_score)
             metrica.phase_latched = False
+            est.vigilancia_short_hasta_ts = 0.0
             return True, "SHORT", {
                 "symbol": symbol,
                 "side": "SHORT",
