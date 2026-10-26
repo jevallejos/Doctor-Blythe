@@ -227,8 +227,8 @@ def calcular_exponente_hurst(precios_activos: List[float], z_score_actual: float
 def calcular_aceleracion_lyapunov(precios: List[float], spread_pct: float = 0.0) -> float:
     """
     Tick-Aware Multi-Step Second-Order Price Kinematics (Lyapunov Acceleration/Braking).
-    Suppresses single-tick micro-noise on low-priced assets (ZEREBRO/WAL) while
-    catching genuine multi-tick waterfalls.
+    Prevents false negative acceleration when v2 >= 0 (price stopped or bounced 1 tick)
+    and suppresses single-tick micro-noise on low-priced assets (ZEREBRO/WAL).
     """
     if len(precios) < 5:
         return 0.0
@@ -239,9 +239,14 @@ def calcular_aceleracion_lyapunov(precios: List[float], spread_pct: float = 0.0)
     v1 = (p_mid - p0) / p0
     v2 = (p_end - p_mid) / p_mid
     acel = v2 - v1
-    # Suppress single-tick micro-noise in LONG when v2 is within 1.25x spread
-    if acel < 0.0 and v2 < 0.0 and spread_pct > 0.0 and abs(v2) <= (spread_pct * 1.15):
-        return round(max(acel, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO * 0.5), 6)
+    umbral_tick = max(spread_pct * 1.25, 0.00042)
+    # If price is NOT falling in the latest half-window (v2 >= 0) or drop is <= 1 tick,
+    # do not report downward waterfall acceleration:
+    if acel < 0.0 and (v2 >= 0.0 or abs(v2) <= umbral_tick):
+        if v1 > umbral_tick and v2 <= 0.0:
+            # Genuine top exhaustion / rollover deceleration for SHORT-SNIPER
+            return round(acel, 6)
+        return round(max(acel, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO * 0.4), 6)
     return round(acel, 6)
 
 
@@ -381,26 +386,32 @@ class RadarVolatilidadHFT:
         if not est.precios_activos or abs(micro_price - est.precios_activos[-1]) > 1e-12:
             est.precios_activos.append(micro_price)
 
-        ofi_inst = (
-            calcular_ofi_profundo(est.bids_prev, est.asks_prev, bids, asks)
-            if est.bids_prev and est.asks_prev
-            else 0.0
-        )
-        est.bids_prev = bids
-        est.asks_prev = asks
-
-        alpha_5s = min(1.0, dt / 2.5)
-        est.ofi_ema_5s = round((alpha_5s * ofi_inst) + ((1.0 - alpha_5s) * est.ofi_ema_5s), 4)
-
-        if ofi_inst >= cfg.OFI_MIN_ENTRADA:
-            est.ofi_ticks_pos += 1
-            est.ofi_ticks_neg = 0
-        elif ofi_inst <= -cfg.OFI_MIN_ENTRADA:
-            est.ofi_ticks_neg += 1
-            est.ofi_ticks_pos = 0
+        top5_cambio = (bids != est.bids_prev) or (asks != est.asks_prev)
+        if not est.bids_prev or not est.asks_prev:
+            ofi_inst = 0.0
+            est.bids_prev = bids
+            est.asks_prev = asks
+        elif top5_cambio:
+            ofi_inst = calcular_ofi_profundo(est.bids_prev, est.asks_prev, bids, asks)
+            est.bids_prev = bids
+            est.asks_prev = asks
+            if ofi_inst >= cfg.OFI_MIN_ENTRADA:
+                est.ofi_ticks_pos += 1
+                est.ofi_ticks_neg = 0
+            elif ofi_inst <= -cfg.OFI_MIN_ENTRADA:
+                est.ofi_ticks_neg += 1
+                est.ofi_ticks_pos = 0
+            else:
+                est.ofi_ticks_pos = max(0, est.ofi_ticks_pos - 1)
+                est.ofi_ticks_neg = max(0, est.ofi_ticks_neg - 1)
         else:
-            est.ofi_ticks_pos = max(0, est.ofi_ticks_pos - 1)
-            est.ofi_ticks_neg = max(0, est.ofi_ticks_neg - 1)
+            # Deep levels (6..50) changed, but Top-5 quotes/sizes are identical:
+            # preserve active Top-5 OFI with gentle decay instead of zeroing it out
+            ofi_inst = round(est.ofi_ema_5s * math.exp(-dt / 1.20), 4)
+
+        alpha_5s = min(1.0, dt / 1.8)
+        if top5_cambio:
+            est.ofi_ema_5s = round((alpha_5s * ofi_inst) + ((1.0 - alpha_5s) * est.ofi_ema_5s), 4)
 
         decay = math.exp(-dt / max(0.08, cfg.HAWKES_MEMORIA_PULSO_SEG))
         if (est.ofi_ticks_pos >= 2 and est.intensidad_hawkes < 0.0) or (
@@ -556,7 +567,7 @@ class RadarVolatilidadHFT:
                     est.ultimo_log_warn_ts = ahora
                     ram.log_operativo(
                         f"[WARN] [MICROSTRUCTURE] {symbol} [LONG] waiting for bid absorption "
-                        f"(OFI={ofi_inst:+.2f} req >={ofi_min_long:+.2f} | Z={z_score:+.2f} | H={hurst:.2f})."
+                        f"(OFI={ofi_inst:+.2f} [{est.ofi_ticks_pos}/{cfg.OFI_TICKS_PERSISTENCIA_MIN}t] req >={ofi_min_long:+.2f} | Z={z_score:+.2f} | H={hurst:.2f})."
                     )
                 return False, "OFI_INSUFFICIENT_PERSISTENCE", None
 
