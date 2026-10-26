@@ -1,0 +1,41 @@
+# ==============================================================================
+# HFT DOCTOR BLYTHE ENGINE - TERPSICHORA V1.0 -- SECRETS & STATE ARMOR
+# ==============================================================================
+
+# 1. Credentials and Secrets (STRICTLY FORBIDDEN TO COMMIT TO GITHUB)
+.env
+.env.*
+*.pem
+*.ppk
+*.key
+
+# 2. Virtual Environments and Python Bytecode Cache
+venv/
+.venv/
+ENV/
+__pycache__/
+*.py[cod]
+*.class
+.pytest_cache/
+.mypy_cache/
+
+# 3. Transactional State, Telemetry, Forensic Vault, and Production Locks
+*.lock
+.tribrain.lock
+.tribrain_test.lock
+*.log
+bot_hft.log
+bot_hft_h.log
+.test_bot_hft.log
+*.jsonl
+tribrain_stats_v1.jsonl
+baul_ia_forense.jsonl
+calibracion_oos.json
+reporte_lab_ia.json
+reporte_cuantico_oos.md
+
+# 4. Operating System / IDE Artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

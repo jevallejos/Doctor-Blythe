@@ -1,0 +1,393 @@
+"""
+Level 6A DAG: 100% Passive Maker (Limit PostOnly) Execution Engine with
+Penny-Jump Quoting, Terpsichora 1-Step Smart Passive Re-Peg (1.00s),
+Early Queue Abort (0.80s), Minimum Fill Guard (<15%), and Pre-Validated
+Bybit V5 MarkPrice Stop-Loss Geometry (SEI-02) for
+HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+"""
+from __future__ import annotations
+
+import asyncio
+import math
+import time
+from typing import Any, Dict, Optional, Tuple
+
+import config_parametros as cfg
+import core_estado_ram as ram
+import escudo_tricortex as tri
+import telemetria_telegram as tel
+
+
+def cuantizar_tick(precio: float, tick_size: float, modo: str = "nearest") -> float:
+    if tick_size <= 0.0:
+        return round(precio, 6)
+    decimales = max(0, int(round(-math.log10(tick_size)))) if tick_size < 1.0 else 2
+    unidades = precio / tick_size
+    if modo == "floor":
+        val = math.floor(unidades + 1e-9) * tick_size
+    elif modo == "ceil":
+        val = math.ceil(unidades - 1e-9) * tick_size
+    else:
+        val = round(unidades) * tick_size
+    return round(val, decimales)
+
+
+def cuantizar_lote(cantidad: float, step_size: float) -> float:
+    if step_size <= 0.0:
+        return round(cantidad, 4)
+    decimales = max(0, int(round(-math.log10(step_size)))) if step_size < 1.0 else 0
+    val = math.floor((cantidad / step_size) + 1e-9) * step_size
+    return round(val, decimales)
+
+
+def calcular_precio_penny_jump(
+    best_bid: float,
+    best_ask: float,
+    tick_size: float,
+    side: str,
+) -> float:
+    """
+    Maker-First (PostOnly) Penny-Jump Quoting:
+    Steps 1 tick inside the spread when spread >= 2 ticks; otherwise joins
+    best_bid (LONG) or best_ask (SHORT) to guarantee zero PostOnly rejection.
+    """
+    t_size = max(1e-8, float(tick_size))
+    spread = best_ask - best_bid
+    dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
+
+    if dir_norm == "LONG":
+        if spread >= (t_size * 1.95):
+            candidato = min(best_ask - t_size, best_bid + (cfg.OFFSET_PENNY_JUMP_TICKS * t_size))
+        else:
+            candidato = best_bid
+        return cuantizar_tick(candidato, t_size, modo="floor")
+
+    if spread >= (t_size * 1.95):
+        candidato = max(best_bid + t_size, best_ask - (cfg.OFFSET_PENNY_JUMP_TICKS * t_size))
+    else:
+        candidato = best_ask
+    return cuantizar_tick(candidato, t_size, modo="ceil")
+
+
+def calcular_niveles_sl_iniciales(
+    precio_entrada: float,
+    side: str,
+    tick_size: float = 0.0001,
+) -> Tuple[float, float]:
+    """
+    Returns (sl_interno, sl_bybit_server) quantized to tick_size.
+    """
+    sl_int_pct = float(cfg.SL_INTERNO_PCT)
+    sl_bybit_pct = float(cfg.obtener_aux("SL_EMERGENCIA_BYBIT_PCT", 0.0068))
+    dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
+
+    if dir_norm == "LONG":
+        sl_int = cuantizar_tick(precio_entrada * (1.0 - sl_int_pct), tick_size, modo="floor")
+        sl_srv = cuantizar_tick(precio_entrada * (1.0 - sl_bybit_pct), tick_size, modo="floor")
+    else:
+        sl_int = cuantizar_tick(precio_entrada * (1.0 + sl_int_pct), tick_size, modo="ceil")
+        sl_srv = cuantizar_tick(precio_entrada * (1.0 + sl_bybit_pct), tick_size, modo="ceil")
+    return sl_int, sl_srv
+
+
+class EjecutorSniperBybit:
+    """
+    Zero-Adverse-Selection PostOnly Execution Engine for Terpsichora V1.0.
+    """
+
+    def __init__(self) -> None:
+        self.disparos_intentados: int = 0
+        self.disparos_llenados: int = 0
+        self.disparos_repeg_ejecutados: int = 0
+        self.disparos_abortados_cola: int = 0
+
+    async def _colocar_sl_servidor_bybit(
+        self,
+        exchange: Any,
+        symbol: str,
+        sl_precio: float,
+        side: str = "LONG",
+        tick_size: float = 0.0001,
+    ) -> bool:
+        if exchange is None or not hasattr(exchange, "set_trading_stop"):
+            return False
+        try:
+            t_size = max(1e-8, float(tick_size))
+            dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
+            sl_seguro = float(sl_precio)
+            m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
+            if m_live is not None and m_live.bid > 0.0 and m_live.ask > 0.0:
+                if dir_norm == "LONG" and sl_seguro >= m_live.bid:
+                    sl_seguro = cuantizar_tick(m_live.bid - (2.0 * t_size), t_size, modo="floor")
+                elif dir_norm == "SHORT" and sl_seguro <= m_live.ask:
+                    sl_seguro = cuantizar_tick(m_live.ask + (2.0 * t_size), t_size, modo="ceil")
+
+            await exchange.set_trading_stop(
+                symbol,
+                {"stopLoss": str(sl_seguro), "slTriggerBy": "MarkPrice"},
+            )
+            return True
+        except Exception:
+            return False
+
+    async def ejecutar_disparo_maker(
+        self,
+        exchange: Any,
+        symbol: str,
+        side: str,
+        senal: Dict[str, Any],
+        tick_size: float = 0.0001,
+        step_size: float = 0.1,
+        ttl_override: Optional[float] = None,
+    ) -> Optional[ram.PosicionActiva]:
+        dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
+        side_ccxt = "buy" if dir_norm == "LONG" else "sell"
+        etiqueta_log = "[SNIPER]" if dir_norm == "LONG" else "[SHORT-SNIPER]"
+
+        if not ram.ESTADO_GLOBAL.tiene_capacidad_slot(dir_norm):
+            return None
+
+        if not ram.ESTADO_GLOBAL.adquirir_lock_pre_fill(symbol, ttl_seg=8.0):
+            return None
+
+        try:
+            best_bid = float(senal.get("bid") or senal.get("precio_ref") or 0.0)
+            best_ask = float(senal.get("ask") or senal.get("precio_ref") or 0.0)
+            if best_bid <= 0.0 or best_ask <= 0.0:
+                return None
+
+            precio_orden = calcular_precio_penny_jump(best_bid, best_ask, tick_size, dir_norm)
+            z_val = float(senal.get("z_score", 0.0))
+            ofi_val = float(senal.get("ofi", 0.0))
+            hurst_val = float(senal.get("hurst", 0.42))
+
+            kelly_frac, _, nocional_usdt = tri.calcular_dimension_kelly(
+                capital_libre_usdt=ram.ESTADO_GLOBAL.free_usdt,
+                z_score=z_val,
+                ofi=ofi_val,
+                hurst=hurst_val,
+                side=dir_norm,
+                symbol=symbol,
+            )
+            if nocional_usdt < cfg.ORDEN_MINIMA_BYBIT_USDT:
+                nocional_usdt = cfg.ORDEN_MINIMA_BYBIT_USDT
+
+            contratos = cuantizar_lote(nocional_usdt / precio_orden, step_size)
+            if contratos <= 0.0:
+                return None
+
+            nocional_real = round(contratos * precio_orden, 2)
+            t0_net = time.perf_counter()
+            params_post_only = {"timeInForce": "PostOnly", "postOnly": True}
+            orden = await exchange.create_order(
+                symbol,
+                "limit",
+                side_ccxt,
+                contratos,
+                precio_orden,
+                params_post_only,
+            )
+            rtt_ms = (time.perf_counter() - t0_net) * 1000.0
+            self.disparos_intentados += 1
+
+            orden_id = str(orden.get("id", ""))
+            ram.log_operativo(
+                f"{etiqueta_log} Order {orden_id} on {symbol}: {contratos} @ {precio_orden} "
+                f"(notional ~{nocional_real:.2f} USDT, {cfg.APALANCAMIENTO_OPERATIVO}x, "
+                f"Kelly={kelly_frac * 100:.0f}%, Z={z_val:+.2f}, OFI={ofi_val:+.2f}, RTT={rtt_ms:.1f}ms)"
+            )
+
+            ttl_max = float(ttl_override) if ttl_override is not None else float(cfg.TTL_ORDEN_ENTRADA_SEG)
+            permitir_repeg = (
+                bool(cfg.PERMITIR_REQUOTE_ENTRADA)
+                and ttl_override is None
+                and ttl_max >= 1.50
+            )
+            repeg_hecho = False
+            ts_inicio = time.perf_counter()
+            paso_poll = min(0.10, max(0.02, ttl_max / 8.0))
+
+            estado_orden = orden
+            while (time.perf_counter() - ts_inicio) < ttl_max:
+                status_actual = str(estado_orden.get("status", "")).lower()
+                filled_actual = float(estado_orden.get("filled", 0.0) or 0.0)
+                if status_actual in ("closed", "filled") or filled_actual >= contratos:
+                    break
+
+                fue_cancelada_postonly = status_actual in ("canceled", "cancelled", "rejected", "expired")
+                if fue_cancelada_postonly and (not permitir_repeg or repeg_hecho or filled_actual > 0.0):
+                    break
+
+                if not fue_cancelada_postonly:
+                    await asyncio.sleep(paso_poll)
+                    estado_orden = await exchange.fetch_order(orden_id, symbol)
+                    status_actual = str(estado_orden.get("status", "")).lower()
+                    filled_actual = float(estado_orden.get("filled", 0.0) or 0.0)
+                    if status_actual in ("closed", "filled") or filled_actual >= contratos:
+                        break
+                    fue_cancelada_postonly = status_actual in ("canceled", "cancelled", "rejected", "expired")
+                    if fue_cancelada_postonly and (not permitir_repeg or repeg_hecho or filled_actual > 0.0):
+                        break
+
+                elapsed = time.perf_counter() - ts_inicio
+                ahora_wall = time.time()
+                m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
+                if m_live is not None and filled_actual <= 0.0 and permitir_repeg:
+                    if elapsed >= cfg.EARLY_QUEUE_ABORT_SEG and not fue_cancelada_postonly:
+                        veto_btc_activo = (
+                            (dir_norm == "LONG" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_long_hasta)
+                            or (dir_norm == "SHORT" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_short_hasta)
+                        )
+                        cola_toxica = (
+                            m_live.hurst > cfg.HURST_TECHO_DURO_ABSOLUTO
+                            or veto_btc_activo
+                            or (dir_norm == "LONG" and m_live.ofi_profundo <= -0.25)
+                            or (dir_norm == "SHORT" and m_live.ofi_profundo >= 0.25)
+                        )
+                        if cola_toxica:
+                            try:
+                                await exchange.cancel_order(orden_id, symbol)
+                            except Exception:
+                                pass
+                            self.disparos_abortados_cola += 1
+                            ram.log_operativo(
+                                f"{etiqueta_log} [EARLY QUEUE ABORT] {symbol} order cancelled at "
+                                f"{elapsed:.2f}s due to adverse queue shift (H={m_live.hurst:.2f}, "
+                                f"OFI={m_live.ofi_profundo:+.2f})."
+                            )
+                            return None
+
+                    if not repeg_hecho and (fue_cancelada_postonly or elapsed >= cfg.REPEG_PASIVO_ENTRADA_SEG):
+                        nuevo_px = calcular_precio_penny_jump(
+                            m_live.bid, m_live.ask, tick_size, dir_norm
+                        )
+                        drift_pct = abs(nuevo_px - precio_orden) / precio_orden if precio_orden > 0.0 else 0.0
+                        favorable_escape = (
+                            (dir_norm == "LONG" and nuevo_px > precio_orden and m_live.ofi_profundo >= cfg.OFI_MIN_ENTRADA)
+                            or (dir_norm == "SHORT" and nuevo_px < precio_orden and m_live.ofi_profundo <= cfg.OFI_MAX_ENTRADA_SHORT)
+                        )
+                        if favorable_escape and 0.0 < drift_pct <= cfg.REPEG_DRIFT_MAX_PCT:
+                            try:
+                                if not fue_cancelada_postonly:
+                                    await exchange.cancel_order(orden_id, symbol)
+                                nueva_orden = await exchange.create_order(
+                                    symbol,
+                                    "limit",
+                                    side_ccxt,
+                                    contratos,
+                                    nuevo_px,
+                                    params_post_only,
+                                )
+                                orden_id = str(nueva_orden.get("id", orden_id))
+                                precio_orden = nuevo_px
+                                estado_orden = nueva_orden
+                                repeg_hecho = True
+                                self.disparos_repeg_ejecutados += 1
+                                ram.log_operativo(
+                                    f"[PASSIVE ALIGN 1.0S] {symbol} {dir_norm} re-pegged 1 step to "
+                                    f"{nuevo_px} (OFI={m_live.ofi_profundo:+.2f} | Order {orden_id})."
+                                )
+                            except Exception:
+                                repeg_hecho = True
+                        elif fue_cancelada_postonly:
+                            break
+
+            filled_final = float(estado_orden.get("filled", 0.0) or 0.0)
+            status_final = str(estado_orden.get("status", "")).lower()
+
+            if filled_final < contratos and status_final not in ("closed", "filled"):
+                try:
+                    await exchange.cancel_order(orden_id, symbol)
+                except Exception:
+                    pass
+                try:
+                    estado_post = await exchange.fetch_order(orden_id, symbol)
+                    filled_final = max(filled_final, float(estado_post.get("filled", 0.0) or 0.0))
+                except Exception:
+                    pass
+
+            if filled_final <= 0.0:
+                ram.log_operativo(
+                    f"{etiqueta_log} Order on {symbol} unfilled after {ttl_max:.1f}s "
+                    f"(Zero Re-Quote): margin released."
+                )
+                return None
+
+            if (filled_final / contratos) < cfg.FRACCION_MINIMA_FILL_LOTE:
+                side_dust = "sell" if dir_norm == "LONG" else "buy"
+                try:
+                    await exchange.create_order(
+                        symbol, "market", side_dust, filled_final, None, {"reduceOnly": True}
+                    )
+                except Exception:
+                    pass
+                ram.log_operativo(
+                    f"{etiqueta_log} [MIN FILL GUARD] Dust fill on {symbol} "
+                    f"({filled_final}/{contratos} < {cfg.FRACCION_MINIMA_FILL_LOTE * 100:.0f}%) "
+                    f"evacuated immediately to preserve slot."
+                )
+                return None
+
+            precio_fill = float(estado_orden.get("average") or estado_orden.get("price") or precio_orden)
+            sl_int, sl_srv = calcular_niveles_sl_iniciales(precio_fill, dir_norm, tick_size)
+            await self._colocar_sl_servidor_bybit(exchange, symbol, sl_srv, side=dir_norm, tick_size=tick_size)
+
+            vol_bv = float(senal.get("volatilidad_bv", cfg.VOLATILIDAD_BV_PISO_MIN))
+            tp_din = max(
+                cfg.COSECHA_ESTANCAMIENTO_MFE_PCT,
+                min(0.0032, max(cfg.COSECHA_TRIZ_ACTIVACION_PCT, vol_bv * 3.2)),
+            )
+            fee_entrada = abs(filled_final * precio_fill) * cfg.COMISION_MAKER_PCT
+
+            pos = ram.PosicionActiva(
+                symbol=symbol,
+                side=dir_norm,
+                contratos=filled_final,
+                contratos_iniciales=filled_final,
+                precio_entrada=precio_fill,
+                timestamp_apertura=time.time(),
+                orden_entrada_id=orden_id,
+                sl_interno=sl_int,
+                sl_bybit=sl_srv,
+                tp_dinamico_pct=round(tp_din, 5),
+                fees_acumulados_usdt=round(fee_entrada, 6),
+                es_entrada_maker=True,
+                kelly_usado=kelly_frac,
+                z_entrada=z_val,
+                ofi_entrada=ofi_val,
+                hurst_entrada=hurst_val,
+                hawkes_entrada=float(senal.get("hawkes", 0.0)),
+                lyapunov_entrada=float(senal.get("lyapunov", 0.0)),
+                ema900_entrada_pct=float(senal.get("ema900_pct", 0.0)),
+                dp_entrada_pct=float(senal.get("dp_pct", 0.0)),
+                volatilidad_bv_entrada=vol_bv,
+                percentil_entrada=float(senal.get("percentil_24h", 0.50)),
+                latencia_rtt_ms=round(rtt_ms, 2),
+            )
+            ram.ESTADO_GLOBAL.posiciones_activas[symbol] = pos
+            self.disparos_llenados += 1
+
+            sub_lbl = "Active position" if dir_norm == "LONG" else "Active SHORT position"
+            ram.log_operativo(
+                f"{etiqueta_log} [TARGET] {sub_lbl} on {symbol}: {filled_final} @ {precio_fill} "
+                f"(age 0s / max {int(cfg.TIEMPO_MAX_HOLD_SEG)}s) | "
+                f"Internal SL {sl_int} | Bybit SL {sl_srv}"
+            )
+
+            tel.notificar_apertura_confirmada(
+                symbol=symbol,
+                side=dir_norm,
+                contratos=filled_final,
+                precio_entrada=precio_fill,
+                sl_interno=sl_int,
+                kelly_frac=kelly_frac,
+                z_score=z_val,
+                ofi=ofi_val,
+                orden_id=orden_id,
+            )
+            return pos
+        finally:
+            ram.ESTADO_GLOBAL.liberar_lock_pre_fill(symbol)
+
+
+EJECUTOR_GLOBAL = EjecutorSniperBybit()
