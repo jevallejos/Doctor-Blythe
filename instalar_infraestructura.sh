@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # HFT DOCTOR BLYTHE ENGINE - PRODUCTION BASELINE TERPSICHORA V1.0
-# Low-Jitter Linux Infrastructure & Live CLI HUD Installer (verbot)
+# Low-Jitter Linux Infrastructure & Colorized Live CLI HUD Installer (verbot)
 # ==============================================================================
 set -e
 
@@ -28,22 +28,22 @@ verbot() {
     (
         set +e
         trap 'echo -e "
- [OK] Live HUD closed safely (Doctor Blythe daemon continues running in background)."; exit 0' INT TERM
+[1;92m [OK] Live HUD closed safely (Doctor Blythe daemon continues running in background).[0m"; exit 0' INT TERM
         cd "${repo_dir}" || exit 1
         if [ "${1}" = "-s" ]; then
-            ./venv/bin/python -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=20)"
+            ./venv/bin/python -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=22)"
         elif [ "${1}" = "-q" ]; then
             ./venv/bin/python evaluador_cuantico_oos.py
         elif [ "${1}" = "-l" ]; then
             ./venv/bin/python evaluador_cuantico_oos.py --lab
         else
-            ./venv/bin/python -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=15)"
-            echo " [STREAMING LIVE TELEMETRY - Press Ctrl+C to exit view without stopping bot]"
-            tail -f "${repo_dir}/bot_hft.log"
+            ./venv/bin/python -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=16)"
+            echo -e "[1;96m [STREAMING COLORIZED TELEMETRY - Press Ctrl+C to exit view without stopping bot][0m"
+            tail -n 0 -f "${repo_dir}/bot_hft.log" 2>/dev/null | ./venv/bin/python -u -c "import sys, signal, gestor_posiciones as gp; signal.signal(signal.SIGINT, lambda *_: sys.exit(0)); [print(gp.colorear_linea_log_mobaxterm(line), flush=True) for line in sys.stdin]" 2>/dev/null
         fi
     )
 }
 # === DOCTOR-BLYTHE CLI END ===
 EOF
 
-echo "[OK] Infrastructure & verbot CLI configured for HFT Doctor Blythe Engine - Terpsichora V1.0"
+echo "[OK] Colorized Infrastructure & verbot CLI configured for HFT Doctor Blythe Engine - Terpsichora V1.0"

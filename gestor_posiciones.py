@@ -769,23 +769,132 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
         ram.log_operativo(f"[RECONCILER] Warning during startup scan: {exc}")
     return procesadas
 
+# ==============================================================================
+# ANSI COLORIZER FOR LIVE CLI HUD (verbot) ? ZERO DISK CONTAMINATION
+# ==============================================================================
+_ANSI_RESET: str = "\033[0m"
+_ANSI_BOLD_GREEN: str = "\033[1;92m"
+_ANSI_BOLD_RED: str = "\033[1;91m"
+_ANSI_BOLD_YELLOW: str = "\033[1;93m"
+_ANSI_BOLD_CYAN: str = "\033[1;96m"
+_ANSI_BOLD_MAGENTA: str = "\033[1;95m"
+_ANSI_BOLD_WHITE: str = "\033[1;97m"
+_ANSI_DIM_CYAN: str = "\033[0;36m"
+_ANSI_DIM_GRAY: str = "\033[0;37m"
+
+
+def colorear_linea_log_mobaxterm(linea: str) -> str:
+    s = linea.rstrip("\r\n")
+    if not s:
+        return ""
+
+    # 1. Wins, Approvals, Active Fills & Ready States -> Bright Green
+    if (
+        "[WIN]" in s
+        or "[TARGET] Active" in s
+        or "RAM SHIELD O(1): APPROVED" in s
+        or "[READY TO FIRE]" in s
+        or "[TELEGRAM] Startup notification" in s
+    ):
+        return f"{_ANSI_BOLD_GREEN}{s}{_ANSI_RESET}"
+
+    # 2. Losses, Stop-Losses, Circuit Breakers & Errors -> Bright Red
+    if (
+        "[LOSS]" in s
+        or "SL_INTERNO_CHRONOS" in s
+        or "SL_EXCHANGE" in s
+        or "[CIRCUIT BREAKER" in s
+        or "VETO_TOXIC" in s
+        or "ANTI_LUNA" in s
+        or "Stream error" in s
+        or "[ERROR]" in s
+    ):
+        return f"{_ANSI_BOLD_RED}{s}{_ANSI_RESET}"
+
+    # 3. Harvests, Break-Even Ratchets, Trailing & Passive Re-Pegs -> Bright Cyan
+    if (
+        "[DIAMOND]" in s
+        or "[SHIELD]" in s
+        or "Break-Even Ratchet" in s
+        or "Trailing Stop" in s
+        or "Bybit server SL" in s
+        or "[PASSIVE ALIGN" in s
+    ):
+        return f"{_ANSI_BOLD_CYAN}{s}{_ANSI_RESET}"
+
+    # 4. Radar Triggers & Order Shots -> Bright Magenta
+    if (
+        "[RADAR]" in s
+        or "[SNIPER] Order " in s
+        or "[SHORT-SNIPER] Order " in s
+    ):
+        return f"{_ANSI_BOLD_MAGENTA}{s}{_ANSI_RESET}"
+
+    # 5. Scratches, Queue Aborts, Unfilled Releases & Warnings -> Bright Yellow
+    if (
+        "[SCRATCH]" in s
+        or "[MAKER-SCRATCH" in s
+        or "[EARLY QUEUE ABORT]" in s
+        or "[MIN FILL GUARD]" in s
+        or "[PHANTOM" in s
+        or "unfilled after" in s
+        or "[WARN]" in s
+        or "quarantine" in s
+    ):
+        return f"{_ANSI_BOLD_YELLOW}{s}{_ANSI_RESET}"
+
+    # 6. Black Box Panel Lines inside Log -> Cyan / Dynamic PnL
+    if "+===" in s or "|  [BLACK BOX]" in s or "|  MAP:" in s or "|  Balance:" in s:
+        return f"{_ANSI_BOLD_CYAN}{s}{_ANSI_RESET}"
+    if "|  Total PnL:" in s:
+        color_pnl = _ANSI_BOLD_RED if "Total PnL: -" in s else _ANSI_BOLD_GREEN
+        return f"{color_pnl}{s}{_ANSI_RESET}"
+
+    # 7. Background LPU / Hot-Reload / Parity Sync -> Soft Cyan/Gray
+    if (
+        "[TRI-CORTEX" in s
+        or "[HOT-RELOAD OOS]" in s
+        or "[BLACK BOX 1:1]" in s
+        or "[RECONCILER]" in s
+        or "[QUANTUM OOS EVALUATOR]" in s
+    ):
+        return f"{_ANSI_DIM_CYAN}{s}{_ANSI_RESET}"
+
+    return f"{_ANSI_DIM_GRAY}{s}{_ANSI_RESET}"
+
 
 def imprimir_hud_verbot_cli(lineas_log: int = 18) -> None:
     st.GESTOR_ESTADISTICAS.cargar_historial_disco()
-    print("=" * 82)
-    print(f" {cfg.NOMBRE_ESTRATEGIA}")
-    print("=" * 82)
+    res = st.GESTOR_ESTADISTICAS.obtener_resumen()
+    color_pnl = _ANSI_BOLD_GREEN if res["total_pnl_usdt"] >= 0.0 else _ANSI_BOLD_RED
+
+    print(f"{_ANSI_BOLD_CYAN}{'=' * 82}{_ANSI_RESET}")
+    print(f"{_ANSI_BOLD_WHITE} {cfg.NOMBRE_ESTRATEGIA}{_ANSI_RESET}")
+    print(f"{_ANSI_BOLD_CYAN}{'=' * 82}{_ANSI_RESET}")
     for l_box in st.GESTOR_ESTADISTICAS.formatear_panel_ascii():
-        print(" " + l_box)
-    print("-" * 82)
+        if "Total PnL:" in l_box:
+            print(f" {color_pnl}{l_box}{_ANSI_RESET}")
+        elif "[BLACK BOX]" in l_box:
+            print(f" {_ANSI_BOLD_WHITE}{l_box}{_ANSI_RESET}")
+        else:
+            print(f" {_ANSI_BOLD_CYAN}{l_box}{_ANSI_RESET}")
+    print(f"{_ANSI_DIM_CYAN}{'-' * 82}{_ANSI_RESET}")
+    print(
+        f" {_ANSI_BOLD_GREEN}[WIN/FILL]{_ANSI_RESET} | "
+        f"{_ANSI_BOLD_CYAN}[BE/HARVEST/RE-PEG]{_ANSI_RESET} | "
+        f"{_ANSI_BOLD_MAGENTA}[RADAR/ORDER]{_ANSI_RESET} | "
+        f"{_ANSI_BOLD_YELLOW}[SCRATCH/TTL]{_ANSI_RESET} | "
+        f"{_ANSI_BOLD_RED}[LOSS/SL/VETO]{_ANSI_RESET}"
+    )
+    print(f"{_ANSI_DIM_CYAN}{'-' * 82}{_ANSI_RESET}")
     ruta_log = cfg.obtener_ruta_archivo("ARCHIVO_LOG")
     if ruta_log.exists():
         ultimas = ruta_log.read_text(encoding="utf-8", errors="replace").splitlines()[-lineas_log:]
         for ln in ultimas:
-            print(ln)
+            print(colorear_linea_log_mobaxterm(ln))
     else:
-        print(" [INFO] bot_hft.log not yet created.")
-    print("=" * 82)
+        print(f" {_ANSI_BOLD_YELLOW}[INFO] bot_hft.log not yet created.{_ANSI_RESET}")
+    print(f"{_ANSI_BOLD_CYAN}{'=' * 82}{_ANSI_RESET}")
 
 
 def imprimir_radiografia_uta_cli() -> None:
