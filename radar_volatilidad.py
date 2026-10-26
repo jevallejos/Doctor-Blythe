@@ -259,6 +259,7 @@ class EstadoRadarPar:
         self.asks_prev: List[Tuple[float, float]] = []
         self.precios_activos: Deque[float] = collections.deque(maxlen=64)
         self.ofi_ema_5s: float = 0.0
+        self.ultimo_ofi_top5: float = 0.0
         self.ofi_ticks_pos: int = 0
         self.ofi_ticks_neg: int = 0
         self.intensidad_hawkes: float = 0.0
@@ -322,7 +323,7 @@ class RadarVolatilidadHFT:
 
         if direccion == "LONG":
             caida_btc = (
-                (m_btc.ofi_profundo <= -umbral_ofi_btc)
+                (m_btc.ofi_profundo <= -umbral_ofi_btc and m_btc.z_score <= -0.25)
                 or (m_btc.z_score <= cfg.BTC_VETO_Z_UMBRAL_CAIDA)
                 or (m_btc.ofi_profundo <= -0.25 and m_btc.z_score <= -0.50)
             )
@@ -336,7 +337,7 @@ class RadarVolatilidadHFT:
                 return False, "BTC_VETO_COOLDOWN_12S"
         else:
             subida_btc = (
-                (m_btc.ofi_profundo >= umbral_ofi_btc)
+                (m_btc.ofi_profundo >= umbral_ofi_btc and m_btc.z_score >= 0.25)
                 or (m_btc.z_score >= cfg.BTC_VETO_Z_UMBRAL_SUBIDA)
                 or (m_btc.ofi_profundo >= 0.25 and m_btc.z_score >= 0.50)
             )
@@ -390,26 +391,34 @@ class RadarVolatilidadHFT:
         top5_cambio = (bids != est.bids_prev) or (asks != est.asks_prev)
         if not est.bids_prev or not est.asks_prev:
             ofi_inst = 0.0
+            est.ultimo_ofi_top5 = 0.0
             est.bids_prev = bids
             est.asks_prev = asks
         elif top5_cambio:
             ofi_raw = calcular_ofi_profundo(est.bids_prev, est.asks_prev, bids, asks)
             est.bids_prev = bids
             est.asks_prev = asks
-            ofi_inst = round((0.65 * ofi_raw) + (0.35 * est.ofi_ema_5s), 4) if abs(ofi_raw) < 0.08 else ofi_raw
+            if abs(ofi_raw) < 0.06 and (ofi_raw * est.ultimo_ofi_top5) >= 0.0:
+                ofi_inst = round((0.60 * ofi_raw) + (0.40 * est.ultimo_ofi_top5), 4)
+            else:
+                ofi_inst = ofi_raw
+            est.ultimo_ofi_top5 = ofi_inst
             if ofi_inst >= cfg.OFI_MIN_ENTRADA:
                 est.ofi_ticks_pos += 1
                 est.ofi_ticks_neg = 0
             elif ofi_inst <= -cfg.OFI_MIN_ENTRADA:
                 est.ofi_ticks_neg += 1
                 est.ofi_ticks_pos = 0
+            elif (est.ofi_ticks_pos > 0 and ofi_inst >= -0.03) or (est.ofi_ticks_neg > 0 and ofi_inst <= 0.03):
+                # Micro-pause on same direction does not erase accumulated tick persistence
+                pass
             else:
                 est.ofi_ticks_pos = max(0, est.ofi_ticks_pos - 1)
                 est.ofi_ticks_neg = max(0, est.ofi_ticks_neg - 1)
         else:
             # Deep levels (6..50) changed, but Top-5 quotes/sizes are identical:
-            # preserve active Top-5 OFI with gentle decay instead of zeroing it out
-            ofi_inst = round(est.ofi_ema_5s * math.exp(-dt / 1.20), 4)
+            # preserve the last genuine Top-5 OFI instead of overwriting with negative 5s EMA
+            ofi_inst = round(est.ultimo_ofi_top5 * math.exp(-dt / 1.50), 4)
 
         alpha_5s = min(1.0, dt / 1.8)
         if top5_cambio:
@@ -505,17 +514,17 @@ class RadarVolatilidadHFT:
         z_umbral_long = cfg.Z_SCORE_UMBRAL_HIGH_BETA if es_hb else cfg.Z_SCORE_UMBRAL_TIER1
         dp_min_long = cfg.DP_MIN_EXCURSION_LONG_HB if es_hb else cfg.DP_MIN_EXCURSION_LONG_T1
         ema_piso_base = cfg.EMA900_DISTANCIA_MIN_LONG_HB if es_hb else cfg.EMA900_DISTANCIA_MIN_LONG_T1
-        recorrido_req = min(dp_min_long, ema_piso_base * 0.85)
-        piso_anti_ruido = -0.0018 if es_hb else -0.0014
+        recorrido_req = -0.0018 if es_hb else -0.0014
+        piso_anti_ruido = -0.0011 if es_hb else -0.0009
         h_cap_long = cfg.HURST_MAX_ENTRADA_LONG if es_hb else cfg.HURST_MAX_ENTRADA_LONG_T1
-        ofi_min_long = max(cfg.OFI_MIN_ENTRADA, min(0.18, float(ctrl.get("w1_ofi_long", cfg.OFI_MIN_ENTRADA))))
+        ofi_min_long = max(cfg.OFI_MIN_ENTRADA, min(0.16, float(ctrl.get("w1_ofi_long", cfg.OFI_MIN_ENTRADA))))
 
         if ema900_dist_pct > cfg.EMA900_MAX_SOBRECOMPRA_LONG and z_score < 0.0:
             return False, "ANTI_PUMP_TOP_VETO", None
 
         excursion_dual_ok = (
             min(dp_pct, ema900_dist_pct) <= recorrido_req
-            and max(dp_pct, ema900_dist_pct) <= piso_anti_ruido
+            and (max(dp_pct, ema900_dist_pct) <= piso_anti_ruido or (z_score <= -2.70 and dp_pct <= -0.0019))
         )
         dislocacion_long_activa = (
             z_score <= z_umbral_long
