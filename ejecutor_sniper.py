@@ -93,6 +93,31 @@ def calcular_niveles_sl_iniciales(
     return sl_int, sl_srv
 
 
+async def consultar_orden_segura(
+    exchange: Any,
+    orden_id: str,
+    symbol: str,
+    precio_fallback: float = 0.0,
+) -> Dict[str, Any]:
+    """
+    CCXT Bybit V5 Safe Order Poller:
+    Passes {"acknowledged": True} required by CCXT 4.5.x fetchOrder() on Bybit,
+    falls back cleanly to 2-arg call on test mocks, and prevents loop crash
+    on transient network/indexing delays.
+    """
+    try:
+        return await exchange.fetch_order(orden_id, symbol, {"acknowledged": True})
+    except TypeError:
+        return await exchange.fetch_order(orden_id, symbol)
+    except Exception as exc:
+        if "acknowledged" in str(exc).lower():
+            try:
+                return await exchange.fetch_order(orden_id, symbol, {"acknowledged": True})
+            except Exception:
+                pass
+        return {"id": orden_id, "status": "open", "filled": 0.0, "price": precio_fallback}
+
+
 class EjecutorSniperBybit:
     """
     Moallemi-Stoikov Zero-Adverse-Selection PostOnly Execution Engine.
@@ -244,7 +269,7 @@ class EjecutorSniperBybit:
 
                 if not fue_cancelada_postonly:
                     await asyncio.sleep(paso_poll)
-                    estado_orden = await exchange.fetch_order(orden_id, symbol)
+                    estado_orden = await consultar_orden_segura(exchange, orden_id, symbol, precio_orden)
                     status_actual = str(estado_orden.get("status", "")).lower()
                     filled_actual = float(estado_orden.get("filled", 0.0) or 0.0)
                     if status_actual in ("closed", "filled") or filled_actual >= contratos:
@@ -361,7 +386,7 @@ class EjecutorSniperBybit:
                 except Exception:
                     pass
                 try:
-                    estado_post = await exchange.fetch_order(orden_id, symbol)
+                    estado_post = await consultar_orden_segura(exchange, orden_id, symbol, precio_orden)
                     filled_final = max(filled_final, float(estado_post.get("filled", 0.0) or 0.0))
                 except Exception:
                     pass

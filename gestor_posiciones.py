@@ -325,7 +325,7 @@ class GestorPosicionesChronosTriz:
             if px_out <= 0.0 and oid and not cfg.es_modo_test() and hasattr(exchange, "fetch_order"):
                 await asyncio.sleep(max(0.05, float(cfg.LATENCIA_ACK_BYBIT_MS) / 1000.0))
                 try:
-                    est_f = await exchange.fetch_order(oid, pos.symbol)
+                    est_f = await eje.consultar_orden_segura(exchange, oid, pos.symbol, precio_ref)
                     px_out = float(est_f.get("average") or est_f.get("price") or precio_ref)
                 except Exception:
                     px_out = precio_ref
@@ -370,7 +370,7 @@ class GestorPosicionesChronosTriz:
             st_ord = str(orden.get("status", "")).lower()
             filled = float(orden.get("filled", 0.0) or 0.0)
             if st_ord not in ("closed", "filled") and filled < lote_50 and oid:
-                estado_f = await exchange.fetch_order(oid, pos.symbol)
+                estado_f = await eje.consultar_orden_segura(exchange, oid, pos.symbol, px_harvest)
                 filled = float(estado_f.get("filled", lote_50) or lote_50)
                 px_harvest = float(estado_f.get("average") or estado_f.get("price") or px_harvest)
 
@@ -466,7 +466,7 @@ class GestorPosicionesChronosTriz:
                 pos.motivo_salida_pendiente = motivo
 
                 if cfg.es_modo_test():
-                    est_f = await exchange.fetch_order(pos.orden_salida_id, pos.symbol)
+                    est_f = await eje.consultar_orden_segura(exchange, pos.orden_salida_id, pos.symbol, px_target)
                     st_f = str(est_f.get("status", "")).lower()
                     if st_f in ("closed", "filled") or float(est_f.get("filled", 0.0) or 0.0) >= pos.contratos:
                         px_fill = float(est_f.get("average") or est_f.get("price") or px_target)
@@ -481,7 +481,7 @@ class GestorPosicionesChronosTriz:
 
         try:
             pos.ultimo_poll_salida_ts = ahora
-            est_ord = await exchange.fetch_order(pos.orden_salida_id, pos.symbol)
+            est_ord = await eje.consultar_orden_segura(exchange, pos.orden_salida_id, pos.symbol, pos.precio_orden_salida)
             st_ord = str(est_ord.get("status", "")).lower()
             filled_ord = float(est_ord.get("filled", 0.0) or 0.0)
             if st_ord in ("closed", "filled") or filled_ord >= pos.contratos:
