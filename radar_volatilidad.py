@@ -267,6 +267,7 @@ class EstadoRadarPar:
         self.max_z_pump_short: float = 0.0
         self.max_ema_pump_short: float = 0.0
         self.px_pico_pump_short: float = 0.0
+        self.ultimo_log_warn_ts: float = 0.0
 
 
 class RadarVolatilidadHFT:
@@ -539,28 +540,54 @@ class RadarVolatilidadHFT:
             }
 
             if acel_lyap < cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO:
+                if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
+                    est.ultimo_log_warn_ts = ahora
+                    ram.log_operativo(
+                        f"[WARN] [LYAPUNOV REPULSOR] {symbol} drop accelerating "
+                        f"(a={acel_lyap * 100:+.4f}% < {cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO * 100:+.4f}%). Waiting for braking."
+                    )
                 ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
                     symbol, "LONG", "LYAPUNOV_REPULSOR", f"a={acel_lyap:.5f}", mid, vector_snap
                 )
                 return False, "LYAPUNOV_ACCELERATING_DROP", None
 
             if ofi_inst < ofi_min_long or est.ofi_ticks_pos < cfg.OFI_TICKS_PERSISTENCIA_MIN:
+                if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
+                    est.ultimo_log_warn_ts = ahora
+                    ram.log_operativo(
+                        f"[WARN] [MICROSTRUCTURE] {symbol} [LONG] waiting for bid absorption "
+                        f"(OFI={ofi_inst:+.2f} req >={ofi_min_long:+.2f} | Z={z_score:+.2f} | H={hurst:.2f})."
+                    )
                 return False, "OFI_INSUFFICIENT_PERSISTENCE", None
 
             ok_btc, motivo_btc = self._verificar_veto_macro_btc("LONG", ahora)
             if not ok_btc:
+                if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
+                    est.ultimo_log_warn_ts = ahora
+                    ram.log_operativo(f"[PHANTOM P-01 BTC-VETO] {symbol} [LONG] blocked BEFORE order ({motivo_btc}).")
                 ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
                     symbol, "LONG", "P-01_BTC_VETO", motivo_btc, mid, vector_snap
                 )
                 return False, motivo_btc, None
 
             if hurst > h_cap_long:
+                if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
+                    est.ultimo_log_warn_ts = ahora
+                    ram.log_operativo(
+                        f"[WARN] [HURST FILTER] {symbol} high trend persistence (H={hurst:.3f} > {h_cap_long:.3f}). Aborting."
+                    )
                 ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
                     symbol, "LONG", "HURST_FILTER", f"H={hurst:.3f}>{h_cap_long:.3f}", mid, vector_snap
                 )
                 return False, "HURST_TREND_PERSISTENCE", None
 
             if est.intensidad_hawkes < cfg.HAWKES_INTENSIDAD_MIN_LONG:
+                if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
+                    est.ultimo_log_warn_ts = ahora
+                    ram.log_operativo(
+                        f"[WARN] [HAWKES MEMORY] {symbol} absorption still weak "
+                        f"(I_Hawkes={est.intensidad_hawkes:+.2f} < +{cfg.HAWKES_INTENSIDAD_MIN_LONG:.2f} | Z={z_score:+.2f})."
+                    )
                 ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
                     symbol, "LONG", "HAWKES_MEMORY", f"I={est.intensidad_hawkes:.2f}", mid, vector_snap
                 )
@@ -682,6 +709,12 @@ class RadarVolatilidadHFT:
 
             if hurst > h_cap_short:
                 est.ultimo_hurst_alto_short_ts = ahora
+                if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
+                    est.ultimo_log_warn_ts = ahora
+                    ram.log_operativo(
+                        f"[PHANTOM P-02 PRE-ORDER] {symbol} [SHORT] blocked BEFORE sending order "
+                        f"in {etiqueta_p} (H={hurst:.3f} > {h_cap_short:.3f})."
+                    )
                 ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
                     symbol, "SHORT", "P-02_HURST_SHORT", f"H={hurst:.3f}>{h_cap_short:.3f}", mid, vector_snap_s
                 )

@@ -221,6 +221,7 @@ async def bucle_gobernador_mantenimiento(
     ts_ultimo_panel = time.time()
     ts_ultimo_lpu = 0.0
     ts_ultimo_oos = 0.0
+    ts_ultimo_pulso_radar = time.time()
 
     while not evento_apagado.is_set():
         await asyncio.sleep(1.0)
@@ -240,6 +241,24 @@ async def bucle_gobernador_mantenimiento(
                 ram.log_operativo(
                     f"[HOT-RELOAD OOS] Autonomous parameters synchronized from calibracion_oos.json: "
                     f"{aplicados} | Ctrl={ram.ESTADO_GLOBAL.controlador_autonomo}"
+                )
+
+        if (ahora - ts_ultimo_pulso_radar) >= 15.0:
+            ts_ultimo_pulso_radar = ahora
+            m_btc = ram.ESTADO_GLOBAL.metricas_ticks.get(cfg.PAR_LIDER_MACRO)
+            btc_str = f"BTC Z={m_btc.z_score:+.2f} OFI={m_btc.ofi_profundo:+.2f}" if (m_btc and m_btc.mid > 0.0) else "BTC init"
+            activos = [
+                ram.ESTADO_GLOBAL.metricas_ticks[p]
+                for p in cfg.PARES_CAMPEONES
+                if p in ram.ESTADO_GLOBAL.metricas_ticks and ram.ESTADO_GLOBAL.metricas_ticks[p].mid > 0.0
+            ]
+            if activos:
+                top_p = max(activos, key=lambda x: abs(x.z_score))
+                par_corto = top_p.symbol.split("/")[0]
+                ram.log_operativo(
+                    f"[RADAR LIVE 25Hz] {btc_str} | Top Dislocation: {par_corto} "
+                    f"Z={top_p.z_score:+.2f} (DP={top_p.dp_pct * 100:+.2f}% | EMA900={top_p.ema900_dist_pct * 100:+.2f}% | "
+                    f"OFI={top_p.ofi_profundo:+.2f} | H={top_p.hurst:.2f}) | Open Slots: {len(ram.ESTADO_GLOBAL.posiciones_activas)}/{cfg.SLOTS_CONCURRENTES_MAX}"
                 )
 
         if (ahora - ts_ultimo_panel) >= 300.0:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # HFT DOCTOR BLYTHE ENGINE - PRODUCTION BASELINE TERPSICHORA V1.0
-# Low-Jitter Linux Infrastructure & Colorized Live CLI HUD Installer (verbot)
+# Low-Jitter Linux Infrastructure & Zero-Buffer Colorized CLI HUD (verbot)
 # ==============================================================================
 set -e
 
@@ -38,12 +38,12 @@ verbot() {
             ./venv/bin/python evaluador_cuantico_oos.py --lab
         else
             ./venv/bin/python -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=16)"
-            echo -e "[1;96m [STREAMING COLORIZED TELEMETRY - Press Ctrl+C to exit view without stopping bot][0m"
-            tail -n 0 -f "${repo_dir}/bot_hft.log" 2>/dev/null | ./venv/bin/python -u -c "import sys, signal, gestor_posiciones as gp; signal.signal(signal.SIGINT, lambda *_: sys.exit(0)); [print(gp.colorear_linea_log_mobaxterm(line), flush=True) for line in sys.stdin]" 2>/dev/null
+            echo -e "[1;96m [STREAMING COLORIZED TELEMETRY (25Hz) - Press Ctrl+C to exit view without stopping bot][0m"
+            tail -n 5 -f "${repo_dir}/bot_hft.log" 2>/dev/null | ./venv/bin/python -u -c "import sys, signal, gestor_posiciones as gp; signal.signal(signal.SIGINT, lambda *_: sys.exit(0)); [print(gp.colorear_linea_log_mobaxterm(line), flush=True) for line in iter(sys.stdin.readline, '')]" 2>/dev/null
         fi
     )
 }
 # === DOCTOR-BLYTHE CLI END ===
 EOF
 
-echo "[OK] Colorized Infrastructure & verbot CLI configured for HFT Doctor Blythe Engine - Terpsichora V1.0"
+echo "[OK] Zero-Buffer Colorized Infrastructure & verbot CLI configured for Doctor Blythe V1.0"
