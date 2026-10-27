@@ -86,10 +86,11 @@ def verificar_veto_macro_btc_completo(direccion: str, ahora: float) -> Tuple[boo
         if ahora < ram.ESTADO_GLOBAL.btc_veto_long_hasta:
             return False, "BTC_VETO_COOLDOWN_12S"
     else:
+        choque_s, _ = evaluar_choque_directo_btc("SHORT", m_btc.z_score, m_btc.ofi_profundo, umbral_ofi_btc, 0.50)
         subida_btc = (
-            (m_btc.ofi_profundo >= umbral_ofi_btc and m_btc.z_score >= 0.25)
+            choque_s
+            or (m_btc.ofi_profundo >= umbral_ofi_btc and m_btc.z_score >= 0.25)
             or (m_btc.z_score >= cfg.BTC_VETO_Z_UMBRAL_SUBIDA)
-            or (m_btc.ofi_profundo >= 0.25 and m_btc.z_score >= 0.50)
         )
         if subida_btc:
             ram.ESTADO_GLOBAL.btc_veto_short_hasta = max(

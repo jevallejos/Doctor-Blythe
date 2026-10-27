@@ -4,6 +4,7 @@ Micro-Modulo de Apoyo #5: Higiene Automatica de Disco (Log Rotation .gz Zero-Jit
 y Compactacion de Memoria cuando Slots == 0/1.
 """
 import datetime
+import gc
 import gzip
 import pathlib
 import shutil
@@ -66,4 +67,9 @@ def ejecutar_mantenimiento_silencioso_disco(estado_ram: Any, forzar: bool = Fals
         for k in expirados:
             eventos_col.pop(k, None)
 
+    # Ejecutar recoleccion rapida de generacion 0/1 fuera del camino critico (Slots == 0/1)
+    try:
+        gc.collect(1)
+    except Exception:
+        pass
     return rotado

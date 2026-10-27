@@ -79,7 +79,7 @@ def log_operativo(mensaje: str, consola: bool = True) -> str:
     return linea
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class PermisoParRAM:
     symbol: str
     habilitado: bool = True
@@ -108,7 +108,7 @@ class PermisoParRAM:
             self.permitir_short = True
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class MetricaTick:
     symbol: str
     timestamp: float = dataclasses.field(default_factory=time.time)
@@ -143,7 +143,7 @@ class MetricaTick:
     phase_latch_ema_dist: float = 0.0
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class PosicionActiva:
     symbol: str
     side: str
@@ -243,7 +243,7 @@ class PosicionActiva:
         return pnl_pct
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class EventoForensePendiente:
     timestamp: float
     symbol: str
@@ -254,7 +254,7 @@ class EventoForensePendiente:
     vector_mercado: Dict[str, Any]
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class EventoPostCierrePendiente:
     timestamp_cierre: float
     trade_id: int

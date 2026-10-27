@@ -8,6 +8,7 @@ HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import pathlib
 import signal
@@ -237,6 +238,7 @@ async def bucle_gobernador_mantenimiento(
 ) -> None:
     ts_ultimo_panel: float = time.time()
     ts_ultimo_digest_4h: float = time.time()
+    ts_ultimo_keepalive_uta: float = time.time()
     ts_ultimo_lpu: float = 0.0
     ts_ultimo_oos: float = 0.0
     ts_ultimo_pulso_radar: float = 0.0
@@ -294,8 +296,18 @@ async def bucle_gobernador_mantenimiento(
                         f"Slots: {len(ram.ESTADO_GLOBAL.posiciones_activas)}/{cfg.SLOTS_CONCURRENTES_MAX}"
                     )
 
+            # Pre-calentador de socket TLS privado cada 25s (mantiene RTT ~30-40ms cuando Slots == 0/1)
+            if (
+                (ahora - ts_ultimo_keepalive_uta) >= 25.0
+                and not ram.ESTADO_GLOBAL.posiciones_activas
+                and not ram.ESTADO_GLOBAL.locks_pre_fill
+            ):
+                ts_ultimo_keepalive_uta = ahora
+                await auditar_balance_uta_bybit(exchange, silencioso=True)
+
             if (ahora - ts_ultimo_panel) >= 300.0:
                 ts_ultimo_panel = ahora
+                ts_ultimo_keepalive_uta = ahora
                 await auditar_balance_uta_bybit(exchange, silencioso=True)
                 st.imprimir_panel_caja_negra()
                 mhd.ejecutar_mantenimiento_silencioso_disco(ram.ESTADO_GLOBAL)
@@ -415,6 +427,10 @@ async def ejecutar_orquestador_principal() -> int:
 
 
 def main() -> int:
+    try:
+        gc.set_threshold(50000, 50, 50)
+    except Exception:
+        pass
     if sys.platform != "win32":
         try:
             import uvloop  # type: ignore

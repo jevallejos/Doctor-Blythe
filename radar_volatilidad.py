@@ -295,7 +295,7 @@ class RadarVolatilidadHFT:
             es_hb, z_score, dp_pct, ema900_dist_pct, ahora, metrica
         )
 
-        if dislocacion_long_activa or latch_long_vigente:
+        if (dislocacion_long_activa or latch_long_vigente) and mef.evaluar_coherencia_signo_rf06("LONG", z_score, dp_pct)[0]:
             vector_snap = {
                 "z_entry": z_score,
                 "dp_pct": round(dp_pct * 100.0, 4),

@@ -110,7 +110,7 @@ EMA900_SOBREEXTENSION_SHORT_T1: float = 0.0028
 EMA900_MAX_SOBRECOMPRA_LONG: float = 0.0042
 
 # ==============================================================================
-# GROUP 5: MICROSTRUCTURAL SHIELDS ? HURST, LYAPUNOV, HAWKES, OFI (#059 - #076)
+# GROUP 5: MICROSTRUCTURAL SHIELDS - HURST, LYAPUNOV, HAWKES, OFI (#059 - #076)
 # ==============================================================================
 HURST_MAX_ENTRADA_LONG: float = 0.485
 HURST_MAX_ENTRADA_LONG_T1: float = 0.482
