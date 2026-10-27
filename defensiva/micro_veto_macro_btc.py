@@ -38,20 +38,28 @@ def puede_liberar_cooldown_btc_en_giro_sincronizado(
     lyapunov_alt: float,
     cooldown_total_seg: float = 12.0,
 ) -> bool:
+    """
+    Libera anticipadamente la cola residual de BTC_VETO_COOLDOWN_12S cuando:
+    1. Han transcurrido al menos 2.5s desde el pulso de choque inicial de BTC.
+    2. BTC ya detuvo la caida (z_btc >= -0.05 y ofi_btc >= -0.05 en LONG).
+    3. La altcoin se encuentra en regimen antipersistente (H <= 0.485) con
+       absorcion compradora fuerte (OFI >= +0.35) y frenado de Lyapunov (>= -0.00010).
+    """
     tiempo_transcurrido = max(0.0, cooldown_total_seg - segundos_restantes_cooldown)
-    if tiempo_transcurrido < 3.0:
+    if tiempo_transcurrido < 2.5:
         return False
-    if hurst_alt > 0.45:
+
+    if hurst_alt > 0.485:
         return False
 
     if direccion == "LONG":
-        btc_recuperado = (z_btc >= 0.0) and (ofi_btc >= 0.25)
-        alt_en_rebote_limpio = (ofi_alt >= 0.35) and (lyapunov_alt > 0.00005)
-        return bool(btc_recuperado and alt_en_rebote_limpio)
+        btc_estabilizado = (z_btc >= -0.05) and (ofi_btc >= -0.05)
+        alt_absorbiendo_piso = (ofi_alt >= 0.35) and (lyapunov_alt >= -0.00010)
+        return bool(btc_estabilizado and alt_absorbiendo_piso)
     else:
-        btc_girado_abajo = (z_btc <= 0.0) and (ofi_btc <= -0.25)
-        alt_en_caida_limpia = (ofi_alt <= -0.35) and (lyapunov_alt < -0.00005)
-        return bool(btc_girado_abajo and alt_en_caida_limpia)
+        btc_estabilizado_short = (z_btc <= 0.05) and (ofi_btc <= 0.05)
+        alt_absorbiendo_techo = (ofi_alt <= -0.35) and (lyapunov_alt <= 0.00010)
+        return bool(btc_estabilizado_short and alt_absorbiendo_techo)
 
 
 def verificar_veto_macro_btc_completo(direccion: str, ahora: float) -> Tuple[bool, str]:

@@ -310,6 +310,7 @@ async def bucle_gobernador_mantenimiento(
                 ts_ultimo_keepalive_uta = ahora
                 await auditar_balance_uta_bybit(exchange, silencioso=True)
                 st.imprimir_panel_caja_negra()
+                mhd.ejecutar_ciclo_higiene_4_niveles(time.time(), slots_ocupados=0, radar_ref=getattr(self, 'radar', None))
                 mhd.ejecutar_mantenimiento_silencioso_disco(ram.ESTADO_GLOBAL)
 
             if (ahora - ts_ultimo_digest_4h) >= 14400.0:

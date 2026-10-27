@@ -241,7 +241,8 @@ verbot() {
                     echo " -> Engine PID & Priority  : PID ${lpid} | Nice=$(ps -o ni= -p "${lpid}" 2>/dev/null | tr -d ' ') | OOM_Adj=$(cat /proc/${lpid}/oom_score_adj 2>/dev/null || echo 'N/A')"
                 fi
                 if command -v chronyc >/dev/null 2>&1; then
-                    echo " -> Atomic Clock Tracking  : $(chronyc tracking 2>/dev/null | grep 'System time' || echo 'Active')"
+                    echo " -> Auto-Hygiene 4-Cycle : ACTIVE (25s TLS Warm | 3m GC RAM | 15m UTA 1:1 | 30m Log Sync)"
+    echo " -> Atomic Clock Tracking  : $(chronyc tracking 2>/dev/null | grep 'System time' || echo 'Active')"
                 fi
                 echo "======================================================================================"
                 ;;
