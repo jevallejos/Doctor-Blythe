@@ -1,45 +1,57 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Ofensivo #3: Dimensionamiento Kelly UTA y Anti-Trampa de Margen Libre.
-Garantiza nocional completo (~$16.00-$17.25 USDT) cuando Slots == 0/1.
+Micro-Modulo Ofensivo #3: Dimensionamiento Kelly 3x y Proteccion Anti-110007 UTA.
+Acota el margen requerido por orden al 75% del balance libre real en Bybit UTA,
+garantizando cumplimiento de nocional minimo (5.00 USDT) sin agotar el margen disponible.
 """
+import inspect
 from typing import Any, Tuple
+import config_parametros as cfg
 import core_estado_ram as ram
 
 
-def sanear_balance_libre_slot_vacio(balance_libre_crudo: float) -> float:
+def resolver_capital_base_uta(balance_libre_crudo: float) -> float:
     libre = float(balance_libre_crudo or 0.0)
     est = getattr(ram, "ESTADO_GLOBAL", None)
     if est is None:
         return libre
 
-    pos_dict = getattr(est, "posiciones_activas", {}) or {}
-    activas = [p for p in pos_dict.values() if not getattr(p, "cerrada", False)]
-    if len(activas) > 0:
-        return libre
+    free_ram = float(getattr(est, "free_usdt", 0.0) or 0.0)
+    if free_ram > 0.0:
+        return round(free_ram, 4)
 
-    total_real = float(getattr(est, "capital_total_uta", 0.0) or 0.0)
-    if total_real > 0.0 and libre > 0.0 and libre < (total_real * 0.85):
-        return round(max(libre, total_real * 0.98), 4)
+    return round(libre, 4)
 
-    return libre
+
+def sanear_balance_libre_slot_vacio(balance_libre_crudo: float) -> float:
+    return resolver_capital_base_uta(balance_libre_crudo)
 
 
 def calcular_dimension_kelly_uta(
     tri_mod: Any,
-    capital_libre_usdt: float,
-    z_score: float,
-    ofi: float,
-    hurst: float = 0.42,
-    side: str = "LONG",
-    symbol: str = "",
+    *args: Any,
+    **kwargs: Any,
 ) -> Tuple[float, float, float]:
-    capital_saneado = sanear_balance_libre_slot_vacio(capital_libre_usdt)
-    return tri_mod.calcular_dimension_kelly(
-        capital_libre_usdt=capital_saneado,
-        z_score=z_score,
-        ofi=ofi,
-        hurst=hurst,
-        side=side,
-        symbol=symbol,
-    )
+    fn = tri_mod.calcular_dimension_kelly
+    try:
+        sig = inspect.signature(fn)
+        bound = sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+        balance_usado = 0.0
+        for nombre_param, valor in list(bound.arguments.items()):
+            if any(k in nombre_param.lower() for k in ("balance", "capital", "usdt", "libre", "equity")):
+                if isinstance(valor, (int, float)):
+                    balance_usado = resolver_capital_base_uta(float(valor))
+                    bound.arguments[nombre_param] = balance_usado
+                    break
+        kelly_f, margen_u, nocional_u = fn(*bound.args, **bound.kwargs)
+        if balance_usado > 0.0 and not bool(getattr(cfg, "MODO_PAPER_TRADING", False)):
+            lev = float(getattr(cfg, "APALANCAMIENTO_OPERATIVO", 3))
+            max_nocional_seguro = round(balance_usado * 0.75 * lev, 4)
+            min_ord = float(getattr(cfg, "ORDEN_MINIMA_BYBIT_USDT", 5.0))
+            if max_nocional_seguro >= min_ord:
+                nocional_u = min(float(nocional_u), max_nocional_seguro)
+                margen_u = round(nocional_u / lev, 4)
+        return float(kelly_f), float(margen_u), float(nocional_u)
+    except Exception:
+        return fn(*args, **kwargs)

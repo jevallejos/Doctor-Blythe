@@ -233,6 +233,18 @@ async def bucle_stream_par(
             break
         except Exception as exc:
             rad.RADAR_GLOBAL.resetear_libro_par(symbol)
+            msg_exc = str(exc)
+            if "110007" in msg_exc or "insufficient" in msg_exc.lower():
+                ram.log_operativo(
+                    f"[SNIPER] [MARGIN-GUARD] Bybit 110007 on {symbol}: refreshing UTA balance and checking orphan state..."
+                )
+                try:
+                    await gp.reconciliar_posiciones_huerfanas_arranque(exchange)
+                    await auditar_balance_uta_bybit(exchange, silencioso=True)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.5)
+                continue
             ram.log_operativo(f"[RADAR] Stream error on {symbol}: {type(exc).__name__}: {exc}")
             await asyncio.sleep(1.5)
 
