@@ -308,6 +308,8 @@ async def ejecutar_suite_certificacion_v1() -> int:
     )
     assert disp_s is True and side_s == "SHORT" and sig_s is not None
     assert sig_s["dp_pct"] > 0.0028 and sig_s["hurst"] <= cfg.HURST_MAX_ENTRADA_SHORT
+    assert rad.mir.evaluar_override_climax_hurst("SHORT", 7.22, -0.96, -0.76, -0.0026, 0.7089) is False
+    assert rad.mir.evaluar_override_climax_hurst("SHORT", 5.80, -0.90, -0.60, -0.0012, 0.5050) is True
     ram.log_operativo(" [12/18] SHORT-SNIPER Exhausted-Top Engine, RF-06 Sign Coherence (dp>0 & Z>0), and H<=0.485 Cap validated.")
 
     # [13/18] Penny-Jump Quoting & Pre-Validated MarkPrice SL Geometry

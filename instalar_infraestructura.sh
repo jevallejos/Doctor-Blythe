@@ -193,7 +193,7 @@ Boveda forense de intercepciones (+15s) y markouts post-cierre (+60s).
 .I /etc/sysctl.d/99-doctor-blythe-hft.conf
 Parametros de red y memoria del kernel Linux para baja latencia.
 .SH AUTHOR
-Arquitectura HFT Doctor Blythe Terpsichora V1.0 (39/39 Canonical Files Certified).
+Arquitectura HFT Doctor Blythe Terpsichora V1.0 (45/45 Canonical Files Certified).
 MAN_EOF
     sudo -n gzip -f /usr/local/share/man/man1/verbot.1 >/dev/null 2>&1 || true
     sudo -n cp -f /usr/local/share/man/man1/verbot.1.gz /usr/local/share/man/man1/doctor-blythe.1.gz >/dev/null 2>&1 || true

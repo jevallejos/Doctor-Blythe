@@ -213,7 +213,8 @@ class EjecutorSniperBybit:
             paso_poll = min(0.08, max(0.02, ttl_max / 10.0))
 
             estado_orden = orden
-            while (time.perf_counter() - ts_inicio) < ttl_max:
+            ttl_efectivo = ttl_max
+            while (time.perf_counter() - ts_inicio) < ttl_efectivo:
                 status_actual = str(estado_orden.get("status", "")).lower()
                 filled_actual = float(estado_orden.get("filled", 0.0) or 0.0)
                 if status_actual in ("closed", "filled") or filled_actual >= contratos:
@@ -235,6 +236,17 @@ class EjecutorSniperBybit:
                         break
 
                 elapsed = time.perf_counter() - ts_inicio
+                m_part = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
+                if m_part is not None and 0.0 < filled_actual < contratos:
+                    _, ttl_efectivo = mrfp.evaluar_extension_fill_parcial_en_cola(
+                        dir_norm,
+                        contratos,
+                        filled_actual,
+                        m_part.ofi_profundo,
+                        m_part.hurst,
+                        elapsed,
+                        ttl_max,
+                    )
                 if permitir_repeg and filled_actual <= 0.0 and elapsed >= 0.25:
                     await self._refrescar_punta_libro_en_cola(exchange, symbol)
 
@@ -346,7 +358,7 @@ class EjecutorSniperBybit:
                     )
                 return None
 
-            if (filled_final / contratos) < cfg.FRACCION_MINIMA_FILL_LOTE:
+            if not mrfp.validar_lote_ejecutado_suficiente(contratos, filled_final):
                 side_dust = "sell" if dir_norm == "LONG" else "buy"
                 try:
                     await exchange.create_order(

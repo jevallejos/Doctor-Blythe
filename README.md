@@ -13,10 +13,10 @@ Autonomous 25.0 Hz Limit Order Book (LOB) Microstructural Execution System for B
 - **Level 5 (`radar_volatilidad.py`)**: 25.0 Hz L2 microstructural radar orchestrator and `SCAR-LOCK-00..18` ledger.
 - **Level 6A (`ejecutor_sniper.py`)**: Passive `PostOnly` execution lifecycle and post-abort late-fill guard.
 - **Level 6B (`gestor_posiciones.py`)**: Active position lifecycle governor and startup orphan reconciler.
-- **Level 7 (`main.py`)**: Central 25.0 Hz WebSocket orchestrator, physical PID lock, and atomic `os.execv` auto-respawn across all 29 runtime modules.
+- **Level 7 (`main.py`)**: Central 25.0 Hz WebSocket orchestrator, physical PID lock, and atomic `os.execv` auto-respawn across all 35 runtime modules.
 - **Level 8 (`evaluador_cuantico_oos.py`)**: Walk-Forward OOS calibration orchestrator.
 
-### 1. `ofensiva/` (8 Alpha Capture, Quoting, Sizing & Winner-Maximization Micro-Modules)
+### 1. `ofensiva/` (11 Alpha Capture, Quoting, Sizing & Winner-Maximization Micro-Modules)
 - `ofensiva/micro_motor_maker.py`: Moallemi L1 support-aware queue survival and directional re-peg cadence.
 - `ofensiva/micro_motor_wald_exit.py`: Tick-quantized Zero-Loss floor (`SCAR-LOCK-14`), class-elastic early BE breathing room, and `MAKER_UNWIND` rally inhibitor.
 - `ofensiva/micro_sizing_kelly.py`: Full-power UTA free-margin recovery when `Slots == 0/1`.
@@ -24,19 +24,25 @@ Autonomous 25.0 Hz Limit Order Book (LOB) Microstructural Execution System for B
 - `ofensiva/micro_cresta_convexo_sprt.py`: Hyperbolic retention factor `kappa(MFE_t)` and Abraham Wald SPRT log-likelihood crest detector.
 - `ofensiva/micro_conviccion_kelly.py`: Anti-fragile Kelly conviction bonuses, House-Money compounder, and outlier convex expansion (`|Z| >= 6.0`).
 - `ofensiva/micro_enganche_fase.py`: 4.50s Puppeteer Phase-Latched Envelope for `LONG` V-bottoms and `SHORT-SNIPER` top-rollovers.
-- `ofensiva/micro_impulso_runner.py`: Extreme climax Hurst override, winning-seed scratch protector (`MFE >= +0.045%`), and stalled-scratch escalation guard.
+- `ofensiva/micro_impulso_runner.py`: Extreme climax Hurst override (hard-capped at `H <= 0.515`), winning-seed scratch protector (`MFE >= +0.045%`), and stalled-scratch escalation guard.
+- `ofensiva/micro_escudo_diamante_fase2.py`: Phase 2 `[DIAMOND]` Maker Shield `PostOnly` activator and active Maker chase re-peg cadence.
+- `ofensiva/micro_retenedor_fill_parcial.py`: Partial-fill queue retention extender (`+0.85s` on strong favorable OFI) and minimum lot fill validator.
+- `ofensiva/micro_desarme_unwind_pasivo.py`: MFE stall harvest trigger (`16s+`) and `42.0s` passive `[MAKER_UNWIND]` governor.
 
-### 2. `defensiva/` (4 Kinematic Shields, Macro BTC Veto, Contagion & Scratch Micro-Modules)
+### 2. `defensiva/` (7 Kinematic Shields, Macro BTC Veto, Contagion, Scratch & Escape Micro-Modules)
 - `defensiva/micro_escudos_fisicos.py`: Lyapunov braking kinematics, directional Hurst caps, OFI/Hawkes absorption, and `RF-06` sign coherence.
 - `defensiva/micro_veto_macro_btc.py`: Macro BTC circuit breaker (`Z <= -4.0`), 12s lead-lag cooldown, and synchronized reversal unlock.
 - `defensiva/micro_cortafuegos_contagio.py`: Structural Anti-LUNA filter, quantitative directional matrix, and post-loss quarantine timer.
 - `defensiva/micro_evacuador_scratch.py`: Pre-validated Bybit V5 `MarkPrice` SL geometry (`SEI-02`) and 18.0s passive `Maker-Scratch` (`RF-18`).
+- `defensiva/micro_escape_reconciliador.py`: `72.0s` passive pre-escape, `90.0s` `[ESCAPE_TEMPORAL]` hard stop, and startup `[ESCAPE_HUERFANA_BOOT]` classifier.
+- `defensiva/micro_candado_climax_hurst.py`: Hard physical Hurst ceiling (`H <= 0.515`) for `SHORT-SNIPER` climax overrides and `15.0s` post-Hurst cooldown.
+- `defensiva/micro_decaimiento_chronos_sl.py`: Stochastic `CHRONOS` time-decay internal Stop-Loss compression after `42.0s`.
 
 ### 3. `apoyo/` (7 L2 Math, UTA Parity, ANSI HUD, Hygiene, Anatomy & Auto-Sensitivity Micro-Modules)
 - `apoyo/micro_cinematica_l2.py`: Jump-robust Bipower Variation `VentanaZ`, 5-level deep OFI, Hurst, Lyapunov, and 24h seasonality curve.
 - `apoyo/micro_paridad_lvr_uta.py`: Continuous-time LOB LVR toxicity estimator and ASCII Black Box formatter.
 - `apoyo/micro_hud_ansi_telegram.py`: Zero-disk-contamination ANSI live colorizer for `verbot`.
 - `apoyo/micro_gemelo_digital_oos.py`: 72h Walk-Forward Bayesian metrics and 3,456-combination counterfactual Digital Twin (`--lab`).
-- `apoyo/micro_higiene_disco.py`: Zero-jitter `.gz` log rotation and RAM compaction when `Slots == 0/1`.
+- `apoyo/micro_higiene_disco.py`: 4-cycle slot-gated RAM/UTA/Log self-cleaning governor and `.gz` log rotation when `Slots == 0/1`.
 - `apoyo/micro_inspector_forense.py`: Anatomical CLI inspector (`verbot -a`) for per-pair efficiency, +15s shield accuracy, and +60s post-exit markouts.
 - `apoyo/micro_sensibilidad_autonoma.py`: Closed-loop real-time sensitivity governor driven by queue abort rates and +60s markouts.

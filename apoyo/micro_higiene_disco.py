@@ -115,12 +115,12 @@ def ejecutar_ciclo_higiene_4_niveles(
         liberados = gc.collect(1)
         _ESTADO_HIGIENE_4C["objetos_liberados_total"] += int(liberados)
         _ESTADO_HIGIENE_4C["ciclos_ejecutados"] += 1
-        if radar_ref is not None and hasattr(radar_ref, "_btc_veto_hasta_ts"):
-            d_veto = getattr(radar_ref, "_btc_veto_hasta_ts", {})
-            if isinstance(d_veto, dict):
-                expirados = [k for k, v in list(d_veto.items()) if float(v) < (ahora_ts - 60.0)]
-                for k in expirados:
-                    d_veto.pop(k, None)
+        import core_estado_ram as ram
+        d_locks = getattr(ram.ESTADO_GLOBAL, "locks_pre_fill", {})
+        if isinstance(d_locks, dict):
+            for k, v in list(d_locks.items()):
+                if float(v) < ahora_ts:
+                    d_locks.pop(k, None)
         acciones.append(f"GC_GEN1({liberados})")
 
     # Ciclo 3: Cada 900s (15 min) -> GC Generacion 2 + Limpieza de .pyc temporales

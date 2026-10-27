@@ -279,6 +279,12 @@ class RadarVolatilidadHFT:
         if est.vpin_ema > cfg.VPIN_MAX_TOXICIDAD:
             return False, "VPIN_TOXICITY_EXCEEDED", None
 
+        if (
+            ahora < ram.ESTADO_GLOBAL.locks_pre_fill.get(symbol, 0.0)
+            or len(ram.ESTADO_GLOBAL.posiciones_activas) >= cfg.SLOTS_CONCURRENTES_MAX
+        ):
+            return False, "SLOT_OR_ORDER_ACTIVE", None
+
         clase = cfg.obtener_clase_activo(symbol)
         es_hb = clase == cfg.CLASE_HIGH_BETA
         ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
@@ -490,7 +496,7 @@ class RadarVolatilidadHFT:
                 )
                 return False, "SHORT_HURST_EXCEEDED", None
 
-            if (ahora - est.ultimo_hurst_alto_short_ts) < 15.0:
+            if not mcch.verificar_enfriamiento_post_hurst_short(ahora, est.ultimo_hurst_alto_short_ts, 15.0)[0]:
                 return False, "SHORT_POST_HURST_COOLDOWN", None
 
             if est.intensidad_hawkes > cfg.HAWKES_INTENSIDAD_MAX_SHORT:

@@ -478,11 +478,7 @@ class GestorPosicionesChronosTriz:
             intervalo_repeg = (
                 0.75
                 if "SCRATCH" in motivo_up
-                else (
-                    cfg.COSECHA_REPEG_INTERVALO_SEG
-                    if ("UNWIND" in motivo_up or "HARVEST" in motivo_up or "TRAILING" in motivo_up)
-                    else 1.50
-                )
+                else medf.calcular_intervalo_repeg_salida_maker(motivo_up)
             )
             if (ahora - pos.ultimo_repeg_salida_ts) >= intervalo_repeg and px_target != pos.precio_orden_salida:
                 await exchange.cancel_order(pos.orden_salida_id, pos.symbol)
@@ -537,12 +533,25 @@ class GestorPosicionesChronosTriz:
         )
         lambda_w = pos.lambda_wald
 
-        if edad >= cfg.TIEMPO_MAX_HOLD_SEG:
+        forzar_90s, _, motivo_esc = mer.evaluar_escape_temporal_posicion(
+            edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.direccion, pos.en_proceso_cierre
+        )
+        if forzar_90s:
             ram.log_operativo(
                 f"[SNIPER] {pos.symbol} reached maximum hold time "
                 f"({int(edad)}s >= {int(cfg.TIEMPO_MAX_HOLD_SEG)}s). Liquidating position to release margin."
             )
-            return await self._ejecutar_cierre_taker(exchange, pos, precio_actual, "ESCAPE_TEMPORAL")
+            return await self._ejecutar_cierre_taker(exchange, pos, precio_actual, motivo_esc)
+
+        pos.sl_interno = mdcs.calcular_sl_interno_chronos(
+            pos.precio_entrada,
+            pos.direccion,
+            pos.sl_interno,
+            edad,
+            pos.max_pnl_pct_alcanzado,
+            tick_size,
+            pos.trinquete_be_activo,
+        )
 
         sl_hit = (
             (pos.direccion == "LONG" and precio_actual <= pos.sl_interno)
@@ -645,9 +654,15 @@ class GestorPosicionesChronosTriz:
 
         # 3. Phase 2 Stall Harvest (16s+) when MFE reached +0.11%..+0.21% and momentum stalls
         if (
-            edad >= 16.0
-            and pnl_pct >= umbral_stall
-            and (lambda_w <= 0.15 or ofi_5s <= 0.08)
+            (
+                mdup.evaluar_cosecha_estancamiento_mfe(
+                    pos.direccion, edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, umbral_stall
+                )
+                or mdup.evaluar_desarme_maker_unwind_42s(
+                    pos.direccion, edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.cosecha_activa
+                )
+                or (edad >= 16.0 and pnl_pct >= umbral_stall and (lambda_w <= 0.15 or ofi_5s <= 0.08))
+            )
             and (not mmw.debe_inhibir_maker_unwind_en_rally(pos.direccion, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.symbol))
         ):
             if not pos.trinquete_be_activo:
@@ -768,10 +783,10 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
                 {"reduceOnly": True},
             )
             px_out = float(orden.get("average") or orden.get("price") or mark_px)
-            if side_raw in ("long", "buy"):
-                pnl_bruto_pct = (px_out - entry_px) / entry_px if entry_px > 0.0 else 0.0
-            else:
-                pnl_bruto_pct = (entry_px - px_out) / entry_px if entry_px > 0.0 else 0.0
+            info_h = mer.clasificar_posicion_huerfana_arranque(
+                symbol, side_raw, contratos, entry_px, px_out
+            )
+            pnl_bruto_pct = float(info_h["pnl_bruto_pct"])
 
             nocional = contratos * entry_px
             fee_est = (contratos * px_out) * cfg.COMISION_TAKER_PCT

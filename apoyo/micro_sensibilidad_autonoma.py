@@ -77,5 +77,5 @@ def auto_calibrar_sensibilidades_en_vivo(estado_ram: Any, ejecutor: Any) -> Dict
         ctrl["mfe_stall_harvest_pct"] = float(cfg.COSECHA_ESTANCAMIENTO_MFE_PCT)
         ctrl["sens_scratch_edad_rebote_seg"] = 28.0
 
-    ctrl["sens_climax_hurst_override"] = 1.0 if len(falsos_rechazos) >= 0 else 0.0
+    ctrl["sens_climax_hurst_override"] = 1.0 if len(falsos_rechazos) >= 1 else 1.0
     return dict(ctrl)
