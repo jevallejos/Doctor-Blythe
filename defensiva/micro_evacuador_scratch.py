@@ -2,10 +2,12 @@
 """
 Micro-Modulo Defensivo #4: Geometria MarkPrice Stop-Loss (SEI-02), Calculo de
 Niveles SL Iniciales y Ley 2 (RF-18) de Evacuacion Pasiva Maker-Scratch 18.0s.
+Protege posiciones que ya rebotaron (MFE >= +0.045%) para no cortarlas en un retest de 0.00%.
 """
 from typing import Tuple
 import config_parametros as cfg
 from ofensiva import micro_cotizador_stoikov as mcs
+from ofensiva import micro_impulso_runner as mir
 
 
 def calcular_niveles_sl_iniciales(
@@ -53,6 +55,11 @@ def evaluar_gatillo_maker_scratch_18s(
     lambda_w: float,
     trinquete_be_activo: bool,
 ) -> bool:
+    if trinquete_be_activo:
+        return False
+    if mir.proteger_semilla_ganadora_de_scratch(edad_seg, pnl_pct, mfe_pct, ofi_5s, direccion):
+        return False
+
     t_scratch = float(cfg.obtener_aux("MAKER_SCRATCH_TIEMPO_SEG", 18.0))
     ofi_adv = float(cfg.obtener_aux("MAKER_SCRATCH_OFI_ADVERSO", -0.15))
     flujo_contra = (
@@ -61,12 +68,11 @@ def evaluar_gatillo_maker_scratch_18s(
     )
     sin_rebote_18s = (
         edad_seg >= 18.0
-        and not trinquete_be_activo
         and mfe_pct <= 0.00015
         and pnl_pct <= -0.0007
     )
     return bool(
-        (edad_seg >= 18.0 and pnl_pct <= 0.0 and flujo_contra)
+        (edad_seg >= 18.0 and mfe_pct <= 0.00025 and pnl_pct <= 0.0 and flujo_contra)
         or sin_rebote_18s
         or (edad_seg >= t_scratch and pnl_pct <= -0.0006 and lambda_w <= -1.20)
     )

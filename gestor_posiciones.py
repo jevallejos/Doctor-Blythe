@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 
 import config_parametros as cfg
 from ofensiva import micro_cresta_convexo_sprt as mcw
+from ofensiva import micro_impulso_runner as mir
 from ofensiva import micro_motor_wald_exit as mmw
 from defensiva import micro_evacuador_scratch as mes
 from apoyo import micro_hud_ansi_telegram as mht
@@ -471,9 +472,13 @@ class GestorPosicionesChronosTriz:
                 return None
 
             intervalo_repeg = (
-                cfg.COSECHA_REPEG_INTERVALO_SEG
-                if ("UNWIND" in motivo_up or "HARVEST" in motivo_up or "TRAILING" in motivo_up)
-                else 1.80
+                0.75
+                if "SCRATCH" in motivo_up
+                else (
+                    cfg.COSECHA_REPEG_INTERVALO_SEG
+                    if ("UNWIND" in motivo_up or "HARVEST" in motivo_up or "TRAILING" in motivo_up)
+                    else 1.50
+                )
             )
             if (ahora - pos.ultimo_repeg_salida_ts) >= intervalo_repeg and px_target != pos.precio_orden_salida:
                 await exchange.cancel_order(pos.orden_salida_id, pos.symbol)
@@ -695,6 +700,21 @@ class GestorPosicionesChronosTriz:
             return await self._iniciar_o_actualizar_salida_maker(
                 exchange, pos, best_bid, best_ask, tick_size, "MAKER_SCRATCH_18S", ts_now
             )
+
+        if pos.en_proceso_cierre and mir.debe_forzar_evacuacion_scratch_estancado(
+            pos.en_proceso_cierre,
+            pos.motivo_salida_pendiente,
+            ts_now - pos.ts_orden_salida,
+            pnl_pct,
+            ofi_5s,
+            pos.direccion,
+        ):
+            ram.log_operativo(
+                f"[MAKER-SCRATCH ESCALATION] {pos.symbol} passive scratch unfilled after "
+                f"{ts_now - pos.ts_orden_salida:.1f}s with PnL {pnl_pct * 100:+.2f}%: "
+                f"evacuating immediately to prevent full SL hit."
+            )
+            return await self._ejecutar_cierre_taker(exchange, pos, precio_actual, "MAKER_SCRATCH_18S")
 
         if pos.cosecha_activa or (pos.en_proceso_cierre and pos.orden_salida_id):
             return await self._iniciar_o_actualizar_salida_maker(

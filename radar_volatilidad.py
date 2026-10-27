@@ -13,6 +13,7 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import config_parametros as cfg
 from ofensiva import micro_enganche_fase as mep
+from ofensiva import micro_impulso_runner as mir
 from defensiva import micro_escudos_fisicos as mef
 from defensiva import micro_veto_macro_btc as mvb
 from apoyo import micro_cinematica_l2 as mcl
@@ -351,7 +352,10 @@ class RadarVolatilidadHFT:
                 )
                 return False, motivo_btc, None
 
-            if not mef.evaluar_filtro_hurst_direccional('LONG', hurst, h_cap_long, h_cap_long)[0]:
+            if (
+                not mef.evaluar_filtro_hurst_direccional('LONG', hurst, h_cap_long, h_cap_long)[0]
+                and not mir.evaluar_override_climax_hurst('LONG', z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst)
+            ):
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
                     est.ultimo_log_warn_ts = ahora
                     ram.log_operativo(
@@ -469,7 +473,10 @@ class RadarVolatilidadHFT:
                 if mid <= perm_par.step_lock_short_price * 1.0015 and ema900_slope_pct > 0.02:
                     return False, "ANTI_SQUEEZE_STEP_LOCK", None
 
-            if not mef.evaluar_filtro_hurst_direccional("SHORT", hurst, h_cap_short, h_cap_short)[0]:
+            if (
+                not mef.evaluar_filtro_hurst_direccional("SHORT", hurst, h_cap_short, h_cap_short)[0]
+                and not mir.evaluar_override_climax_hurst("SHORT", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst)
+            ):
                 est.ultimo_hurst_alto_short_ts = ahora
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
                     est.ultimo_log_warn_ts = ahora

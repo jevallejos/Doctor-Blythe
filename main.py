@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 import config_parametros as cfg
 from apoyo import micro_higiene_disco as mhd
 from apoyo import micro_inspector_forense as mif
+from apoyo import micro_sensibilidad_autonoma as msa
 import core_estado_ram as ram
 import ejecutor_sniper as eje
 import escudo_tricortex as tri
@@ -97,6 +98,7 @@ def _capturar_mtimes_codigo() -> Dict[str, float]:
         "ofensiva/micro_cresta_convexo_sprt.py",
         "ofensiva/micro_conviccion_kelly.py",
         "ofensiva/micro_enganche_fase.py",
+        "ofensiva/micro_impulso_runner.py",
         "defensiva/micro_escudos_fisicos.py",
         "defensiva/micro_veto_macro_btc.py",
         "defensiva/micro_cortafuegos_contagio.py",
@@ -107,6 +109,7 @@ def _capturar_mtimes_codigo() -> Dict[str, float]:
         "apoyo/micro_gemelo_digital_oos.py",
         "apoyo/micro_higiene_disco.py",
         "apoyo/micro_inspector_forense.py",
+        "apoyo/micro_sensibilidad_autonoma.py",
     ):
         p = base_dir / nombre
         if p.exists():
@@ -252,6 +255,7 @@ async def bucle_gobernador_mantenimiento(
 
             if (ahora - ts_ultimo_oos) >= 30.0:
                 ts_ultimo_oos = ahora
+                msa.auto_calibrar_sensibilidades_en_vivo(ram.ESTADO_GLOBAL, eje.EJECUTOR_GLOBAL)
                 recargado, _, aplicados = cfg.recargar_calibracion_oos_si_cambio()
                 if recargado:
                     ram.log_operativo(
