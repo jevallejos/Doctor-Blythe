@@ -1,3 +1,4 @@
+# File: main.py
 #!/usr/bin/env python3
 """
 Level 7 DAG: Central 25.0 Hz Asynchronous WebSocket Orchestrator, Single-Instance
@@ -15,7 +16,6 @@ import signal
 import sys
 import time
 from typing import Any, Dict, Optional, Tuple
-
 from dotenv import load_dotenv
 
 import config_parametros as cfg
@@ -32,6 +32,8 @@ import stats_tracker as st
 import telemetria_telegram as tel
 
 load_dotenv()
+
+_LOCK_RECONCILIACION_UTA = asyncio.Lock()
 
 
 class CerrojoInstanciaUnica:
@@ -79,6 +81,17 @@ class CerrojoInstanciaUnica:
         self.adquirido = False
 
 
+def _tiene_vuelo_o_posicion_activa(ahora: Optional[float] = None) -> bool:
+    ts = ahora if ahora is not None else time.time()
+    if ram.ESTADO_GLOBAL.posiciones_activas:
+        return True
+    for sym, exp_ts in list(ram.ESTADO_GLOBAL.locks_pre_fill.items()):
+        if isinstance(exp_ts, (int, float)) and ts < float(exp_ts):
+            return True
+        ram.ESTADO_GLOBAL.locks_pre_fill.pop(sym, None)
+    return False
+
+
 def _capturar_mtimes_codigo() -> Dict[str, float]:
     mtimes: Dict[str, float] = {}
     base_dir = cfg.obtener_ruta_base()
@@ -121,6 +134,8 @@ def _capturar_mtimes_codigo() -> Dict[str, float]:
         "apoyo/micro_higiene_disco.py",
         "apoyo/micro_inspector_forense.py",
         "apoyo/micro_sensibilidad_autonoma.py",
+        "test_tribrain_v1_suite.py",
+        "tools/validate_pool.py",
     ):
         p = base_dir / nombre
         if p.exists():
@@ -201,10 +216,8 @@ async def bucle_stream_par(
             else:
                 ob = await exchange.fetch_order_book(symbol, limit=50)
                 await asyncio.sleep(cfg.INTERVALO_RADAR_SEG)
-
             ahora = time.time()
             disparar, side_sig, senal = rad.RADAR_GLOBAL.procesar_instantanea_libro(symbol, ob, ahora)
-
             pos_activa = ram.ESTADO_GLOBAL.posiciones_activas.get(symbol)
             if pos_activa is not None and not pos_activa.cerrada:
                 m_par = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
@@ -221,7 +234,6 @@ async def bucle_stream_par(
                         ahora=ahora,
                     )
                 continue
-
             if disparar and senal is not None and symbol != cfg.PAR_LIDER_MACRO:
                 pos_nueva = await eje.EJECUTOR_GLOBAL.ejecutar_disparo_maker(
                     exchange=exchange,
@@ -242,11 +254,13 @@ async def bucle_stream_par(
                 ram.log_operativo(
                     f"[SNIPER] [MARGIN-GUARD] Bybit 110007 on {symbol}: refreshing UTA balance and checking orphan state..."
                 )
-                try:
-                    await gp.reconciliar_posiciones_huerfanas_arranque(exchange)
-                    await auditar_balance_uta_bybit(exchange, silencioso=True)
-                except Exception:
-                    pass
+                if not _LOCK_RECONCILIACION_UTA.locked():
+                    async with _LOCK_RECONCILIACION_UTA:
+                        try:
+                            await gp.reconciliar_posiciones_huerfanas_arranque(exchange)
+                            await auditar_balance_uta_bybit(exchange, silencioso=True)
+                        except Exception:
+                            pass
                 await asyncio.sleep(0.5)
                 continue
             ram.log_operativo(f"[RADAR] Stream error on {symbol}: {type(exc).__name__}: {exc}")
@@ -269,7 +283,6 @@ async def bucle_gobernador_mantenimiento(
         try:
             await asyncio.sleep(1.0)
             ahora = time.time()
-
             ram.ESTADO_GLOBAL.procesar_cola_forense_15s(ahora)
 
             if (ahora - ts_ultimo_lpu) >= 45.0:
@@ -318,12 +331,7 @@ async def bucle_gobernador_mantenimiento(
                         f"Slots: {len(ram.ESTADO_GLOBAL.posiciones_activas)}/{cfg.SLOTS_CONCURRENTES_MAX}"
                     )
 
-            # Pre-calentador de socket TLS privado cada 25s (mantiene RTT ~30-40ms cuando Slots == 0/1)
-            if (
-                (ahora - ts_ultimo_keepalive_uta) >= 25.0
-                and not ram.ESTADO_GLOBAL.posiciones_activas
-                and not ram.ESTADO_GLOBAL.locks_pre_fill
-            ):
+            if (ahora - ts_ultimo_keepalive_uta) >= 25.0 and not _tiene_vuelo_o_posicion_activa(ahora):
                 ts_ultimo_keepalive_uta = ahora
                 await auditar_balance_uta_bybit(exchange, silencioso=True)
                 mhd.ejecutar_ciclo_higiene_4_niveles(
@@ -338,8 +346,13 @@ async def bucle_gobernador_mantenimiento(
                 ts_ultimo_keepalive_uta = ahora
                 await auditar_balance_uta_bybit(exchange, silencioso=True)
                 st.imprimir_panel_caja_negra()
-                mhd.ejecutar_ciclo_higiene_4_niveles(ahora, slots_ocupados=len(ram.ESTADO_GLOBAL.posiciones_activas), radar_ref=rad.RADAR_GLOBAL)
                 mhd.ejecutar_mantenimiento_silencioso_disco(ram.ESTADO_GLOBAL)
+                mhd.ejecutar_ciclo_higiene_4_niveles(
+                    ahora,
+                    slots_ocupados=len(ram.ESTADO_GLOBAL.posiciones_activas),
+                    ordenes_en_vuelo=len(ram.ESTADO_GLOBAL.locks_pre_fill),
+                    radar_ref=rad.RADAR_GLOBAL,
+                )
 
             if (ahora - ts_ultimo_digest_4h) >= 14400.0:
                 ts_ultimo_digest_4h = ahora
@@ -349,19 +362,21 @@ async def bucle_gobernador_mantenimiento(
                 usdt_saved = sum(float(v.get("usdt_saved", 0.0)) for v in esc_d.values())
                 tel.notificar_digest_ejecutivo(rep_an["resumen_global"], tot_saved, usdt_saved)
 
-            if not ram.ESTADO_GLOBAL.posiciones_activas:
+            if not _tiene_vuelo_o_posicion_activa(ahora) and not _LOCK_RECONCILIACION_UTA.locked():
                 actuales = _capturar_mtimes_codigo()
                 if any(actuales.get(k, 0.0) > (v + 0.5) for k, v in mtimes_iniciales.items()):
-                    ram.log_operativo(
-                        "[AUTO-RESPAWN] Updated Python bytecode detected on disk with 0 open positions: "
-                        "executing atomic os.execv reload..."
-                    )
-                    try:
-                        await exchange.close()
-                    except Exception:
-                        pass
-                    ram.cerrar_descriptores_log()
-                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                    await asyncio.sleep(0.05)
+                    if not _tiene_vuelo_o_posicion_activa(time.time()):
+                        ram.log_operativo(
+                            "[AUTO-RESPAWN] Updated Python bytecode detected on disk with 0 open positions "
+                            "and 0 in-flight orders: executing atomic os.execv reload..."
+                        )
+                        try:
+                            await exchange.close()
+                        except Exception:
+                            pass
+                        ram.cerrar_descriptores_log()
+                        os.execv(sys.executable, [sys.executable] + sys.argv)
         except asyncio.CancelledError:
             break
         except Exception as exc:
@@ -404,9 +419,9 @@ async def ejecutar_orquestador_principal() -> int:
             await exchange.load_markets()
         except Exception:
             pass
-
-        await gp.reconciliar_posiciones_huerfanas_arranque(exchange)
-        total_u, free_u, locked_u = await auditar_balance_uta_bybit(exchange, silencioso=False)
+        async with _LOCK_RECONCILIACION_UTA:
+            await gp.reconciliar_posiciones_huerfanas_arranque(exchange)
+            total_u, free_u, locked_u = await auditar_balance_uta_bybit(exchange, silencioso=False)
         _, margen_k, nocional_k = tri.calcular_dimension_kelly(
             capital_libre_usdt=msk.sanear_balance_libre_slot_vacio(free_u),
             z_score=-3.0,
@@ -440,7 +455,6 @@ async def ejecutar_orquestador_principal() -> int:
         tareas.append(
             asyncio.create_task(bucle_gobernador_mantenimiento(exchange, evento_apagado, mtimes_ini))
         )
-
         await evento_apagado.wait()
         for t in tareas:
             t.cancel()

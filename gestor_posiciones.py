@@ -1,33 +1,29 @@
 """
-Level 6B DAG: Pure Single-Ticket Moallemi-Wald SPRT Optimal Stopping Exit
-Governor, Hyperbolic Convex MFE Ratchet kappa(MFE_t), Tick-Quantized Net-of-Fee
-Zero-Loss Floor (SCAR-LOCK-14), +0.11% Early Break-Even Shield, 18.0s Passive
-Maker Scratch, Startup Orphan Reconciler, and Colorized Live CLI HUD (verbot)
-for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+Level 6B DAG: Pure Single-Ticket Moallemi-Wald SPRT Optimal Stopping Exit Governor,
+Hyperbolic Convex MFE Ratchet kappa(MFE_t), Tick-Quantized Net-of-Fee Zero-Loss Floor (SCAR-LOCK-14),
++0.11% Early Break-Even Shield, 18.0s Passive Maker Scratch, Startup Orphan Reconciler,
+and Colorized Live CLI HUD (verbot) for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
-from ofensiva.micro_escudo_diamante_fase2 import verificar_disparo_fisico_trinquete_be
-from defensiva.micro_evacuador_scratch import calcular_precio_scratch_acotado_un_tick, evaluar_ventana_elastica_scratch_28s
-from defensiva.micro_escape_reconciliador import debe_adoptar_en_lugar_de_liquidar_huerfana
 
 import asyncio
 import time
 from typing import Any, Dict, Optional
 
 import config_parametros as cfg
-from ofensiva import micro_cresta_convexo_sprt as mcw
-from ofensiva import micro_impulso_runner as mir
-from ofensiva import micro_motor_wald_exit as mmw
-from defensiva import micro_evacuador_scratch as mes
-from defensiva import micro_escape_reconciliador as mer
-from defensiva import micro_decaimiento_chronos_sl as mdcs
-from ofensiva import micro_escudo_diamante_fase2 as medf
-from ofensiva import micro_desarme_unwind_pasivo as mdup
 from apoyo import micro_hud_ansi_telegram as mht
 from apoyo import micro_inspector_forense as mif
 import core_estado_ram as ram
+from defensiva import micro_decaimiento_chronos_sl as mdcs
+from defensiva import micro_escape_reconciliador as mer
+from defensiva import micro_evacuador_scratch as mes
 import ejecutor_sniper as eje
 import escudo_tricortex as tri
+from ofensiva import micro_cresta_convexo_sprt as mcw
+from ofensiva import micro_desarme_unwind_pasivo as mdup
+from ofensiva import micro_escudo_diamante_fase2 as medf
+from ofensiva import micro_impulso_runner as mir
+from ofensiva import micro_motor_wald_exit as mmw
 import stats_tracker as st
 import telemetria_telegram as tel
 
@@ -112,7 +108,6 @@ class GestorPosicionesChronosTriz:
             sl_seguro = mes.ajustar_geometria_sl_markprice(
                 nuevo_sl, pos.direccion, bid_l, ask_l, tick_size, buffer_ticks=1.0
             )
-
             await exchange.set_trading_stop(
                 pos.symbol,
                 {"stopLoss": str(sl_seguro), "slTriggerBy": "MarkPrice"},
@@ -134,7 +129,6 @@ class GestorPosicionesChronosTriz:
             return {}
         pos.cerrada = True
         ram.ESTADO_GLOBAL.posiciones_activas.pop(pos.symbol, None)
-
         px_out = float(precio_cierre_ref or pos.sl_bybit or pos.sl_interno or pos.precio_entrada)
         pnl_bruto_pct = pos.calcular_pnl_bruto_pct(px_out)
         nocional_out = abs(pos.contratos * px_out)
@@ -146,7 +140,6 @@ class GestorPosicionesChronosTriz:
         pnl_neto_pct = pnl_neto_usdt / nocional_ini
         duracion = max(1.0, time.time() - pos.timestamp_apertura)
         self.cierres_taker += 1
-
         ram.log_operativo(
             f"[SNIPER] [LOSS] CLOSE {pos.symbol} [SL_EXCHANGE] "
             f"{pos.precio_entrada} -> {px_out} | {pnl_neto_pct * 100:+.2f} % "
@@ -196,7 +189,6 @@ class GestorPosicionesChronosTriz:
             return {}
         pos.cerrada = True
         ram.ESTADO_GLOBAL.posiciones_activas.pop(pos.symbol, None)
-
         pnl_bruto_pct = pos.calcular_pnl_bruto_pct(precio_salida)
         pnl_bruto_usdt = abs(pos.contratos * pos.precio_entrada) * pnl_bruto_pct
         tasa_fee = cfg.COMISION_MAKER_PCT if es_maker else cfg.COMISION_TAKER_PCT
@@ -206,13 +198,11 @@ class GestorPosicionesChronosTriz:
         nocional_ini = max(1e-6, pos.nocional_entrada_usdt)
         pnl_neto_pct = pnl_neto_usdt / nocional_ini
         duracion = max(1.0, time.time() - pos.timestamp_apertura)
-
         if es_maker:
             self.cierres_maker += 1
         else:
             self.cierres_taker += 1
 
-        # Pure Moallemi-Wald Rule: 0s cooldown after WIN to harvest consecutive cascades!
         if pnl_neto_usdt > 0.0:
             etiqueta = "[WIN]"
         elif "SCRATCH" in motivo.upper():
@@ -234,7 +224,6 @@ class GestorPosicionesChronosTriz:
             f"{pos.precio_entrada} -> {precio_salida} | {pnl_neto_pct * 100:+.2f} % "
             f"({pnl_neto_usdt:+.4f} USDT) in {int(duracion)}s"
         )
-
         vector_in = {
             "z_entry": pos.z_entrada,
             "dp_pct": round(pos.dp_entrada_pct * 100.0, 4),
@@ -246,7 +235,6 @@ class GestorPosicionesChronosTriz:
             "volatilidad_bv": pos.volatilidad_bv_entrada,
             "percentil_24h": pos.percentil_entrada,
         }
-
         reg = st.registrar_operacion_cerrada(
             symbol=pos.symbol,
             side=pos.direccion,
@@ -266,7 +254,6 @@ class GestorPosicionesChronosTriz:
             vector_entrada=vector_in,
             trayectoria_pnl=pos.trayectoria_pnl,
         )
-
         tel.notificar_cierre_confirmado(
             symbol=pos.symbol,
             side=pos.direccion,
@@ -278,7 +265,6 @@ class GestorPosicionesChronosTriz:
             duracion_seg=duracion,
             balance_uta=st.GESTOR_ESTADISTICAS.obtener_resumen()["balance_usdt"],
         )
-
         if pnl_neto_usdt < 0.0 and "SCRATCH" not in motivo.upper():
             await tri.ORQUESTADOR_TRICORTEX.ejecutar_forense_post_perdida(
                 pos.symbol, motivo, pnl_neto_usdt
@@ -302,7 +288,6 @@ class GestorPosicionesChronosTriz:
                 pass
             pos.orden_salida_id = ""
             pos.en_proceso_cierre = False
-
         try:
             orden = await exchange.create_order(
                 pos.symbol,
@@ -340,15 +325,12 @@ class GestorPosicionesChronosTriz:
     ) -> bool:
         if pos.cosecha_50_ejecutada or pos.cerrada:
             return False
-
         lote_50 = eje.cuantizar_lote(pos.contratos * 0.50, step_size)
         if lote_50 <= 0.0 or (pos.contratos - lote_50) <= 0.0:
             return False
-
         side_close = "sell" if pos.direccion == "LONG" else "buy"
         px_harvest = best_ask if pos.direccion == "LONG" else best_bid
         px_harvest = eje.cuantizar_tick(px_harvest, tick_size)
-
         try:
             orden = await exchange.create_order(
                 pos.symbol,
@@ -365,19 +347,16 @@ class GestorPosicionesChronosTriz:
                 estado_f = await eje.consultar_orden_segura(exchange, oid, pos.symbol, px_harvest)
                 filled = float(estado_f.get("filled", lote_50) or lote_50)
                 px_harvest = float(estado_f.get("average") or estado_f.get("price") or px_harvest)
-
             if filled > 0.0:
                 pnl_pct_tramo = pos.calcular_pnl_bruto_pct(px_harvest)
                 bruto_tramo = abs(filled * pos.precio_entrada) * pnl_pct_tramo
                 fee_tramo = abs(filled * px_harvest) * cfg.COMISION_MAKER_PCT
                 neto_tramo = round(bruto_tramo - fee_tramo, 4)
-
                 pos.contratos = round(max(0.0, pos.contratos - filled), 6)
                 pos.pnl_realizado_parcial_usdt = round(pos.pnl_realizado_parcial_usdt + neto_tramo, 6)
                 pos.fees_acumulados_usdt = round(pos.fees_acumulados_usdt + fee_tramo, 6)
                 pos.cosecha_50_ejecutada = True
                 self.cosechas_50_ejecutadas += 1
-
                 ram.log_operativo(
                     f"[SNIPER] [DIAMOND] {pos.symbol} 50% TRIZ PostOnly Harvest executed: "
                     f"{filled} @ {px_harvest} ({pnl_pct_tramo * 100:+.2f}% | {neto_tramo:+.4f} USDT). "
@@ -390,7 +369,6 @@ class GestorPosicionesChronosTriz:
                 await self._procesar_cierre_externo_sl_exchange(pos, px_harvest)
         return False
 
-    # Enhanced Maker exit lifecycle with live fill polling
     async def _iniciar_o_actualizar_salida_maker(
         self,
         exchange: Any,
@@ -400,22 +378,28 @@ class GestorPosicionesChronosTriz:
         tick_size: float,
         motivo: str,
         ahora: float,
+        ofi_5s: float = 0.0,
     ) -> Optional[Dict[str, Any]]:
         if pos.cerrada:
             return None
-
         side_close = "sell" if pos.direccion == "LONG" else "buy"
-        px_target = best_ask if pos.direccion == "LONG" else best_bid
-        px_target = eje.cuantizar_tick(px_target, tick_size)
-
         motivo_up = motivo.upper()
+        if "SCRATCH" in motivo_up:
+            ofi_dir = ofi_5s if pos.direccion == "LONG" else -ofi_5s
+            px_target = mes.calcular_precio_scratch_acotado_un_tick(
+                pos.direccion, pos.precio_entrada, best_bid, best_ask, tick_size, ofi_dir
+            )
+            px_target = eje.cuantizar_tick(px_target, tick_size)
+        else:
+            px_target = best_ask if pos.direccion == "LONG" else best_bid
+            px_target = eje.cuantizar_tick(px_target, tick_size)
+
         exige_piso_cero_perdida = (
             pos.trinquete_be_activo
             or "UNWIND" in motivo_up
             or "TRINQUETE_BE" in motivo_up
             or "TRAILING" in motivo_up
         ) and "SCRATCH" not in motivo_up
-
         if exige_piso_cero_perdida:
             piso_be = (
                 pos.sl_interno
@@ -442,14 +426,12 @@ class GestorPosicionesChronosTriz:
                 if st_now in ("closed", "filled") or filled_now >= pos.contratos:
                     px_fill = float(orden.get("average") or orden.get("price") or px_target)
                     return await self._finalizar_cierre_posicion(pos, px_fill, motivo, es_maker=True)
-
                 if st_now in ("canceled", "cancelled", "rejected", "expired"):
                     if filled_now > 0.0:
                         pos.contratos = round(max(0.0, pos.contratos - filled_now), 6)
                     pos.en_proceso_cierre = False
                     pos.orden_salida_id = ""
                     return None
-
                 pos.en_proceso_cierre = True
                 pos.orden_salida_id = str(orden.get("id", ""))
                 pos.ts_orden_salida = ahora
@@ -457,7 +439,6 @@ class GestorPosicionesChronosTriz:
                 pos.ultimo_poll_salida_ts = ahora
                 pos.precio_orden_salida = px_target
                 pos.motivo_salida_pendiente = motivo
-
                 if cfg.es_modo_test():
                     est_f = await eje.consultar_orden_segura(exchange, pos.orden_salida_id, pos.symbol, px_target)
                     st_f = str(est_f.get("status", "")).lower()
@@ -471,7 +452,6 @@ class GestorPosicionesChronosTriz:
 
         if not cfg.es_modo_test() and (ahora - pos.ultimo_poll_salida_ts) < 0.45:
             return None
-
         try:
             pos.ultimo_poll_salida_ts = ahora
             est_ord = await eje.consultar_orden_segura(exchange, pos.orden_salida_id, pos.symbol, pos.precio_orden_salida)
@@ -482,7 +462,6 @@ class GestorPosicionesChronosTriz:
                 return await self._finalizar_cierre_posicion(
                     pos, px_fill, pos.motivo_salida_pendiente or motivo, es_maker=True
                 )
-
             if st_ord in ("canceled", "cancelled", "rejected", "expired"):
                 if filled_ord > 0.0:
                     pos.contratos = round(max(0.0, pos.contratos - filled_ord), 6)
@@ -534,7 +513,6 @@ class GestorPosicionesChronosTriz:
     ) -> Optional[Dict[str, Any]]:
         if pos.cerrada or precio_actual <= 0.0:
             return None
-
         ts_now = float(ahora) if ahora is not None else time.time()
         edad = ts_now - pos.timestamp_apertura
         pnl_pct = pos.actualizar_excursion(precio_actual, ts_now)
@@ -572,9 +550,20 @@ class GestorPosicionesChronosTriz:
             tick_size,
             pos.trinquete_be_activo,
         )
+        be_hit, sl_be_efectivo = medf.verificar_disparo_fisico_trinquete_be(
+            pos.direccion,
+            pos.trinquete_be_activo,
+            pos.sl_interno,
+            pos.precio_entrada,
+            precio_actual,
+            be_offset_pct=float(cfg.TRINQUETE_BE_OFFSET_PCT),
+        )
+        if pos.trinquete_be_activo and sl_be_efectivo > 0.0:
+            pos.sl_interno = sl_be_efectivo
 
         sl_hit = (
-            (pos.direccion == "LONG" and precio_actual <= pos.sl_interno)
+            be_hit
+            or (pos.direccion == "LONG" and precio_actual <= pos.sl_interno)
             or (pos.direccion == "SHORT" and precio_actual >= pos.sl_interno)
         )
         if sl_hit:
@@ -591,7 +580,7 @@ class GestorPosicionesChronosTriz:
                 ):
                     return None
                 res_be = await self._iniciar_o_actualizar_salida_maker(
-                    exchange, pos, best_bid, best_ask, tick_size, "TRINQUETE_BE_MAKER", ts_now
+                    exchange, pos, best_bid, best_ask, tick_size, "TRINQUETE_BE_MAKER", ts_now, ofi_5s=ofi_5s
                 )
                 if res_be is not None or pnl_pct > -0.0008:
                     return res_be
@@ -601,7 +590,7 @@ class GestorPosicionesChronosTriz:
         umbral_cosecha = float(ctrl.get("w3_tp_maker_pct", cfg.COSECHA_TRIZ_ACTIVACION_PCT))
         umbral_stall = float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT))
 
-        # 1. Early Break-Even Shield at +0.11% MFE (Protects #101, #116, #131, #134)
+        # 1. Early Break-Even Shield at +0.11% MFE
         if pos.max_pnl_pct_alcanzado >= umbral_stall and not pos.trinquete_be_activo and pnl_pct < umbral_cosecha:
             piso_be_early = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
             pos.sl_interno = piso_be_early
@@ -637,13 +626,11 @@ class GestorPosicionesChronosTriz:
             if primera_activacion_wald or mejoro_piso:
                 pos.sl_interno = nuevo_piso
                 pos.trinquete_be_activo = True
-
             if modo_escalera_50_50 and not pos.cosecha_50_ejecutada:
                 await self._ejecutar_cosecha_50_triz(
                     exchange, pos, best_bid, best_ask, tick_size, step_size
                 )
                 return None
-
             if primera_activacion_wald:
                 pos.trailing_activo = True
                 ram.log_operativo(
@@ -652,10 +639,8 @@ class GestorPosicionesChronosTriz:
                     f"MFE {pos.max_pnl_pct_alcanzado * 100:+.2f}%, kappa={kappa:.2f}, Lambda={lambda_w:+.2f})"
                 )
                 await self._actualizar_sl_bybit(exchange, pos, pos.sl_interno, tick_size=tick_size)
-
             if pos.max_pnl_pct_alcanzado >= 0.0042 and pnl_pct >= 0.0042:
                 ram.log_operativo(f"[SNIPER] {pos.symbol} Trailing Stop activated (PnL {pnl_pct * 100:+.2f}%)")
-
             flujo_agotado_cresta = mcw.evaluar_agotamiento_cresta_wald(
                 pos.max_pnl_pct_alcanzado, pnl_pct, ofi_5s, edad, lambda_w, kappa
             )
@@ -669,7 +654,7 @@ class GestorPosicionesChronosTriz:
                     f"kappa={kappa:.2f}, Lambda={lambda_w:+.2f})"
                 )
                 return await self._iniciar_o_actualizar_salida_maker(
-                    exchange, pos, best_bid, best_ask, tick_size, "TRAILING_RATCHET_MAKER", ts_now
+                    exchange, pos, best_bid, best_ask, tick_size, "TRAILING_RATCHET_MAKER", ts_now, ofi_5s=ofi_5s
                 )
 
         # 3. Phase 2 Stall Harvest & [DIAMOND] Phase 2 Maker Shield PostOnly (16s+)
@@ -704,23 +689,23 @@ class GestorPosicionesChronosTriz:
                     f"(PnL {pnl_pct * 100:+.2f}%, Lambda={lambda_w:+.2f}, age {int(edad)}s)"
                 )
             return await self._iniciar_o_actualizar_salida_maker(
-                exchange, pos, best_bid, best_ask, tick_size, "MAKER_UNWIND", ts_now
+                exchange, pos, best_bid, best_ask, tick_size, "MAKER_UNWIND", ts_now, ofi_5s=ofi_5s
             )
 
-                # === [KEEP-ALIVE-ACTIVE-MAKER-EXIT] ===
-        if getattr(pos, "orden_salida_id", None) and not getattr(pos, "cerrada", False):
-            _motivo_act = "MAKER_SCRATCH_18S" if pos.mfe_max_pnl_pct <= 0.0008 else "MAKER_UNWIND"
-            _piso_act = calcular_piso_be_maker(pos.direccion, pos.entry_price, tick_size) if _motivo_act == "MAKER_UNWIND" else (
-                 best_ask if pos.direccion == "LONG" else best_bid
+        # === [KEEP-ALIVE-ACTIVE-MAKER-EXIT] ===
+        if pos.orden_salida_id and not pos.cerrada:
+            _motivo_act = (
+                pos.motivo_salida_pendiente
+                or ("MAKER_SCRATCH_18S" if pos.max_pnl_pct_alcanzado <= 0.0008 else "MAKER_UNWIND")
             )
-            _target_px = max(_piso_act, best_ask if best_ask > 0 else precio_actual) if pos.direccion == "LONG" else min(_piso_act, best_bid if best_bid > 0 else precio_actual)
-            if await self._iniciar_o_actualizar_salida_maker(
-                pos, _target_px, tick_size, best_bid, best_ask, ts_now, _motivo_act
-            ):
-                return
+            res_keepalive = await self._iniciar_o_actualizar_salida_maker(
+                exchange, pos, best_bid, best_ask, tick_size, _motivo_act, ts_now, ofi_5s=ofi_5s
+            )
+            if res_keepalive is not None:
+                return res_keepalive
 
         # 4. Pre-Escape Passive Evacuation at 72s
-        if activar_pre_escape_72s or edad >= float(cfg.obtener_aux("PRE_ESCAPE_MAKER_SEG", 72.0)):
+        if activar_pre_escape_72s:
             motivo_72s = (
                 "MAKER_UNWIND"
                 if (pos.trinquete_be_activo or pnl_pct >= cfg.TRINQUETE_BE_OFFSET_PCT)
@@ -733,12 +718,18 @@ class GestorPosicionesChronosTriz:
                     f"(PnL {pnl_pct * 100:+.2f}%, Lambda={lambda_w:+.2f})."
                 )
             return await self._iniciar_o_actualizar_salida_maker(
-                exchange, pos, best_bid, best_ask, tick_size, motivo_72s, ts_now
+                exchange, pos, best_bid, best_ask, tick_size, motivo_72s, ts_now, ofi_5s=ofi_5s
             )
 
         # 5. Law 2 (RF-18): 18.0s Passive Maker-Scratch on Dead Fills (Delegated to defensiva/)
         hurst_live = m_live.hurst if m_live is not None else pos.hurst_entrada
-        wald_scratch_ready = mes.evaluar_gatillo_maker_scratch_18s(
+        acel_live = m_live.aceleracion_lyapunov if m_live is not None else pos.lyapunov_entrada
+        ofi_dir_live = ofi_5s if pos.direccion == "LONG" else -ofi_5s
+        acel_dir_live = acel_live if pos.direccion == "LONG" else -acel_live
+        ventana_28s_ok = mes.evaluar_ventana_elastica_scratch_28s(
+            edad, pos.max_pnl_pct_alcanzado, pnl_pct, ofi_dir_live, acel_lyap_dir=acel_dir_live
+        )
+        wald_scratch_ready = ventana_28s_ok and mes.evaluar_gatillo_maker_scratch_18s(
             pos.direccion,
             edad,
             pnl_pct,
@@ -747,7 +738,9 @@ class GestorPosicionesChronosTriz:
             lambda_w,
             pos.trinquete_be_activo,
             hurst_actual=hurst_live,
-            fill_post_aborto=bool(getattr(pos, "fill_post_aborto", False)),
+            fill_post_aborto=False,
+            mae_pct=pos.min_pnl_pct_alcanzado,
+            trayectoria_pnl=pos.trayectoria_pnl,
         )
         if pos.en_proceso_cierre and mes.debe_escalar_scratch_colgado_a_taker(
             pos.direccion,
@@ -767,9 +760,8 @@ class GestorPosicionesChronosTriz:
                     f"evacuating via Limit PostOnly @ {best_ask if pos.direccion == 'LONG' else best_bid}."
                 )
             return await self._iniciar_o_actualizar_salida_maker(
-                exchange, pos, best_bid, best_ask, tick_size, "MAKER_SCRATCH_18S", ts_now
+                exchange, pos, best_bid, best_ask, tick_size, "MAKER_SCRATCH_18S", ts_now, ofi_5s=ofi_5s
             )
-
         if pos.en_proceso_cierre and mir.debe_forzar_evacuacion_scratch_estancado(
             pos.en_proceso_cierre,
             pos.motivo_salida_pendiente,
@@ -794,8 +786,8 @@ class GestorPosicionesChronosTriz:
                 tick_size,
                 pos.motivo_salida_pendiente or "TRAILING_RATCHET_MAKER",
                 ts_now,
+                ofi_5s=ofi_5s,
             )
-
         return None
 
 
@@ -805,7 +797,8 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
     procesadas = 0
     try:
         posiciones = await exchange.fetch_positions()
-        ahora_ms = time.time() * 1000.0
+        ahora_s = time.time()
+        ahora_ms = ahora_s * 1000.0
         for p in posiciones or []:
             contratos = abs(float(p.get("contracts") or p.get("size") or 0.0))
             if contratos <= 0.0:
@@ -825,7 +818,14 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
                 or (ahora_ms - 240000.0)
             )
             raw_age = max(0.0, (ahora_ms - ts_ms) / 1000.0)
-            if 0.0 < raw_age < 75.0 and len(ram.ESTADO_GLOBAL.posiciones_activas) < cfg.SLOTS_CONCURRENTES_MAX:
+            en_gracia = mer.debe_adoptar_en_lugar_de_liquidar_huerfana(
+                symbol,
+                ram.ESTADO_GLOBAL.locks_pre_fill,
+                ram.ESTADO_GLOBAL.posiciones_activas,
+                ahora_s,
+                grace_seg=5.0,
+            )
+            if (en_gracia or 0.0 < raw_age < 75.0) and len(ram.ESTADO_GLOBAL.posiciones_activas) < cfg.SLOTS_CONCURRENTES_MAX:
                 dir_ad = "LONG" if side_raw in ("long", "buy") else "SHORT"
                 sl_int_a, sl_srv_a = eje.calcular_niveles_sl_iniciales(entry_px, dir_ad, 0.0001)
                 pos_ad = ram.PosicionActiva(
@@ -834,7 +834,7 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
                     contratos=contratos,
                     contratos_iniciales=contratos,
                     precio_entrada=entry_px,
-                    timestamp_apertura=time.time() - raw_age,
+                    timestamp_apertura=ahora_s - min(raw_age, 74.0),
                     sl_interno=sl_int_a,
                     sl_bybit=sl_srv_a,
                     fees_acumulados_usdt=round(abs(contratos * entry_px) * cfg.COMISION_MAKER_PCT, 6),
@@ -849,7 +849,6 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
                 continue
             edad_seg = 300.0 if raw_age > 86400.0 else max(95.0, raw_age)
             edad_min = edad_seg / 60.0
-
             ram.log_operativo(
                 f"[RECONCILER] Zombie orphan position detected on {symbol}: "
                 f"{contratos} contracts @ {entry_px} (age {edad_min:.1f} min >= 90s). "
@@ -869,12 +868,10 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
                 symbol, side_raw, contratos, entry_px, px_out
             )
             pnl_bruto_pct = float(info_h["pnl_bruto_pct"])
-
             nocional = contratos * entry_px
             fee_est = (contratos * px_out) * cfg.COMISION_TAKER_PCT
             pnl_neto_usdt = round((nocional * pnl_bruto_pct) - fee_est, 4)
             pnl_neto_pct = pnl_neto_usdt / max(1e-6, nocional)
-
             etiqueta = "[WIN]" if pnl_neto_usdt > 0.0 else "[LOSS]"
             ram.log_operativo(
                 f"[SNIPER] {etiqueta} CLOSE {symbol} [ESCAPE_HUERFANA_BOOT] "
@@ -896,32 +893,25 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
                 es_salida_maker=False,
             )
             procesadas += 1
-
         if procesadas > 0:
             ram.log_operativo(
                 f"[RECONCILER] Startup reconciliation completed: {procesadas} position(s) processed."
             )
         else:
-            try:
-                if hasattr(exchange, "cancel_all_orders"):
-                    for _sym_c in cfg.PARES_CAMPEONES_ALFA:
-                        if _sym_c in ram.ESTADO_GLOBAL.posiciones_activas:
-                            continue
-                        try:
-                            await exchange.cancel_all_orders(_sym_c)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            if hasattr(exchange, "cancel_all_orders"):
+                for _sym_c in cfg.PARES_CAMPEONES:
+                    if _sym_c in ram.ESTADO_GLOBAL.posiciones_activas:
+                        continue
+                    try:
+                        await exchange.cancel_all_orders(_sym_c)
+                    except Exception:
+                        pass
             ram.log_operativo("[RECONCILER] No orphan positions open on Bybit. Open orders swept & margin 100% clear.")
     except Exception as exc:
         ram.log_operativo(f"[RECONCILER] Warning during startup scan: {exc}")
     return procesadas
 
 
-# ==============================================================================
-# ANSI COLORIZER FOR LIVE CLI HUD (verbot) -- DELEGATED TO apoyo/
-# ==============================================================================
 def colorear_linea_log_mobaxterm(linea: str) -> str:
     return mht.colorear_linea_log_mobaxterm(linea)
 

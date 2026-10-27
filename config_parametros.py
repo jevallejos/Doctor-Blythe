@@ -255,6 +255,10 @@ def obtener_ruta_archivo(clave_o_nombre: str) -> pathlib.Path:
             return _ruta_base / ".test_bot_hft.log"
         if clave_o_nombre in ("ARCHIVO_LOCK", ".tribrain.lock"):
             return _ruta_base / ".tribrain_test.lock"
+        if clave_o_nombre in ("ARCHIVO_CALIBRACION_OOS", "calibracion_oos.json"):
+            return _ruta_base / ".test_calibracion_oos.json"
+        if clave_o_nombre in ("ARCHIVO_REPORTE_OOS_MD", "reporte_cuantico_oos.md"):
+            return _ruta_base / ".test_reporte_cuantico_oos.md"
     nombre = _parametros_operativos_aux.get(clave_o_nombre, clave_o_nombre)
     return _ruta_base / str(nombre)
 

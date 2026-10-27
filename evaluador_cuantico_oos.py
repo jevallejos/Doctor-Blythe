@@ -1,15 +1,18 @@
+# File: evaluador_cuantico_oos.py
 """
-Level 8 DAG: Out-of-Sample (OOS) Walk-Forward Quantitative Calibrator,
-Bayesian Kelly Shrinkage, Autonomous Weight Controller, and 3,456-Combination
-Counterfactual Digital Twin (--lab) for HFT Doctor Blythe Engine -
-Production Baseline Terpsichora V1.0.
+Level 8 DAG: Out-of-Sample (OOS) Walk-Forward Quantitative Calibrator, Bayesian Kelly
+Shrinkage, Autonomous Weight Controller, Atomic Tempfile-Fsync-Replace Persistence,
+and 3,456-Combination Counterfactual Digital Twin (--lab) for
+HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
 
 import datetime
 import json
+import os
 import pathlib
 import sys
+import tempfile
 import time
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +23,24 @@ import core_estado_ram as ram
 import stats_tracker as st
 
 _TZ_UTC = datetime.timezone.utc
+
+
+def _escribir_bytes_atomico(ruta_destino: pathlib.Path, data: bytes) -> None:
+    ruta_destino.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_str = tempfile.mkstemp(
+        prefix=f".tmp_{ruta_destino.name}_",
+        dir=str(ruta_destino.parent),
+    )
+    tmp_path = pathlib.Path(tmp_str)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(str(tmp_path), str(ruta_destino))
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def cargar_operaciones_ventana_72h(
@@ -136,7 +157,7 @@ def ejecutar_calibracion_walk_forward_oos(
     if escribir_archivos:
         ruta_json = cfg.obtener_ruta_archivo("ARCHIVO_CALIBRACION_OOS")
         texto_json = json.dumps(payload_oos, indent=2, ensure_ascii=True).replace("\r\n", "\n") + "\n"
-        ruta_json.write_bytes(texto_json.encode("utf-8"))
+        _escribir_bytes_atomico(ruta_json, texto_json.encode("utf-8"))
 
         ruta_md = cfg.obtener_ruta_archivo("ARCHIVO_REPORTE_OOS_MD")
         md_lines = [
@@ -150,7 +171,7 @@ def ejecutar_calibracion_walk_forward_oos(
             f"* **Scratch Capital Saved:** `+{m72['ahorro_scratch_usdt']:.4f} USDT`",
             "",
         ]
-        ruta_md.write_bytes(("\n".join(md_lines) + "\n").encode("utf-8"))
+        _escribir_bytes_atomico(ruta_md, ("\n".join(md_lines) + "\n").encode("utf-8"))
 
     return payload_oos
 
@@ -161,8 +182,9 @@ def ejecutar_laboratorio_gemelo_digital_3456(escribir_disco: bool = True) -> Dic
     reporte = mgd.simular_malla_gemelo_3456(ops, eventos_baul)
     if escribir_disco and not cfg.es_modo_test():
         ruta_lab = cfg.obtener_ruta_archivo("ARCHIVO_REPORTE_LAB_JSON")
-        ruta_lab.write_bytes(
-            (json.dumps(reporte, indent=2, ensure_ascii=True).replace("\r\n", "\n") + "\n").encode("utf-8")
+        _escribir_bytes_atomico(
+            ruta_lab,
+            (json.dumps(reporte, indent=2, ensure_ascii=True).replace("\r\n", "\n") + "\n").encode("utf-8"),
         )
     return reporte
 

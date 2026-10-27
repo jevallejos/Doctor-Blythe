@@ -450,7 +450,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
     )
 
     ram.cerrar_descriptores_log()
-    for f_tmp in (".test_bot_hft.log", ".tribrain_test.lock"):
+    for f_tmp in (".test_bot_hft.log", ".tribrain_test.lock", ".test_calibracion_oos.json", ".test_reporte_cuantico_oos.md"):
         p_tmp = base / f_tmp
         if p_tmp.exists():
             p_tmp.unlink(missing_ok=True)

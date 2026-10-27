@@ -1,3 +1,4 @@
+# File: defensiva/micro_escudos_fisicos.py
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Defensivo #1: Escudos Fisicos de Entrada (Terpsichora V1.0).
@@ -5,6 +6,8 @@ Aisla las barreras cinematicas y de microestructura (Lyapunov, Hurst,
 Absorcion OFI/Hawkes con Veto Anti-Spoofing L1 arXiv:2502.17417,
 Coherencia de Signo RF-06 y Conviccion Contra-EMA900).
 """
+from __future__ import annotations
+
 from typing import Tuple
 
 
@@ -43,7 +46,7 @@ def evaluar_filtro_hurst_direccional(
     hurst_max_long: float = 0.485,
     hurst_max_short: float = 0.485,
 ) -> Tuple[bool, str]:
-    tope = max(float(hurst_max_long), 0.58) if direccion == "LONG" else float(hurst_max_short)
+    tope = float(hurst_max_long) if direccion == "LONG" else float(hurst_max_short)
     if hurst_actual > tope:
         etiqueta = "HURST_FILTER" if direccion == "LONG" else "P-02_HURST_SHORT"
         return False, f"{etiqueta}(H={hurst_actual:.3f}>{tope:.3f})"
@@ -67,8 +70,6 @@ def evaluar_absorcion_ofi_hawkes(
                 False,
                 f"WAIT_BID_ABSORPTION(OFI={ofi_actual:+.2f}[{ticks_absorcion}/{ticks_min_req}t]<{ofi_min_req:+.2f})",
             )
-        # Mejora #2 (arXiv:2502.17417): Veto Anti-Spoofing cuando L2..L5 aparentan absorcion
-        # pero la punta L1 esta vacia por cancelacion agresiva de Bids (BC-).
         if imb_l1 <= -0.78 and cancel_net_l1 <= -0.35 and ofi_actual < 0.35:
             return False, f"WAIT_BID_ABSORPTION_L1_SPOOF(imbL1={imb_l1:+.2f},cancel={cancel_net_l1:+.2f})"
         if hawkes_actual < hawkes_min_req:
