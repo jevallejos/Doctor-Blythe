@@ -13,7 +13,10 @@ import time
 from typing import Any, Dict, Optional
 
 import config_parametros as cfg
-import micro_motor_wald_exit as mmw
+from ofensiva import micro_cresta_convexo_sprt as mcw
+from ofensiva import micro_motor_wald_exit as mmw
+from defensiva import micro_evacuador_scratch as mes
+from apoyo import micro_hud_ansi_telegram as mht
 import core_estado_ram as ram
 import ejecutor_sniper as eje
 import escudo_tricortex as tri
@@ -50,13 +53,7 @@ def calcular_piso_be_maker(
 
 
 def calcular_kappa_convexo_wald(mfe_pct: float) -> float:
-    """
-    Hyperbolic Convex Ratchet Retention Factor kappa(MFE_t) in [0.35, 0.78]:
-      - At MFE = +0.22%, retains 35% of MFE (wide breathing room for +1%..+8% runners).
-      - As MFE expands above +0.45%..+1.00%, tightens smoothly up to 78% of MFE.
-    """
-    exceso = max(0.0, float(mfe_pct) - float(cfg.COSECHA_TRIZ_ACTIVACION_PCT))
-    return round(0.35 + (0.43 * math.tanh(exceso / 0.0045)), 4)
+    return mcw.calcular_kappa_convexo_wald(mfe_pct)
 
 
 def calcular_lambda_wald_sprt(
@@ -68,18 +65,15 @@ def calcular_lambda_wald_sprt(
     vol_bv: float = cfg.VOLATILIDAD_BV_PISO_MIN,
     hurst: float = 0.42,
 ) -> float:
-    """
-    Autoregressive Abraham Wald Sequential Probability Ratio Test (SPRT) Log-Likelihood:
-      Lambda_t = clip(0.86 * Lambda_{t-1} + dLambda_t, -5.0, +5.0)
-    """
-    sigma = max(float(vol_bv or cfg.VOLATILIDAD_BV_PISO_MIN), 0.00045)
-    ofi_term = float(ofi_5s) / 0.35
-    ret_term = (float(pnl_pct) - (0.55 * float(mfe_pct))) / sigma
-    hurst_drag = 0.14 * max(0.0, float(hurst) - 0.48) * math.sqrt(max(0.0, float(edad_seg)) / 18.0)
-    time_drag = max(0.0, (float(edad_seg) - 20.0) * 0.035)
-    d_lambda = ofi_term + ret_term - hurst_drag - time_drag
-    val = (0.86 * float(lambda_prev)) + d_lambda
-    return round(max(-5.00, min(5.00, val)), 2)
+    return mcw.calcular_lambda_wald_sprt(
+        pnl_pct=pnl_pct,
+        mfe_pct=mfe_pct,
+        ofi_5s=ofi_5s,
+        edad_seg=edad_seg,
+        lambda_prev=lambda_prev,
+        vol_bv=vol_bv,
+        hurst=hurst,
+    )
 
 
 def _es_error_posicion_cerrada_bybit(exc: Exception) -> bool:
@@ -645,10 +639,8 @@ class GestorPosicionesChronosTriz:
             if pos.max_pnl_pct_alcanzado >= 0.0042 and pnl_pct >= 0.0042:
                 ram.log_operativo(f"[SNIPER] {pos.symbol} Trailing Stop activated (PnL {pnl_pct * 100:+.2f}%)")
 
-            flujo_agotado_cresta = (
-                (pos.max_pnl_pct_alcanzado >= 0.0042 and (pnl_pct <= (pos.max_pnl_pct_alcanzado * 0.72) or ofi_5s <= -0.10))
-                or (edad >= 20.0 and (lambda_w <= -0.25 or ofi_5s <= -0.12))
-                or (pnl_pct <= (kappa * pos.max_pnl_pct_alcanzado))
+            flujo_agotado_cresta = mcw.evaluar_agotamiento_cresta_wald(
+                pos.max_pnl_pct_alcanzado, pnl_pct, ofi_5s, edad, lambda_w, kappa
             )
             if flujo_agotado_cresta:
                 pos.cosecha_activa = True
@@ -704,23 +696,15 @@ class GestorPosicionesChronosTriz:
                 exchange, pos, best_bid, best_ask, tick_size, motivo_72s, ts_now
             )
 
-        # 5. Law 2 (RF-18): 18.0s Passive Maker-Scratch on Dead Fills
-        t_scratch = float(cfg.obtener_aux("MAKER_SCRATCH_TIEMPO_SEG", 18.0))
-        ofi_adv = float(cfg.obtener_aux("MAKER_SCRATCH_OFI_ADVERSO", -0.15))
-        flujo_contra = (
-            (pos.direccion == "LONG" and ofi_5s <= ofi_adv)
-            or (pos.direccion == "SHORT" and ofi_5s >= abs(ofi_adv))
-        )
-        sin_rebote_18s = (
-            edad >= 18.0
-            and not pos.trinquete_be_activo
-            and pos.max_pnl_pct_alcanzado <= 0.00015
-            and pnl_pct <= -0.0007
-        )
-        wald_scratch_ready = (
-            (edad >= 18.0 and pnl_pct <= 0.0 and flujo_contra)
-            or sin_rebote_18s
-            or (edad >= t_scratch and pnl_pct <= -0.0006 and lambda_w <= -1.20)
+        # 5. Law 2 (RF-18): 18.0s Passive Maker-Scratch on Dead Fills (Delegated to defensiva/)
+        wald_scratch_ready = mes.evaluar_gatillo_maker_scratch_18s(
+            pos.direccion,
+            edad,
+            pnl_pct,
+            pos.max_pnl_pct_alcanzado,
+            ofi_5s,
+            lambda_w,
+            pos.trinquete_be_activo,
         )
         if wald_scratch_ready:
             if not pos.en_proceso_cierre:
@@ -825,161 +809,22 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
 
 
 # ==============================================================================
-# ANSI COLORIZER FOR LIVE CLI HUD (verbot) ? ZERO DISK CONTAMINATION
+# ANSI COLORIZER FOR LIVE CLI HUD (verbot) -- DELEGATED TO apoyo/
 # ==============================================================================
-_ANSI_RESET: str = "\033[0m"
-_ANSI_BOLD_GREEN: str = "\033[1;92m"
-_ANSI_BOLD_RED: str = "\033[1;91m"
-_ANSI_BOLD_YELLOW: str = "\033[1;93m"
-_ANSI_BOLD_CYAN: str = "\033[1;96m"
-_ANSI_BOLD_MAGENTA: str = "\033[1;95m"
-_ANSI_BOLD_WHITE: str = "\033[1;97m"
-_ANSI_DIM_CYAN: str = "\033[0;36m"
-_ANSI_DIM_GRAY: str = "\033[0;37m"
-
-
 def colorear_linea_log_mobaxterm(linea: str) -> str:
-    s = linea.rstrip("\r\n")
-    if not s:
-        return ""
-
-    if (
-        "[WIN]" in s
-        or "[TARGET] Active" in s
-        or "RAM SHIELD O(1): APPROVED" in s
-        or "[READY TO FIRE]" in s
-        or "[TELEGRAM] Startup notification" in s
-    ):
-        return f"{_ANSI_BOLD_GREEN}{s}{_ANSI_RESET}"
-
-    if (
-        "[LOSS]" in s
-        or "SL_INTERNO_CHRONOS" in s
-        or "SL_EXCHANGE" in s
-        or "[CIRCUIT BREAKER" in s
-        or "VETO_TOXIC" in s
-        or "ANTI_LUNA" in s
-        or "Stream error" in s
-        or "[ERROR]" in s
-    ):
-        return f"{_ANSI_BOLD_RED}{s}{_ANSI_RESET}"
-
-    if (
-        "[DIAMOND]" in s
-        or "[SHIELD]" in s
-        or "[WALD-SPRT CREST]" in s
-        or "Break-Even Ratchet" in s
-        or "Trailing Stop" in s
-        or "Bybit server SL" in s
-        or "[MOALLEMI QUEUE-JUMP" in s
-        or "[PASSIVE ALIGN" in s
-    ):
-        return f"{_ANSI_BOLD_CYAN}{s}{_ANSI_RESET}"
-
-    if (
-        "[RADAR]" in s
-        or "[SNIPER] Order " in s
-        or "[SHORT-SNIPER] Order " in s
-    ):
-        return f"{_ANSI_BOLD_MAGENTA}{s}{_ANSI_RESET}"
-
-    if (
-        "[SCRATCH]" in s
-        or "[MAKER-SCRATCH" in s
-        or "[MOALLEMI EARLY-ABORT]" in s
-        or "[EARLY QUEUE ABORT]" in s
-        or "[MIN FILL GUARD]" in s
-        or "[PHANTOM" in s
-        or "unfilled after" in s
-        or "[WARN]" in s
-        or "quarantine" in s
-    ):
-        return f"{_ANSI_BOLD_YELLOW}{s}{_ANSI_RESET}"
-
-    if "+===" in s or "|  [BLACK BOX]" in s or "|  MAP:" in s or "|  Balance:" in s:
-        return f"{_ANSI_BOLD_CYAN}{s}{_ANSI_RESET}"
-    if "|  Total PnL:" in s:
-        color_pnl = _ANSI_BOLD_RED if "Total PnL: -" in s else _ANSI_BOLD_GREEN
-        return f"{color_pnl}{s}{_ANSI_RESET}"
-
-    if (
-        "[TRI-CORTEX" in s
-        or "[HOT-RELOAD OOS]" in s
-        or "[BLACK BOX 1:1]" in s
-        or "[RECONCILER]" in s
-        or "[QUANTUM OOS EVALUATOR]" in s
-        or "[RADAR LIVE 25Hz]" in s
-    ):
-        return f"{_ANSI_DIM_CYAN}{s}{_ANSI_RESET}"
-
-    return f"{_ANSI_DIM_GRAY}{s}{_ANSI_RESET}"
+    return mht.colorear_linea_log_mobaxterm(linea)
 
 
 def imprimir_hud_verbot_cli(lineas_log: int = 18) -> None:
-    st.GESTOR_ESTADISTICAS.cargar_historial_disco()
-    res = st.GESTOR_ESTADISTICAS.obtener_resumen()
-    color_pnl = _ANSI_BOLD_GREEN if res["total_pnl_usdt"] >= 0.0 else _ANSI_BOLD_RED
-
-    print(f"{_ANSI_BOLD_CYAN}{'=' * 82}{_ANSI_RESET}")
-    print(f"{_ANSI_BOLD_WHITE} {cfg.NOMBRE_ESTRATEGIA}{_ANSI_RESET}")
-    print(f"{_ANSI_BOLD_CYAN}{'=' * 82}{_ANSI_RESET}")
-    for l_box in st.GESTOR_ESTADISTICAS.formatear_panel_ascii():
-        if "Total PnL:" in l_box:
-            print(f" {color_pnl}{l_box}{_ANSI_RESET}")
-        elif "[BLACK BOX]" in l_box:
-            print(f" {_ANSI_BOLD_WHITE}{l_box}{_ANSI_RESET}")
-        else:
-            print(f" {_ANSI_BOLD_CYAN}{l_box}{_ANSI_RESET}")
-    print(f"{_ANSI_DIM_CYAN}{'-' * 82}{_ANSI_RESET}")
-    print(
-        f" {_ANSI_BOLD_GREEN}[WIN/FILL]{_ANSI_RESET} | "
-        f"{_ANSI_BOLD_CYAN}[WALD-CREST/BE/JUMP]{_ANSI_RESET} | "
-        f"{_ANSI_BOLD_MAGENTA}[RADAR/ORDER]{_ANSI_RESET} | "
-        f"{_ANSI_BOLD_YELLOW}[SCRATCH/ABORT]{_ANSI_RESET} | "
-        f"{_ANSI_BOLD_RED}[LOSS/SL/VETO]{_ANSI_RESET}"
-    )
-    print(f"{_ANSI_DIM_CYAN}{'-' * 82}{_ANSI_RESET}")
-    ruta_log = cfg.obtener_ruta_archivo("ARCHIVO_LOG")
-    if ruta_log.exists():
-        ultimas = ruta_log.read_text(encoding="utf-8", errors="replace").splitlines()[-lineas_log:]
-        for ln in ultimas:
-            print(colorear_linea_log_mobaxterm(ln))
-    else:
-        print(f" {_ANSI_BOLD_YELLOW}[INFO] bot_hft.log not yet created.{_ANSI_RESET}")
-    print(f"{_ANSI_BOLD_CYAN}{'=' * 82}{_ANSI_RESET}")
+    mht.imprimir_hud_verbot_cli(lineas_log=lineas_log)
 
 
 def seguir_log_en_vivo_cli(lineas_iniciales: int = 16) -> None:
-    imprimir_hud_verbot_cli(lineas_log=lineas_iniciales)
-    print(
-        f"{_ANSI_BOLD_CYAN} [STREAMING COLORIZED TELEMETRY (25Hz) - "
-        f"Press Ctrl+C to exit view without stopping bot]{_ANSI_RESET}",
-        flush=True,
-    )
-    ruta_log = cfg.obtener_ruta_archivo("ARCHIVO_LOG")
-    try:
-        while not ruta_log.exists():
-            time.sleep(0.2)
-        with open(ruta_log, mode="r", encoding="utf-8", errors="replace") as fh:
-            fh.seek(0, 2)
-            while True:
-                linea = fh.readline()
-                if linea:
-                    col = colorear_linea_log_mobaxterm(linea)
-                    if col:
-                        print(col, flush=True)
-                else:
-                    time.sleep(0.05)
-    except KeyboardInterrupt:
-        print(
-            f"\n{_ANSI_BOLD_GREEN} [OK] Live HUD closed safely "
-            f"(Doctor Blythe daemon continues running in background).{_ANSI_RESET}",
-            flush=True,
-        )
+    mht.seguir_log_en_vivo_cli(lineas_iniciales=lineas_iniciales)
 
 
 def imprimir_radiografia_uta_cli() -> None:
-    imprimir_hud_verbot_cli(lineas_log=12)
+    mht.imprimir_hud_verbot_cli(lineas_log=12)
 
 
 GESTOR_POSICIONES = GestorPosicionesChronosTriz()

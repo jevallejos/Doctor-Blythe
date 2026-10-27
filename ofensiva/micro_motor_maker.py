@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Independiente de Supervivencia en Cola L1 y Re-Peg Maker (Moallemi-Stoikov).
+Micro-Modulo Ofensivo #1: Supervivencia en Cola L1 y Re-Peg Maker (Moallemi-Stoikov).
 Evita abortar ordenes PostOnly cuando Hurst sube por el propio rebote a favor (OFI >= +0.12)
 y regula la cadencia de Queue-Jump para no agotar los 2 re-pegs prematuramente.
 """
@@ -17,11 +17,6 @@ def evaluar_aborto_cola_moallemi(
     elapsed_seg: float,
     veto_btc_activo: bool,
 ) -> Tuple[bool, bool]:
-    """
-    Retorna (cola_toxica: bool, erosion_adversa: bool).
-    Si el flujo OFI empuja claramente a favor de nuestra orden (>= +0.12 en LONG o <= -0.12 en SHORT),
-    no aborta por subida de Hurst, permitiendo capturar el fill del rebote en V.
-    """
     erosion_adversa = (
         q_l1_init > 0.0
         and q_l1_now > 0.0
@@ -55,11 +50,6 @@ def listo_para_repeg_cola(
     elapsed_seg: float,
     ultimo_repeg_elapsed: float,
 ) -> bool:
-    """
-    Si Bybit rechazo/cancelo por PostOnly, re-cotiza de inmediato.
-    Si la orden sigue viva descansando en el libro, espera al menos 0.45s entre saltos
-    para conservar prioridad de cola L1 y no quemar los 2 re-pegs en 0.7s.
-    """
     if fue_cancelada_postonly:
         return True
     intervalo_min = max(0.45, float(getattr(cfg, "REPEG_PASIVO_ENTRADA_SEG", 0.65)) * 0.70)

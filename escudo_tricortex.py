@@ -14,6 +14,8 @@ from typing import Tuple
 from dotenv import load_dotenv
 
 import config_parametros as cfg
+from ofensiva import micro_conviccion_kelly as mck
+from defensiva import micro_cortafuegos_contagio as mcc
 import core_estado_ram as ram
 import stats_tracker as st
 
@@ -21,18 +23,7 @@ load_dotenv()
 
 
 def evaluar_filtro_anti_luna(symbol: str, caida_pct: float, ofi: float) -> Tuple[bool, str]:
-    if caida_pct <= -0.055 and ofi <= -0.80:
-        ram.ESTADO_GLOBAL.aplicar_matriz_direccional_lpu(
-            symbol=symbol,
-            modo=ram.MODO_DIRECCIONAL_VETO,
-            motivo=f"ANTI_LUNA_VETO(drop={caida_pct * 100:.1f}%,OFI={ofi:.2f})",
-        )
-        ram.log_operativo(
-            f"[RAM SHIELD] Quantitative fallback veto on {symbol} "
-            f"(drop {caida_pct * 100:.1f}%, OFI {ofi:+.2f})"
-        )
-        return True, ram.MODO_DIRECCIONAL_VETO
-    return False, ram.MODO_DIRECCIONAL_DUAL
+    return mcc.evaluar_filtro_anti_luna(symbol, caida_pct, ofi)
 
 
 def evaluar_matriz_direccional_cuantitativa(
@@ -42,19 +33,9 @@ def evaluar_matriz_direccional_cuantitativa(
     ofi: float,
     hurst: float = 0.42,
 ) -> str:
-    vetado, _ = evaluar_filtro_anti_luna(symbol, dp_pct, ofi)
-    if vetado:
-        return ram.MODO_DIRECCIONAL_VETO
-
-    if dp_pct <= -0.018 and ofi <= -0.55 and hurst >= 0.56:
-        modo = ram.MODO_DIRECCIONAL_SOLO_SHORT
-    elif dp_pct >= 0.018 and ofi >= 0.55 and hurst >= 0.56:
-        modo = ram.MODO_DIRECCIONAL_SOLO_LONG
-    else:
-        modo = ram.MODO_DIRECCIONAL_DUAL
-
-    ram.ESTADO_GLOBAL.aplicar_matriz_direccional_lpu(symbol=symbol, modo=modo, motivo="QUANT_MATRIX")
-    return modo
+    return mcc.evaluar_matriz_direccional_cuantitativa(
+        symbol=symbol, z_score=z_score, dp_pct=dp_pct, ofi=ofi, hurst=hurst
+    )
 
 
 def calcular_fraccion_kelly_antifragil(
@@ -64,31 +45,9 @@ def calcular_fraccion_kelly_antifragil(
     side: str = "LONG",
     symbol: str = "",
 ) -> float:
-    ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
-    dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
-
-    if dir_norm == "SHORT":
-        base_k = float(ctrl.get("w5_kelly_short", cfg.KELLY_SHORT_SNIPER_FRACCION))
-    else:
-        if symbol and cfg.obtener_clase_activo(symbol) == cfg.CLASE_TIER1_LIQUIDO:
-            base_k = float(ctrl.get("w5_kelly_long", cfg.KELLY_LONG_TIER1_FRACCION))
-        else:
-            base_k = float(cfg.KELLY_FRACCION_BASE)
-
-    z_abs = abs(float(z_score))
-    ofi_abs = abs(float(ofi))
-    h_val = max(0.15, min(0.80, float(hurst)))
-
-    exceso_z = max(0.0, z_abs - 2.50)
-    bono_conviccion = min(0.12, exceso_z * 0.028 + max(0.0, ofi_abs - 0.18) * 0.08)
-    penalizacion_hurst = max(0.0, (h_val - 0.44) * 0.35)
-
-    mult_ia = max(
-        cfg.MULTIPLICADOR_IA_MIN,
-        min(cfg.MULTIPLICADOR_IA_MAX, float(ram.ESTADO_GLOBAL.multiplicador_kelly_ia)),
+    return mck.calcular_fraccion_kelly_antifragil(
+        z_score=z_score, ofi=ofi, hurst=hurst, side=side, symbol=symbol
     )
-    kelly_bruto = (base_k + bono_conviccion - penalizacion_hurst) * mult_ia
-    return round(max(cfg.KELLY_FRACCION_MIN, min(cfg.KELLY_FRACCION_MAX, kelly_bruto)), 4)
 
 
 def calcular_dimension_kelly(
@@ -99,29 +58,14 @@ def calcular_dimension_kelly(
     side: str = "LONG",
     symbol: str = "",
 ) -> Tuple[float, float, float]:
-    """
-    Returns (kelly_fraction, margin_usdt, notional_3x_usdt) with Moallemi-Wald
-    Outlier Convex Expansion (|Z| >= 8.0 and |OFI| >= 0.25 -> gamma_outlier <= 1.15).
-    """
-    frac = calcular_fraccion_kelly_antifragil(
+    return mck.calcular_dimension_kelly(
+        capital_libre_usdt=capital_libre_usdt,
         z_score=z_score,
         ofi=ofi,
         hurst=hurst,
         side=side,
         symbol=symbol,
     )
-    z_abs = abs(float(z_score))
-    ofi_abs = abs(float(ofi))
-    gamma_outlier = 1.0
-    if z_abs >= 8.0 and ofi_abs >= 0.25 and float(hurst) <= 0.485:
-        gamma_outlier = 1.0 + (0.15 * math.tanh((z_abs - 8.0) / 6.0))
-
-    cap_utilizable = max(0.0, float(capital_libre_usdt) * (1.0 - cfg.MARGEN_SEGURIDAD_LIQUIDACION))
-    margen_usdt = round(float(capital_libre_usdt) * frac * gamma_outlier, 4)
-    if cap_utilizable > 0.0:
-        margen_usdt = min(margen_usdt, round(cap_utilizable, 4))
-    nocional_usdt = round(margen_usdt * float(cfg.APALANCAMIENTO_OPERATIVO), 4)
-    return frac, margen_usdt, nocional_usdt
 
 
 class OrquestadorTriCortexLPU:

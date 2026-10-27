@@ -13,8 +13,10 @@ import time
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import config_parametros as cfg
-import micro_escudos_fisicos as mef
-import micro_veto_macro_btc as mvb
+from ofensiva import micro_enganche_fase as mep
+from defensiva import micro_escudos_fisicos as mef
+from defensiva import micro_veto_macro_btc as mvb
+from apoyo import micro_cinematica_l2 as mcl
 import core_estado_ram as ram
 import escudo_tricortex as tri
 
@@ -45,97 +47,14 @@ SCAR_BASE: Dict[str, Dict[str, Any]] = {
     "SCAR-LOCK-18": {"regla": "MIN_FILL_LOT_FRACTION", "piso": cfg.FRACCION_MINIMA_FILL_LOTE},
 }
 
-_CURVA_ESTACIONAL_24H_UTC: Tuple[float, ...] = (
-    0.58, 0.55, 0.52, 0.48, 0.45, 0.46,
-    0.52, 0.64, 0.72, 0.75, 0.70, 0.66,
-    0.74, 0.88, 0.94, 0.92, 0.85, 0.76,
-    0.68, 0.64, 0.62, 0.60, 0.59, 0.58,
-)
+VentanaZ = mcl.VentanaZ
 
 
 def calcular_percentil_intradia_24h(
     volatilidad_bv: float,
     timestamp_utc: Optional[float] = None,
 ) -> Tuple[float, str]:
-    ts = timestamp_utc if timestamp_utc is not None else time.time()
-    hora_utc = datetime.datetime.fromtimestamp(ts, _TZ_UTC).hour
-    base_estacional = _CURVA_ESTACIONAL_24H_UTC[hora_utc % 24]
-    sigma_ref = max(float(volatilidad_bv), cfg.VOLATILIDAD_BV_PISO_MIN)
-    ratio_vol = min(1.45, max(0.65, sigma_ref / 0.00075))
-    percentil = max(
-        cfg.PERCENTIL_DIA_MIN,
-        min(cfg.PERCENTIL_DIA_MAX, base_estacional * ratio_vol),
-    )
-    etiqueta = f"P{int(round(percentil * 100)):02d}_ELASTICO"
-    return round(percentil, 4), etiqueta
-
-
-class VentanaZ:
-    """
-    Jump-Robust Bipower Variation Z-Score & Horizon-Synchronized Excursion Engine.
-    """
-
-    def __init__(
-        self,
-        maxlen: int = cfg.VENTANA_Z_TICKS,
-        piso_volatilidad: float = cfg.VOLATILIDAD_BV_PISO_MIN,
-    ) -> None:
-        self.maxlen: int = max(30, int(maxlen))
-        self.piso_volatilidad: float = max(0.00035, float(piso_volatilidad))
-        self.precios: Deque[float] = collections.deque(maxlen=self.maxlen)
-        self.retornos: Deque[float] = collections.deque(maxlen=self.maxlen)
-        self.ema_rapida: float = 0.0
-        self.ema_macro: float = 0.0
-        self.ema_macro_prev: float = 0.0
-        self.volatilidad_bv: float = self.piso_volatilidad
-        self.z_score: float = 0.0
-        self.dp_pct: float = 0.0
-
-    def actualizar(self, precio: float, timestamp: Optional[float] = None) -> Tuple[float, float, float]:
-        p = float(precio)
-        if p <= 0.0:
-            return self.z_score, self.dp_pct, self.volatilidad_bv
-
-        if self.precios:
-            prev = self.precios[-1]
-            ret = (p - prev) / prev if prev > 0.0 else 0.0
-            if abs(ret) > 1e-9:
-                self.retornos.append(ret)
-        self.precios.append(p)
-
-        alpha_fast = 2.0 / (cfg.EMA_RAPIDA_TICKS + 1.0)
-        alpha_macro = 2.0 / (cfg.EMA_MACRO_TICKS + 1.0)
-        if self.ema_rapida <= 0.0:
-            self.ema_rapida = p
-            self.ema_macro = p
-            self.ema_macro_prev = p
-        else:
-            self.ema_rapida = (alpha_fast * p) + ((1.0 - alpha_fast) * self.ema_rapida)
-            self.ema_macro_prev = self.ema_macro
-            self.ema_macro = (alpha_macro * p) + ((1.0 - alpha_macro) * self.ema_macro)
-
-        if len(self.precios) < 4:
-            return 0.0, 0.0, self.volatilidad_bv
-
-        p_base = self.precios[0]
-        self.dp_pct = (p - p_base) / p_base if p_base > 0.0 else 0.0
-
-        rets_activos = [abs(r) for r in self.retornos if abs(r) > 1e-9]
-        if len(rets_activos) >= 4:
-            pares_bv = [
-                rets_activos[i] * rets_activos[i - 1]
-                for i in range(1, len(rets_activos))
-            ]
-            media_bv = (math.pi / 2.0) * (sum(pares_bv) / len(pares_bv))
-            sigma_tick = math.sqrt(max(0.0, media_bv))
-            sigma_horizonte = sigma_tick * math.sqrt(min(12.0, float(len(rets_activos))))
-            self.volatilidad_bv = max(self.piso_volatilidad, min(0.00110, sigma_horizonte))
-        else:
-            self.volatilidad_bv = max(self.piso_volatilidad, cfg.VOLATILIDAD_BV_PISO_MIN)
-
-        desviacion_compuesta = 0.72 * self.dp_pct + 0.28 * ((p - self.ema_rapida) / self.ema_rapida)
-        self.z_score = round(desviacion_compuesta / self.volatilidad_bv, 4)
-        return self.z_score, round(self.dp_pct, 6), round(self.volatilidad_bv, 6)
+    return mcl.calcular_percentil_intradia_24h(volatilidad_bv, timestamp_utc)
 
 
 def calcular_ofi_profundo(
@@ -144,113 +63,15 @@ def calcular_ofi_profundo(
     bids_curr: List[Tuple[float, float]],
     asks_curr: List[Tuple[float, float]],
 ) -> float:
-    pesos = cfg.OFI_PESOS_NIVELES
-    niveles = min(cfg.OFI_NIVELES_PROFUNDO, len(pesos))
-    num = 0.0
-    den = 0.0
-
-    for idx in range(niveles):
-        w = pesos[idx]
-        bp, bq_p = bids_prev[idx] if idx < len(bids_prev) else (0.0, 0.0)
-        ap, aq_p = asks_prev[idx] if idx < len(asks_prev) else (0.0, 0.0)
-        bc, bq_c = bids_curr[idx] if idx < len(bids_curr) else (0.0, 0.0)
-        ac, aq_c = asks_curr[idx] if idx < len(asks_curr) else (0.0, 0.0)
-
-        if bc > bp:
-            delta_b = bq_c
-        elif bc == bp:
-            delta_b = bq_c - bq_p
-        else:
-            delta_b = -bq_p
-
-        if ac < ap:
-            delta_a = aq_c
-        elif ac == ap:
-            delta_a = aq_c - aq_p
-        else:
-            delta_a = -aq_p
-
-        ofi_lvl = delta_b - delta_a
-        flujo_activo = abs(delta_b) + abs(delta_a)
-        reg_liquidez = (bq_c + aq_c) * 0.035
-        num += w * ofi_lvl
-        den += w * max(flujo_activo + reg_liquidez, 1e-9)
-
-    if den <= 1e-9:
-        return 0.0
-    est = max(-1.0, min(1.0, num / den))
-    return round(est, 4)
+    return mcl.calcular_ofi_profundo(bids_prev, asks_prev, bids_curr, asks_curr)
 
 
 def calcular_exponente_hurst(precios_activos: List[float], z_score_actual: float = 0.0) -> float:
-    cambios = [precios_activos[0]] if precios_activos else []
-    for p in precios_activos[1:]:
-        if abs(p - cambios[-1]) > 1e-12:
-            cambios.append(p)
-
-    if len(cambios) < 8:
-        return 0.40
-
-    ventana = cambios[-max(12, cfg.HURST_VENTANA_TICKS):]
-    rets = [
-        math.log(ventana[i] / ventana[i - 1])
-        for i in range(1, len(ventana))
-        if ventana[i] > 0.0 and ventana[i - 1] > 0.0
-    ]
-    if len(rets) < 6:
-        return 0.40
-
-    abs_rets = sorted(abs(r) for r in rets if abs(r) > 0.0)
-    med = abs_rets[len(abs_rets) // 2] if abs_rets else 1e-4
-    cap = max(med * 2.5, 1e-5)
-    r_clip = [max(-cap, min(cap, r)) for r in rets]
-
-    tramo_local = r_clip[-16:]
-    media_local = sum(tramo_local) / len(tramo_local)
-    frenado_activo = (r_clip[-1] * media_local) <= 0.0 or abs(r_clip[-1]) < abs(media_local) * 0.65
-    serie_eval = [r - media_local for r in tramo_local] if frenado_activo else r_clip
-
-    denom = sum(r * r for r in serie_eval)
-    if denom <= 1e-15:
-        return 0.38
-
-    num = sum(serie_eval[i] * serie_eval[i - 1] for i in range(1, len(serie_eval)))
-    rho1 = max(-0.45, min(0.75, num / denom))
-    h_raw = 0.50 + (0.50 * (math.log(max(0.25, 1.0 + rho1)) / math.log(2.0)))
-
-    if len(rets) >= 5 and (all(r > 0.0 for r in rets[-5:]) or all(r < 0.0 for r in rets[-5:])):
-        h_raw = max(h_raw, 0.56)
-
-    if z_score_actual >= cfg.Z_SCORE_IGNICION_SHORT_VETO and ventana[-1] >= max(ventana[:-1]):
-        h_raw = max(h_raw, 0.58)
-
-    return round(max(0.20, min(0.80, h_raw)), 4)
+    return mcl.calcular_exponente_hurst(precios_activos, z_score_actual=z_score_actual)
 
 
 def calcular_aceleracion_lyapunov(precios: List[float], spread_pct: float = 0.0) -> float:
-    """
-    Tick-Aware Multi-Step Second-Order Price Kinematics (Lyapunov Acceleration/Braking).
-    Prevents false negative acceleration when v2 >= 0 (price stopped or bounced 1 tick)
-    and suppresses single-tick micro-noise on low-priced assets (ZEREBRO/WAL).
-    """
-    if len(precios) < 5:
-        return 0.0
-    ventana = precios[-max(5, cfg.LYAPUNOV_VENTANA_TICKS):]
-    p0, p_mid, p_end = ventana[0], ventana[len(ventana) // 2], ventana[-1]
-    if p0 <= 0.0 or p_mid <= 0.0:
-        return 0.0
-    v1 = (p_mid - p0) / p0
-    v2 = (p_end - p_mid) / p_mid
-    acel = v2 - v1
-    umbral_tick = max(spread_pct * 1.25, 0.00042)
-    # If price is NOT falling in the latest half-window (v2 >= 0) or drop is <= 1 tick,
-    # do not report downward waterfall acceleration:
-    if acel < 0.0 and (v2 >= 0.0 or abs(v2) <= umbral_tick):
-        if v1 > umbral_tick and v2 <= 0.0:
-            # Genuine top exhaustion / rollover deceleration for SHORT-SNIPER
-            return round(acel, 6)
-        return round(max(acel, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO * 0.4), 6)
-    return round(acel, 6)
+    return mcl.calcular_aceleracion_lyapunov(precios, spread_pct=spread_pct)
 
 
 class EstadoRadarPar:
@@ -305,54 +126,7 @@ class RadarVolatilidadHFT:
         return est
 
     def _verificar_veto_macro_btc(self, direccion: str, ahora: float) -> Tuple[bool, str]:
-        m_btc = ram.ESTADO_GLOBAL.metricas_ticks.get(cfg.PAR_LIDER_MACRO)
-        if m_btc is None or m_btc.mid <= 0.0:
-            return True, "OK"
-
-        ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
-        umbral_ofi_btc = float(ctrl.get("w2_btc_beta", cfg.BTC_VETO_OFI_UMBRAL))
-
-        if m_btc.z_score <= -4.0:
-            ram.ESTADO_GLOBAL.pausa_macro_hasta = max(
-                ram.ESTADO_GLOBAL.pausa_macro_hasta,
-                ahora + cfg.PAUSA_MACRO_CONTAGIO_SEG,
-            )
-            ram.log_operativo(
-                f"[CIRCUIT BREAKER BTC] {cfg.PAR_LIDER_MACRO} collapsing "
-                f"(Z={m_btc.z_score:+.2f} <= -4.0)! Activating macro shield (30s)..."
-            )
-            return False, "CIRCUIT_BREAKER_BTC"
-
-        if direccion == "LONG":
-            caida_btc = (
-                (m_btc.ofi_profundo <= -umbral_ofi_btc and m_btc.z_score <= -0.25)
-                or (m_btc.z_score <= cfg.BTC_VETO_Z_UMBRAL_CAIDA)
-                or (m_btc.ofi_profundo <= -0.25 and m_btc.z_score <= -0.50)
-            )
-            if caida_btc:
-                ram.ESTADO_GLOBAL.btc_veto_long_hasta = max(
-                    ram.ESTADO_GLOBAL.btc_veto_long_hasta,
-                    ahora + cfg.BTC_VETO_COOLDOWN_SEG,
-                )
-                return False, f"BTC_VETO_LONG(OFI={m_btc.ofi_profundo:+.2f},Z={m_btc.z_score:+.2f})"
-            if ahora < ram.ESTADO_GLOBAL.btc_veto_long_hasta:
-                return False, "BTC_VETO_COOLDOWN_12S"
-        else:
-            subida_btc = (
-                (m_btc.ofi_profundo >= umbral_ofi_btc and m_btc.z_score >= 0.25)
-                or (m_btc.z_score >= cfg.BTC_VETO_Z_UMBRAL_SUBIDA)
-                or (m_btc.ofi_profundo >= 0.25 and m_btc.z_score >= 0.50)
-            )
-            if subida_btc:
-                ram.ESTADO_GLOBAL.btc_veto_short_hasta = max(
-                    ram.ESTADO_GLOBAL.btc_veto_short_hasta,
-                    ahora + cfg.BTC_VETO_COOLDOWN_SEG,
-                )
-                return False, f"BTC_VETO_SHORT(OFI={m_btc.ofi_profundo:+.2f},Z={m_btc.z_score:+.2f})"
-            if ahora < ram.ESTADO_GLOBAL.btc_veto_short_hasta:
-                return False, "BTC_VETO_COOLDOWN_12S"
-
-        return True, "OK"
+        return mvb.verificar_veto_macro_btc_completo(direccion, ahora)
 
     def procesar_instantanea_libro(
         self,
@@ -524,30 +298,8 @@ class RadarVolatilidadHFT:
         if ema900_dist_pct > cfg.EMA900_MAX_SOBRECOMPRA_LONG and z_score < 0.0:
             return False, "ANTI_PUMP_TOP_VETO", None
 
-        excursion_dual_ok = (
-            min(dp_pct, ema900_dist_pct) <= recorrido_req
-            and (max(dp_pct, ema900_dist_pct) <= piso_anti_ruido or (z_score <= -2.70 and dp_pct <= -0.0019))
-        )
-        dislocacion_long_activa = (
-            z_score <= z_umbral_long
-            and dp_pct < 0.0
-            and excursion_dual_ok
-        )
-        if dislocacion_long_activa:
-            metrica.phase_latched = True
-            metrica.phase_latch_ts = ahora
-            metrica.phase_latch_dir = "LONG"
-            metrica.phase_latch_z_peak = min(metrica.phase_latch_z_peak or z_score, z_score)
-            metrica.phase_latch_ema_dist = min(metrica.phase_latch_ema_dist or ema900_dist_pct, ema900_dist_pct)
-
-        latch_long_vigente = (
-            metrica.phase_latched
-            and metrica.phase_latch_dir == "LONG"
-            and (ahora - metrica.phase_latch_ts) <= cfg.PHASE_LATCH_VENTANA_SEG
-            and z_score <= (z_umbral_long * 0.72)
-            and dp_pct <= (dp_min_long * 0.70)
-            and min(dp_pct, ema900_dist_pct) <= (recorrido_req * 0.80)
-            and ema900_dist_pct <= (piso_anti_ruido * 0.85)
+        dislocacion_long_activa, latch_long_vigente = mep.evaluar_dislocacion_y_latch_long(
+            es_hb, z_score, dp_pct, ema900_dist_pct, ahora, metrica
         )
 
         if dislocacion_long_activa or latch_long_vigente:
@@ -677,40 +429,10 @@ class RadarVolatilidadHFT:
             float(ctrl.get("hurst_cap_short_mod", cfg.HURST_MAX_ENTRADA_SHORT)),
         )
 
-        sobreextension_short = (
-            ema900_dist_pct >= ema_min_short
-            and z_score >= cfg.Z_SCORE_SHORT_UMBRAL
-            and dp_pct >= dp_min_short
-        )
-        if sobreextension_short:
-            metrica.phase_latched = True
-            metrica.phase_latch_ts = ahora
-            metrica.phase_latch_dir = "SHORT"
-            metrica.phase_latch_z_peak = max(metrica.phase_latch_z_peak or z_score, z_score)
-            metrica.phase_latch_ema_dist = max(metrica.phase_latch_ema_dist or ema900_dist_pct, ema900_dist_pct)
-            est.vigilancia_short_hasta_ts = ahora + 15.0
-            est.max_z_pump_short = max(est.max_z_pump_short, z_score)
-            est.max_ema_pump_short = max(est.max_ema_pump_short, ema900_dist_pct)
-            est.px_pico_pump_short = max(est.px_pico_pump_short, mid)
-
-        latch_short_vigente = (
-            metrica.phase_latched
-            and metrica.phase_latch_dir == "SHORT"
-            and (ahora - metrica.phase_latch_ts) <= cfg.PHASE_LATCH_VENTANA_SEG
-            and z_score > 0.0
-            and dp_pct >= (dp_min_short * 0.65)
-            and ema900_dist_pct >= (ema_min_short * 0.85)
-        )
-
-        # Top-Rollover Capture (Catch-22 Fix): captures the initial roll off the pump top
-        # while still >= 85% overextended above EMA900, but blocks stale dumps (dp < -0.05%).
-        rollover_techo_vigente = (
-            ahora <= est.vigilancia_short_hasta_ts
-            and est.max_z_pump_short >= cfg.Z_SCORE_SHORT_UMBRAL
-            and ema900_dist_pct >= (ema_min_short * 0.88)
-            and dp_pct >= -0.0005
-            and mid <= (est.px_pico_pump_short * 0.9998)
-            and ofi_inst <= (cfg.OFI_MAX_ENTRADA_SHORT - 0.06)
+        sobreextension_short, latch_short_vigente, rollover_techo_vigente = (
+            mep.evaluar_sobreextension_y_rollover_short(
+                es_hb, z_score, dp_pct, ema900_dist_pct, mid, ofi_inst, ahora, metrica, est
+            )
         )
 
         if sobreextension_short or latch_short_vigente or rollover_techo_vigente:

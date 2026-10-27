@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Independiente de Salida Ganadora y Trinquete de Abraham Wald (SPRT).
-Conectado a las constantes reales de config_parametros.py (COMISION_MAKER_PCT,
-COMISION_TAKER_PCT, TRINQUETE_BE_OFFSET_PCT) y a gestor_posiciones.py.
+Micro-Modulo Ofensivo #2: Piso Zero-Loss (SCAR-LOCK-14), Oxigeno Temprano MFE (22s)
+e Inhibidor de MAKER_UNWIND en Pleno Rally Ganador.
 """
 import math
-from typing import Tuple
 import config_parametros as cfg
 
 
@@ -14,9 +12,6 @@ def calcular_piso_cero_perdida(
     direccion: str,
     tick_size: float = 0.0001,
 ) -> float:
-    """
-    SCAR-LOCK-14: Calcula el piso exacto libre de comisiones (Zero-Loss Floor).
-    """
     offset_min = max(
         float(cfg.TRINQUETE_BE_OFFSET_PCT),
         (cfg.COMISION_MAKER_PCT + cfg.COMISION_TAKER_PCT) * 1.15,
@@ -48,13 +43,6 @@ def debe_absorber_micro_retroceso_be_temprano(
     lambda_wald: float,
     trailing_wald_activo: bool,
 ) -> bool:
-    """
-    Solucion al Caso Trade #3 (salida prematura a los 8.06s en el inicio de un rally de +1.56%):
-    Cuando el Early Break-Even Ratchet (+0.11% MFE) esta activo pero aun no llegamos a la
-    Cresta de Wald (+0.22%), si el trade tiene menos de 22s, sigue en ganancia neta
-    (>= +0.055% libre de comisiones Maker) y el flujo OFI_5s sigue empujando a favor (>= +0.08),
-    absorbe el micro-retroceso de 1 tick para no ahogar el despegue.
-    """
     if trailing_wald_activo or mfe_pct >= cfg.COSECHA_TRIZ_ACTIVACION_PCT:
         return False
     if edad_seg >= 22.0:
@@ -75,13 +63,6 @@ def debe_inhibir_maker_unwind_en_rally(
     mfe_actual: float,
     ofi_5s: float,
 ) -> bool:
-    """
-    Solucion al Caso Trade #7 (salida prematura por MAKER_UNWIND en pleno rally):
-    Si la posicion en Fase 2 lleva ganancia saludable (>= +0.12%), esta pegada a su
-    maximo MFE (retroceso <= 0.035%) y el flujo OFI de 5s sigue empujando con fuerza
-    a favor (>= +0.12 en LONG o <= -0.12 en SHORT), inhibe el cierre por estancamiento
-    para permitir que alcance la Cresta de Wald (+0.22%..+0.90%).
-    """
     if pnl_pct < 0.0012:
         return False
     retroceso = max(0.0, mfe_actual - pnl_pct)

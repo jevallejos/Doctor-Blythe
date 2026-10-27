@@ -14,6 +14,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import config_parametros as cfg
+from apoyo import micro_paridad_lvr_uta as mpl
 import core_estado_ram as ram
 
 _TZ_UTC = datetime.timezone.utc
@@ -26,17 +27,13 @@ def calcular_lvr_instantaneo(
     volatilidad_bv: float = cfg.VOLATILIDAD_BV_PISO_MIN,
     es_maker: bool = True,
 ) -> float:
-    """
-    Continuous-time Limit Order Book Loss-Versus-Rebalancing (LOB LVR) and
-    post-fill adverse selection markout toxicity estimator (in bps / 1e4).
-    """
-    if precio_entrada <= 0.0 or precio_salida <= 0.0:
-        return 0.0005
-    sigma = max(float(volatilidad_bv or cfg.VOLATILIDAD_BV_PISO_MIN), 0.00035)
-    tau = max(1.0, min(float(duracion_seg or 18.0), 120.0)) / 9.0
-    lvr_teorico = 0.5 * (sigma ** 2) * math.sqrt(tau) * 100.0
-    factor_ejecucion = 0.85 if es_maker else 1.35
-    return round(max(0.0001, min(0.0250, lvr_teorico * factor_ejecucion)), 4)
+    return mpl.calcular_lvr_instantaneo(
+        precio_entrada=precio_entrada,
+        precio_salida=precio_salida,
+        duracion_seg=duracion_seg,
+        volatilidad_bv=volatilidad_bv,
+        es_maker=es_maker,
+    )
 
 
 class GestorEstadisticasHFT:
@@ -251,27 +248,7 @@ class GestorEstadisticasHFT:
         }
 
     def formatear_panel_ascii(self) -> List[str]:
-        r = self.obtener_resumen()
-        return [
-            "+==================================================================+",
-            (
-                f"|  [BLACK BOX] DOCTOR-BLYTHE V1.0 | Trades: {r['trades']:<3d} "
-                f"(W {r['wins']}/L {r['losses']}/S {r['scratches']}) | WR: {r['win_rate']:5.1f}%|"
-            ),
-            (
-                f"|  Total PnL: {r['total_pnl_usdt']:+.4f} USDT   "
-                f"best {r['best_usdt']:+.4f} / worst {r['worst_usdt']:+.4f}          |"
-            ),
-            (
-                f"|  MAP: {r['map_usdt']:5.2f} USDT | "
-                f"PnL/MAP: {r['pnl_over_map']:+.4f} | LVR: {r['lvr']:.4f}                |"
-            ),
-            (
-                f"|  Balance: {r['balance_usdt']:.4f} USDT (base {r['base_usdt']:.2f})   "
-                f"real: {r['real_usdt']:.4f} USDT            |"
-            ),
-            "+==================================================================+",
-        ]
+        return mpl.formatear_panel_ascii_resumen(self.obtener_resumen())
 
     def imprimir_panel(self, consola: bool = True) -> None:
         for linea in self.formatear_panel_ascii():

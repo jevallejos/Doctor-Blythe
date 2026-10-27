@@ -13,8 +13,10 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 import config_parametros as cfg
-import micro_motor_maker as mmm
-import micro_sizing_kelly as msk
+from ofensiva import micro_cotizador_stoikov as mcs
+from ofensiva import micro_motor_maker as mmm
+from ofensiva import micro_sizing_kelly as msk
+from defensiva import micro_evacuador_scratch as mes
 import core_estado_ram as ram
 import escudo_tricortex as tri
 import radar_volatilidad as rad
@@ -22,25 +24,11 @@ import telemetria_telegram as tel
 
 
 def cuantizar_tick(precio: float, tick_size: float, modo: str = "nearest") -> float:
-    if tick_size <= 0.0:
-        return round(precio, 6)
-    decimales = max(0, int(round(-math.log10(tick_size)))) if tick_size < 1.0 else 2
-    unidades = precio / tick_size
-    if modo == "floor":
-        val = math.floor(unidades + 1e-9) * tick_size
-    elif modo == "ceil":
-        val = math.ceil(unidades - 1e-9) * tick_size
-    else:
-        val = round(unidades) * tick_size
-    return round(val, decimales)
+    return mcs.cuantizar_tick(precio, tick_size, modo=modo)
 
 
 def cuantizar_lote(cantidad: float, step_size: float) -> float:
-    if step_size <= 0.0:
-        return round(cantidad, 4)
-    decimales = max(0, int(round(-math.log10(step_size)))) if step_size < 1.0 else 0
-    val = math.floor((cantidad / step_size) + 1e-9) * step_size
-    return round(val, decimales)
+    return mcs.cuantizar_lote(cantidad, step_size)
 
 
 def calcular_precio_penny_jump(
@@ -50,31 +38,7 @@ def calcular_precio_penny_jump(
     side: str,
     micro_price: float = 0.0,
 ) -> float:
-    """
-    Moallemi-Stoikov Zero-RTT Pre-Lead Quoting (t = 0ms):
-    Steps 1 tick inside the spread when spread >= 2 ticks (or when Stoikov
-    micro-price leads the mid-price), strictly bounded by best_ask - tick_size
-    (LONG) or best_bid + tick_size (SHORT) to guarantee 100% PostOnly safety.
-    """
-    t_size = max(1e-8, float(tick_size))
-    spread = best_ask - best_bid
-    mid = 0.5 * (best_bid + best_ask)
-    dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
-
-    if dir_norm == "LONG":
-        pre_lead = (micro_price > (mid + 0.15 * spread)) if micro_price > 0.0 else False
-        if spread >= (t_size * 1.95) or ( pre_lead and spread >= (t_size * 1.50) ):
-            candidato = min(best_ask - t_size, best_bid + (cfg.OFFSET_PENNY_JUMP_TICKS * t_size))
-        else:
-            candidato = best_bid
-        return cuantizar_tick(candidato, t_size, modo="floor")
-
-    pre_lead_s = (micro_price < (mid - 0.15 * spread)) if micro_price > 0.0 else False
-    if spread >= (t_size * 1.95) or ( pre_lead_s and spread >= (t_size * 1.50) ):
-        candidato = max(best_bid + t_size, best_ask - (cfg.OFFSET_PENNY_JUMP_TICKS * t_size))
-    else:
-        candidato = best_ask
-    return cuantizar_tick(candidato, t_size, modo="ceil")
+    return mcs.calcular_precio_penny_jump(best_bid, best_ask, tick_size, side, micro_price=micro_price)
 
 
 def calcular_niveles_sl_iniciales(
@@ -82,17 +46,7 @@ def calcular_niveles_sl_iniciales(
     side: str,
     tick_size: float = 0.0001,
 ) -> Tuple[float, float]:
-    sl_int_pct = float(cfg.SL_INTERNO_PCT)
-    sl_bybit_pct = float(cfg.obtener_aux("SL_EMERGENCIA_BYBIT_PCT", 0.0068))
-    dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
-
-    if dir_norm == "LONG":
-        sl_int = cuantizar_tick(precio_entrada * (1.0 - sl_int_pct), tick_size, modo="floor")
-        sl_srv = cuantizar_tick(precio_entrada * (1.0 - sl_bybit_pct), tick_size, modo="floor")
-    else:
-        sl_int = cuantizar_tick(precio_entrada * (1.0 + sl_int_pct), tick_size, modo="ceil")
-        sl_srv = cuantizar_tick(precio_entrada * (1.0 + sl_bybit_pct), tick_size, modo="ceil")
-    return sl_int, sl_srv
+    return mes.calcular_niveles_sl_iniciales(precio_entrada, side, tick_size=tick_size)
 
 
 async def consultar_orden_segura(

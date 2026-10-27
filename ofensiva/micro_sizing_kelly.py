@@ -1,20 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Independiente de Dimensionamiento Kelly y Anti-Trampa de Margen UTA.
-Resuelve el sub-dimensionamiento transitorio post-cierre/cancelacion ($6.28/$6.53 vs $17.24 USDT)
-usando los atributos exactos de EstadoGlobalRAM (posiciones_activas, capital_total_uta, capital_libre_uta).
+Micro-Modulo Ofensivo #3: Dimensionamiento Kelly UTA y Anti-Trampa de Margen Libre.
+Garantiza nocional completo (~$16.00-$17.25 USDT) cuando Slots == 0/1.
 """
 from typing import Any, Tuple
-import config_parametros as cfg
 import core_estado_ram as ram
 
 
 def sanear_balance_libre_slot_vacio(balance_libre_crudo: float) -> float:
-    """
-    Cuando no hay posiciones activas abiertas (Slots 0/1), verifica si capital_libre_uta
-    quedo transitoriamente reducido en cache (< 85% de capital_total_uta) por una orden
-    PostOnly reci?n cancelada o cerrada hace milisegundos, y restituye el 98% de capital_total_uta.
-    """
     libre = float(balance_libre_crudo or 0.0)
     est = getattr(ram, "ESTADO_GLOBAL", None)
     if est is None:
@@ -41,10 +34,6 @@ def calcular_dimension_kelly_uta(
     side: str = "LONG",
     symbol: str = "",
 ) -> Tuple[float, float, float]:
-    """
-    Envoltorio conectado a ejecutor_sniper.py que garantiza nocional completo (~$16.50-$17.25 USDT)
-    en cada disparo cuando el slot esta libre (0/1).
-    """
     capital_saneado = sanear_balance_libre_slot_vacio(capital_libre_usdt)
     return tri_mod.calcular_dimension_kelly(
         capital_libre_usdt=capital_saneado,
