@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Defensivo #1: Escudos Fisicos de Entrada (Terpsichora V1.0).
-Aisla las 4 barreras cinematicas y de microestructura (Lyapunov, Hurst,
-Absorcion OFI/Hawkes y Coherencia de Signo RF-06) fuera del WebSocket.
+Aisla las barreras cinematicas y de microestructura (Lyapunov, Hurst,
+Absorcion OFI/Hawkes, Coherencia de Signo RF-06 y Conviccion Contra-EMA900).
 """
 from typing import Tuple
 
@@ -72,5 +72,35 @@ def evaluar_absorcion_ofi_hawkes(
             return (
                 False,
                 f"WAIT_ASK_ABSORPTION(OFI={ofi_actual:+.2f}[{ticks_absorcion}/{ticks_min_req}t]>{ofi_short_req:+.2f})",
+            )
+    return True, "OK"
+
+
+def evaluar_conviccion_contratendencia_ema900(
+    direccion: str,
+    ema900_dist_pct: float,
+    ofi_actual: float,
+    hurst_actual: float,
+    z_score: float = 0.0,
+) -> Tuple[bool, str]:
+    """
+    Escudo Contra-Tendencia Macro Extrema (Remediacion Trade #8 y Trade #2):
+    Cuando |EMA900| >= 0.50% en contra de la direccion y no es un climax extremo (|Z| < 6.0),
+    exige agotamiento fractal firme (H <= 0.435) y absorcion OFI profunda (|OFI| >= 0.42).
+    """
+    if abs(z_score) >= 6.0:
+        return True, "OK"
+
+    if direccion == "SHORT" and ema900_dist_pct >= 0.0050:
+        if hurst_actual > 0.435 or ofi_actual > -0.42:
+            return (
+                False,
+                f"WEAK_COUNTER_TREND_SHORT(EMA900={ema900_dist_pct * 100:+.2f}%,OFI={ofi_actual:+.2f},H={hurst_actual:.2f})",
+            )
+    elif direccion == "LONG" and ema900_dist_pct <= -0.0050:
+        if hurst_actual > 0.435 or ofi_actual < 0.42:
+            return (
+                False,
+                f"WEAK_COUNTER_TREND_LONG(EMA900={ema900_dist_pct * 100:+.2f}%,OFI={ofi_actual:+.2f},H={hurst_actual:.2f})",
             )
     return True, "OK"

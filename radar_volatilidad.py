@@ -455,6 +455,12 @@ class RadarVolatilidadHFT:
             if ofi_inst > cfg.OFI_MAX_ENTRADA_SHORT or est.ofi_ticks_neg < cfg.OFI_TICKS_PERSISTENCIA_MIN:
                 return False, "SHORT_OFI_INSUFFICIENT", None
 
+            ok_ct_s, mot_ct_s = mef.evaluar_conviccion_contratendencia_ema900(
+                "SHORT", ema900_dist_pct, ofi_inst, hurst, z_score
+            )
+            if not ok_ct_s:
+                return False, mot_ct_s, None
+
             if ahora < ram.ESTADO_GLOBAL.btc_veto_short_hasta:
                 m_b = ram.ESTADO_GLOBAL.metricas_ticks.get(cfg.PAR_LIDER_MACRO)
                 if m_b is not None and mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(

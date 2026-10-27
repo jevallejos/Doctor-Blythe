@@ -56,9 +56,13 @@ def calcular_precio_penny_jump(
 
 
 def calcular_tp_dinamico_volatilidad(volatilidad_bv: float) -> float:
-    vol_bv = float(volatilidad_bv or cfg.VOLATILIDAD_BV_PISO_MIN)
-    tp_din = max(
-        cfg.COSECHA_ESTANCAMIENTO_MFE_PCT,
-        min(0.0032, max(cfg.COSECHA_TRIZ_ACTIVACION_PCT, vol_bv * 3.2)),
-    )
-    return round(tp_din, 5)
+    """
+    Objetivo de cosecha elastico acoplado a la volatilidad Bipower realizada:
+    - En regimenes de volatilidad moderada (vol_bv ~ 0.00055 - 0.00065, como
+      WAL y ZEREBRO donde el MFE natural hace techo en +0.166% a +0.190%),
+      situa la activacion de cosecha en +0.168% a +0.188%.
+    - En alta volatilidad (vol_bv >= 0.00076), escala hacia +0.22% - +0.32%.
+    """
+    vol_limpia = max(float(cfg.VOLATILIDAD_BV_PISO_MIN), float(volatilidad_bv))
+    piso_elastico = max(float(cfg.COSECHA_ESTANCAMIENTO_MFE_PCT) + 0.00038, 0.00168)
+    return max(piso_elastico, min(0.0032, vol_limpia * 2.90))

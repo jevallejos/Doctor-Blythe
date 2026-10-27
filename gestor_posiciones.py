@@ -480,7 +480,12 @@ class GestorPosicionesChronosTriz:
                 if "SCRATCH" in motivo_up
                 else medf.calcular_intervalo_repeg_salida_maker(motivo_up)
             )
-            if (ahora - pos.ultimo_repeg_salida_ts) >= intervalo_repeg and px_target != pos.precio_orden_salida:
+            urgencia_be = bool(
+                pos.trinquete_be_activo
+                and motivo == "TRINQUETE_BE_MAKER"
+                and pos.motivo_salida_pendiente != "TRINQUETE_BE_MAKER"
+            )
+            if (urgencia_be or (ahora - pos.ultimo_repeg_salida_ts) >= intervalo_repeg) and px_target != pos.precio_orden_salida:
                 await exchange.cancel_order(pos.orden_salida_id, pos.symbol)
                 nueva = await exchange.create_order(
                     pos.symbol,
@@ -700,6 +705,7 @@ class GestorPosicionesChronosTriz:
             )
 
         # 5. Law 2 (RF-18): 18.0s Passive Maker-Scratch on Dead Fills (Delegated to defensiva/)
+        hurst_live = m_live.hurst if m_live is not None else pos.hurst_entrada
         wald_scratch_ready = mes.evaluar_gatillo_maker_scratch_18s(
             pos.direccion,
             edad,
@@ -708,7 +714,19 @@ class GestorPosicionesChronosTriz:
             ofi_5s,
             lambda_w,
             pos.trinquete_be_activo,
+            hurst_actual=hurst_live,
+            fill_post_aborto=bool(getattr(pos, "fill_post_aborto", False)),
         )
+        if pos.en_proceso_cierre and mes.debe_escalar_scratch_colgado_a_taker(
+            pos.direccion,
+            max(0.0, ahora - pos.ts_orden_salida),
+            pnl_pct,
+            ofi_5s,
+            pos.motivo_salida_pendiente,
+        ):
+            return await self._ejecutar_cierre_taker(
+                exchange, pos, mid_actual, "MAKER_SCRATCH_18S"
+            )
         if wald_scratch_ready:
             if not pos.en_proceso_cierre:
                 ram.log_operativo(
