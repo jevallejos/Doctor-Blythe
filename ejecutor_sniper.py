@@ -289,30 +289,18 @@ class EjecutorSniperBybit:
                 m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
                 if m_live is not None and filled_actual <= 0.0 and permitir_repeg:
                     q_l1_now = m_live.bid_qty if dir_norm == "LONG" else m_live.ask_qty
-                    erosion_adversa = (
-                        q_l1_init > 0.0
-                        and q_l1_now > 0.0
-                        and (q_l1_now / q_l1_init) < 0.15
-                        and (
-                            (dir_norm == "LONG" and m_live.ofi_profundo <= -0.10)
-                            or (dir_norm == "SHORT" and m_live.ofi_profundo >= 0.10)
-                        )
-                    )
                     veto_btc_activo = (
                         (dir_norm == "LONG" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_long_hasta)
                         or (dir_norm == "SHORT" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_short_hasta)
                     )
-                    cola_toxica = (
-                        erosion_adversa
-                        or (
-                            elapsed >= cfg.EARLY_QUEUE_ABORT_SEG
-                            and (
-                                m_live.hurst > cfg.HURST_TECHO_DURO_ABSOLUTO
-                                or veto_btc_activo
-                                or (dir_norm == "LONG" and m_live.ofi_profundo <= -0.25)
-                                or (dir_norm == "SHORT" and m_live.ofi_profundo >= 0.25)
-                            )
-                        )
+                    cola_toxica, erosion_adversa = mmm.evaluar_aborto_cola_moallemi(
+                        dir_norm,
+                        q_l1_init,
+                        q_l1_now,
+                        m_live.ofi_profundo,
+                        m_live.hurst,
+                        elapsed,
+                        veto_btc_activo,
                     )
                     if cola_toxica and not fue_cancelada_postonly:
                         try:
@@ -333,9 +321,8 @@ class EjecutorSniperBybit:
                         and q_l1_now > (q_l1_init * 2.4)
                         and (m_live.ask - m_live.bid) >= (tick_size * 1.95)
                     )
-                    listo_jump_250ms = fue_cancelada_postonly or (
-                        elapsed >= 0.25
-                        and (elapsed - ultimo_repeg_elapsed) >= 0.25
+                    listo_jump_250ms = mmm.listo_para_repeg_cola(
+                        fue_cancelada_postonly, elapsed, ultimo_repeg_elapsed
                     )
                     if repegs_hechos < 2 and listo_jump_250ms:
                         nuevo_px = calcular_precio_penny_jump(

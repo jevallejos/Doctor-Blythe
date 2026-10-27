@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Independiente de Dimensionamiento Kelly y Anti-Trampa de Margen UTA.
-Resuelve el bug de margen libre cacheado post-cierre ($9.25 - $5.75 = $3.50 USDT -> $6.53 nocional)
-cuando Slots == 0/1, restituyendo la potencia completa (~$16.50-$17.25 USDT) en tiros ganadores.
+Resuelve el sub-dimensionamiento transitorio post-cierre/cancelacion ($6.28/$6.53 vs $17.24 USDT)
+usando los atributos exactos de EstadoGlobalRAM (posiciones_activas, capital_total_uta, capital_libre_uta).
 """
-import inspect
 from typing import Any, Tuple
 import config_parametros as cfg
 import core_estado_ram as ram
@@ -12,28 +11,21 @@ import core_estado_ram as ram
 
 def sanear_balance_libre_slot_vacio(balance_libre_crudo: float) -> float:
     """
-    Cuando no hay posiciones abiertas (Slots 0/1) ni ordenes en vuelo, verifica si el
-    balance_libre_crudo quedo artificialmente reducido en cache por el margen de la
-    operacion anterior (ej. $3.50 USDT en vez de $9.25 USDT). De ser asi, restituye
-    el balance real sincronizado de la cuenta UTA.
+    Cuando no hay posiciones activas abiertas (Slots 0/1), verifica si capital_libre_uta
+    quedo transitoriamente reducido en cache (< 85% de capital_total_uta) por una orden
+    PostOnly reci?n cancelada o cerrada hace milisegundos, y restituye el 98% de capital_total_uta.
     """
     libre = float(balance_libre_crudo or 0.0)
     est = getattr(ram, "ESTADO_GLOBAL", None)
     if est is None:
         return libre
 
-    pos_abiertas = getattr(est, "posiciones_abiertas", {}) or {}
-    ord_vuelo = getattr(est, "ordenes_en_vuelo", {}) or {}
-    if len(pos_abiertas) > 0 or len(ord_vuelo) > 0:
+    pos_dict = getattr(est, "posiciones_activas", {}) or {}
+    activas = [p for p in pos_dict.values() if not getattr(p, "cerrada", False)]
+    if len(activas) > 0:
         return libre
 
-    # Buscar el balance total real sincronizado en ESTADO_GLOBAL
-    candidatos_total = [
-        float(getattr(est, attr, 0.0) or 0.0)
-        for attr in ("balance_total_uta", "balance_uta_usdt", "equity_uta_usdt", "balance_real_usdt")
-    ]
-    total_real = max(candidatos_total) if candidatos_total else 0.0
-
+    total_real = float(getattr(est, "capital_total_uta", 0.0) or 0.0)
     if total_real > 0.0 and libre > 0.0 and libre < (total_real * 0.85):
         return round(max(libre, total_real * 0.98), 4)
 
@@ -42,23 +34,23 @@ def sanear_balance_libre_slot_vacio(balance_libre_crudo: float) -> float:
 
 def calcular_dimension_kelly_uta(
     tri_mod: Any,
-    *args: Any,
-    **kwargs: Any,
+    capital_libre_usdt: float,
+    z_score: float,
+    ofi: float,
+    hurst: float = 0.42,
+    side: str = "LONG",
+    symbol: str = "",
 ) -> Tuple[float, float, float]:
     """
-    Envoltorio transparente para tri.calcular_dimension_kelly que inspecciona los
-    argumentos sin importar su orden y sanea el parametro de capital/balance cuando Slots == 0/1.
+    Envoltorio conectado a ejecutor_sniper.py que garantiza nocional completo (~$16.50-$17.25 USDT)
+    en cada disparo cuando el slot esta libre (0/1).
     """
-    fn = tri_mod.calcular_dimension_kelly
-    try:
-        sig = inspect.signature(fn)
-        bound = sig.bind(*args, **kwargs)
-        bound.apply_defaults()
-        for nombre_param, valor in list(bound.arguments.items()):
-            if any(k in nombre_param.lower() for k in ("balance", "capital", "usdt", "libre", "equity")):
-                if isinstance(valor, (int, float)):
-                    bound.arguments[nombre_param] = sanear_balance_libre_slot_vacio(float(valor))
-                    break
-        return fn(*bound.args, **bound.kwargs)
-    except Exception:
-        return fn(*args, **kwargs)
+    capital_saneado = sanear_balance_libre_slot_vacio(capital_libre_usdt)
+    return tri_mod.calcular_dimension_kelly(
+        capital_libre_usdt=capital_saneado,
+        z_score=z_score,
+        ofi=ofi,
+        hurst=hurst,
+        side=side,
+        symbol=symbol,
+    )

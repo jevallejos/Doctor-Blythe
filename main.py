@@ -88,6 +88,11 @@ def _capturar_mtimes_codigo() -> Dict[str, float]:
         "gestor_posiciones.py",
         "evaluador_cuantico_oos.py",
         "main.py",
+        "micro_motor_maker.py",
+        "micro_motor_wald_exit.py",
+        "micro_sizing_kelly.py",
+        "micro_escudos_fisicos.py",
+        "micro_veto_macro_btc.py",
     ):
         p = base_dir / nombre
         if p.exists():

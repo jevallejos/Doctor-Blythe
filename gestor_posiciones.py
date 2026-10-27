@@ -569,6 +569,16 @@ class GestorPosicionesChronosTriz:
         )
         if sl_hit:
             if pos.trinquete_be_activo:
+                if mmw.debe_absorber_micro_retroceso_be_temprano(
+                    pos.direccion,
+                    edad,
+                    pnl_pct,
+                    pos.max_pnl_pct_alcanzado,
+                    ofi_5s,
+                    lambda_w,
+                    pos.trailing_activo,
+                ):
+                    return None
                 res_be = await self._iniciar_o_actualizar_salida_maker(
                     exchange, pos, best_bid, best_ask, tick_size, "TRINQUETE_BE_MAKER", ts_now
                 )
@@ -654,7 +664,12 @@ class GestorPosicionesChronosTriz:
                 )
 
         # 3. Phase 2 Stall Harvest (16s+) when MFE reached +0.11%..+0.21% and momentum stalls
-        if edad >= 16.0 and pnl_pct >= umbral_stall and (lambda_w <= 0.15 or ofi_5s <= 0.08):
+        if (
+            edad >= 16.0
+            and pnl_pct >= umbral_stall
+            and (lambda_w <= 0.15 or ofi_5s <= 0.08)
+            and (not mmw.debe_inhibir_maker_unwind_en_rally(pos.direccion, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s))
+        ):
             if not pos.trinquete_be_activo:
                 piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
                 pos.sl_interno = piso_be

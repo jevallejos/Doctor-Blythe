@@ -26,6 +26,11 @@ ARCHIVOS_CANONICOS: Tuple[Tuple[str, str], ...] = (
     ("radar_volatilidad.py", "PY"),
     ("ejecutor_sniper.py", "PY"),
     ("gestor_posiciones.py", "PY"),
+    ("micro_motor_maker.py", "PY"),
+    ("micro_motor_wald_exit.py", "PY"),
+    ("micro_sizing_kelly.py", "PY"),
+    ("micro_escudos_fisicos.py", "PY"),
+    ("micro_veto_macro_btc.py", "PY"),
     ("main.py", "PY"),
     ("evaluador_cuantico_oos.py", "PY"),
     ("instalar_infraestructura.sh", "SH"),
@@ -105,7 +110,7 @@ def main() -> int:
             errores += 1
     print("=" * 90)
     if errores == 0:
-        print(" FINAL RESULT: 0 ERRORS DETECTED | DOCTOR-BLYTHE TERPSICHORA V1.0 (17/17) CERTIFIED")
+        print(" FINAL RESULT: 0 ERRORS DETECTED | DOCTOR-BLYTHE TERPSICHORA V1.0 (22/22) CERTIFIED")
         print("=" * 90)
         return 0
     print(f" FINAL RESULT: {errores} FILE(S) WITH VALIDATION ERRORS")

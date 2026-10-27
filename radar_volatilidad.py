@@ -444,7 +444,7 @@ class RadarVolatilidadHFT:
             + (0.25 if abs(acel_lyap) > 0.0025 else 0.04),
         )
         est.vpin_ema = round((0.08 * tox_inst) + (0.92 * est.vpin_ema), 4)
-        if acel_lyap < cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO:
+        if not mef.evaluar_freno_lyapunov('LONG', acel_lyap, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO)[0]:
             est.ultimo_shock_lyapunov_ts = ahora
 
         ema_macro = est.ventana_z.ema_macro if est.ventana_z.ema_macro > 0.0 else mid
@@ -584,6 +584,19 @@ class RadarVolatilidadHFT:
                     )
                 return False, "OFI_INSUFFICIENT_PERSISTENCE", None
 
+            if ahora < ram.ESTADO_GLOBAL.btc_veto_long_hasta:
+                m_b = ram.ESTADO_GLOBAL.metricas_ticks.get(cfg.PAR_LIDER_MACRO)
+                if m_b is not None and mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(
+                    "LONG",
+                    ram.ESTADO_GLOBAL.btc_veto_long_hasta - ahora,
+                    m_b.z_score,
+                    m_b.ofi_profundo,
+                    ofi_inst,
+                    hurst,
+                    acel_lyap,
+                    cfg.BTC_VETO_COOLDOWN_SEG,
+                ):
+                    ram.ESTADO_GLOBAL.btc_veto_long_hasta = 0.0
             ok_btc, motivo_btc = self._verificar_veto_macro_btc("LONG", ahora)
             if not ok_btc:
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
@@ -594,7 +607,7 @@ class RadarVolatilidadHFT:
                 )
                 return False, motivo_btc, None
 
-            if hurst > h_cap_long:
+            if not mef.evaluar_filtro_hurst_direccional('LONG', hurst, h_cap_long, h_cap_long)[0]:
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
                     est.ultimo_log_warn_ts = ahora
                     ram.log_operativo(

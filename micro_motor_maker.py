@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Independiente de Ejecucion y Cosecha Maker (Moallemi & Bybit PostOnly).
-Aisla la matematica de supervivencia en cola L1, Penny-Jump controlado y
-cosecha ganadora Maker-to-Maker sin tocar los modulos troncales.
+Micro-Modulo Independiente de Supervivencia en Cola L1 y Re-Peg Maker (Moallemi-Stoikov).
+Evita abortar ordenes PostOnly cuando Hurst sube por el propio rebote a favor (OFI >= +0.12)
+y regula la cadencia de Queue-Jump para no agotar los 2 re-pegs prematuramente.
 """
 from typing import Tuple
 import config_parametros as cfg
@@ -10,80 +10,57 @@ import config_parametros as cfg
 
 def evaluar_aborto_cola_moallemi(
     direccion: str,
-    q_l1_inicial: float,
-    q_l1_actual: float,
-    ofi_actual: float,
-    h_actual: float,
-    edad_orden_seg: float,
-) -> Tuple[bool, str]:
-    grace_seg = float(getattr(cfg, "MOALLEMI_MIN_AGE_ABORT_SEG", 0.32))
-    if edad_orden_seg < grace_seg:
-        return False, "GRACE_WINDOW"
-
-    ratio_min = float(getattr(cfg, "MOALLEMI_QUEUE_DEPLETION_ABORT_RATIO", 0.32))
-    ofi_flip = float(getattr(cfg, "MOALLEMI_OFI_ADVERSE_ABORT_THRESHOLD", 0.18))
-    h_abort = float(getattr(cfg, "MOALLEMI_HURST_ABORT_THRESHOLD", 0.54))
-
-    ratio_cola = (q_l1_actual / q_l1_inicial) if q_l1_inicial > 0.0 else 1.0
-    cola_erosionada = (q_l1_inicial > 0.0) and (ratio_cola < ratio_min)
-
-    ofi_adverso = (
-        (direccion == "LONG" and ofi_actual < -ofi_flip)
-        or (direccion == "SHORT" and ofi_actual > ofi_flip)
+    q_l1_init: float,
+    q_l1_now: float,
+    ofi_profundo: float,
+    hurst_actual: float,
+    elapsed_seg: float,
+    veto_btc_activo: bool,
+) -> Tuple[bool, bool]:
+    """
+    Retorna (cola_toxica: bool, erosion_adversa: bool).
+    Si el flujo OFI empuja claramente a favor de nuestra orden (>= +0.12 en LONG o <= -0.12 en SHORT),
+    no aborta por subida de Hurst, permitiendo capturar el fill del rebote en V.
+    """
+    erosion_adversa = (
+        q_l1_init > 0.0
+        and q_l1_now > 0.0
+        and (q_l1_now / q_l1_init) < 0.15
+        and (
+            (direccion == "LONG" and ofi_profundo <= -0.10)
+            or (direccion == "SHORT" and ofi_profundo >= 0.10)
+        )
     )
 
     flujo_a_favor_fuerte = (
-        (direccion == "LONG" and ofi_actual >= 0.10)
-        or (direccion == "SHORT" and ofi_actual <= -0.10)
+        (direccion == "LONG" and ofi_profundo >= 0.12)
+        or (direccion == "SHORT" and ofi_profundo <= -0.12)
     )
-    hurst_toxico = (h_actual > h_abort) and (not flujo_a_favor_fuerte)
+    hurst_toxico = (hurst_actual > cfg.HURST_TECHO_DURO_ABSOLUTO) and (not flujo_a_favor_fuerte)
 
-    if cola_erosionada or ofi_adverso or hurst_toxico:
-        return (
-            True,
-            f"Q_L1={q_l1_actual:.1f}/{q_l1_inicial:.1f}, H={h_actual:.2f}, OFI={ofi_actual:+.2f}",
-        )
-    return False, "OK"
+    ofi_contra_fuerte = (
+        (direccion == "LONG" and ofi_profundo <= -0.25)
+        or (direccion == "SHORT" and ofi_profundo >= 0.25)
+    )
+
+    cola_toxica = erosion_adversa or (
+        elapsed_seg >= cfg.EARLY_QUEUE_ABORT_SEG
+        and (hurst_toxico or veto_btc_activo or ofi_contra_fuerte)
+    )
+    return bool(cola_toxica), bool(erosion_adversa)
 
 
-def evaluar_salto_punta_penny(
-    direccion: str,
-    precio_orden: float,
-    bid_actual: float,
-    ask_actual: float,
-    tick_size: float,
-    ofi_actual: float,
-    h_actual: float,
-    re_pegs_realizados: int,
-    edad_en_nivel_seg: float = 1.0,
-) -> Tuple[bool, float]:
-    if not bool(getattr(cfg, "PENNY_JUMP_HABILITADO", True)):
-        return False, precio_orden
-
-    max_pegs_efectivo = min(int(getattr(cfg, "PENNY_JUMP_MAX_REPEGS", 2)), 1)
-    if re_pegs_realizados >= max_pegs_efectivo or tick_size <= 0.0:
-        return False, precio_orden
-
-    if edad_en_nivel_seg < 0.90:
-        return False, precio_orden
-
-    h_max = float(getattr(cfg, "MOALLEMI_HURST_ABORT_THRESHOLD", 0.54))
-    if h_actual >= h_max:
-        return False, precio_orden
-
-    spread = ask_actual - bid_actual
-    if spread <= 0.0:
-        return False, precio_orden
-
-    if direccion == "LONG":
-        if bid_actual > (precio_orden + 0.5 * tick_size) and ofi_actual >= 0.35:
-            nuevo_px = min(bid_actual, ask_actual - tick_size)
-            if nuevo_px > precio_orden:
-                return True, round(nuevo_px, 8)
-    else:
-        if ask_actual < (precio_orden - 0.5 * tick_size) and ofi_actual <= -0.35:
-            nuevo_px = max(ask_actual, bid_actual + tick_size)
-            if nuevo_px < precio_orden:
-                return True, round(nuevo_px, 8)
-
-    return False, precio_orden
+def listo_para_repeg_cola(
+    fue_cancelada_postonly: bool,
+    elapsed_seg: float,
+    ultimo_repeg_elapsed: float,
+) -> bool:
+    """
+    Si Bybit rechazo/cancelo por PostOnly, re-cotiza de inmediato.
+    Si la orden sigue viva descansando en el libro, espera al menos 0.45s entre saltos
+    para conservar prioridad de cola L1 y no quemar los 2 re-pegs en 0.7s.
+    """
+    if fue_cancelada_postonly:
+        return True
+    intervalo_min = max(0.45, float(getattr(cfg, "REPEG_PASIVO_ENTRADA_SEG", 0.65)) * 0.70)
+    return bool(elapsed_seg >= 0.35 and (elapsed_seg - ultimo_repeg_elapsed) >= intervalo_min)
