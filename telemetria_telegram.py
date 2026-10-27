@@ -208,7 +208,7 @@ def notificar_digest_ejecutivo(
     ahorro_escudos_usdt: float,
 ) -> bool:
     msg = (
-        f"{ICONO_DIAMANTE} [DOCTOR-BLYTHE V1.0 ? 4H EXECUTIVE DIGEST]\n"
+        f"{ICONO_DIAMANTE} [DOCTOR-BLYTHE V1.0 - 4H EXECUTIVE DIGEST]\n"
         f"UTA Balance: {resumen_stats.get('real_usdt', 0.0):.4f} USDT (1:1 Parity)\n"
         f"Session Trades: {resumen_stats.get('trades', 0)} "
         f"(W:{resumen_stats.get('wins', 0)} / L:{resumen_stats.get('losses', 0)} / S:{resumen_stats.get('scratches', 0)})\n"

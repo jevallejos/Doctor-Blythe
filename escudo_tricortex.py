@@ -140,11 +140,16 @@ class OrquestadorTriCortexLPU:
             if float(op.get("pnl_usdt", 0.0)) <= 0.0 and not op.get("es_scratch", False)
         )
         pnl_12 = sum(float(op.get("pnl_usdt", 0.0)) for op in ultimos)
+        pnl_efectivo = sum(
+            float(op.get("pnl_usdt", 0.0))
+            for op in ultimos
+            if not op.get("es_scratch", False)
+        )
         ciclos_reales = wins + losses
         wr_12 = (wins / ciclos_reales) if ciclos_reales > 0 else 1.0
-        if pnl_12 < -0.25 or (ciclos_reales >= 4 and wr_12 < 0.30):
+        if (ciclos_reales >= 3 and pnl_efectivo < -0.22) or (ciclos_reales >= 4 and wr_12 < 0.30):
             mult = 0.72
-        elif ciclos_reales >= 3 and pnl_12 < -0.12:
+        elif (ciclos_reales >= 2 and pnl_efectivo < -0.12) or pnl_12 < -0.28:
             mult = 0.85
         elif wins >= 2 and pnl_12 > 0.06:
             mult = 1.05

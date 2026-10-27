@@ -71,10 +71,11 @@ def verificar_veto_macro_btc_completo(direccion: str, ahora: float) -> Tuple[boo
         )
         return False, "CIRCUIT_BREAKER_BTC"
     if direccion == "LONG":
+        choque_l, _ = evaluar_choque_directo_btc("LONG", m_btc.z_score, m_btc.ofi_profundo, umbral_ofi_btc, 0.50)
         caida_btc = (
-            (m_btc.ofi_profundo <= -umbral_ofi_btc and m_btc.z_score <= -0.25)
+            choque_l
+            or (m_btc.ofi_profundo <= -umbral_ofi_btc and m_btc.z_score <= -0.25)
             or (m_btc.z_score <= cfg.BTC_VETO_Z_UMBRAL_CAIDA)
-            or (m_btc.ofi_profundo <= -0.25 and m_btc.z_score <= -0.50)
         )
         if caida_btc:
             ram.ESTADO_GLOBAL.btc_veto_long_hasta = max(

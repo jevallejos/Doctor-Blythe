@@ -2,7 +2,7 @@
 """
 Gate 0 Static Auditor for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 Verifies pure UTF-8 (no BOM), Unix LF line endings, AST compilation, and the
-exact 100-uppercase-constant contract (AST_100_CONSTANTES_OK) across all 17 canonical files.
+exact 100-uppercase-constant contract (AST_100_CONSTANTES_OK) across all 39 canonical files.
 """
 from __future__ import annotations
 

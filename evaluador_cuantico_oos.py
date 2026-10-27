@@ -142,7 +142,7 @@ def ejecutar_calibracion_walk_forward_oos(
 
         ruta_md = cfg.obtener_ruta_archivo("ARCHIVO_REPORTE_OOS_MD")
         md_lines = [
-            f"# Quantum OOS Walk-Forward Report ? {cfg.NOMBRE_ESTRATEGIA}",
+            f"# Quantum OOS Walk-Forward Report - {cfg.NOMBRE_ESTRATEGIA}",
             "",
             f"* **Timestamp:** `{payload_oos['timestamp_utc']}`",
             f"* **Sample (72h):** `{m72['total_trades']} trades`",

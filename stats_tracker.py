@@ -207,13 +207,15 @@ class GestorEstadisticasHFT:
     def obtener_resumen(self) -> Dict[str, Any]:
         total = len(self.operaciones)
         wins = sum(1 for op in self.operaciones if float(op.get("pnl_usdt", 0.0)) > 0.0)
-        losses = total - wins
         scratches = sum(
             1 for op in self.operaciones
-            if op.get("es_scratch") or "SCRATCH" in str(op.get("motivo_salida", "")).upper()
+            if float(op.get("pnl_usdt", 0.0)) <= 0.0
+            and (op.get("es_scratch") or "SCRATCH" in str(op.get("motivo_salida", "")).upper())
         )
+        losses = max(0, total - wins - scratches)
         pnl_total = round(sum(float(op.get("pnl_usdt", 0.0)) for op in self.operaciones), 4)
-        win_rate = round((wins / total) * 100.0, 1) if total > 0 else 0.0
+        denom_wr = wins + losses
+        win_rate = round((wins / denom_wr) * 100.0, 1) if denom_wr > 0 else 0.0
         best_pnl = max((float(op.get("pnl_usdt", 0.0)) for op in self.operaciones), default=0.0)
         worst_pnl = min((float(op.get("pnl_usdt", 0.0)) for op in self.operaciones), default=0.0)
         map_prom = (

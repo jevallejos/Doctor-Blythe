@@ -21,7 +21,8 @@ def evaluar_override_climax_hurst(
     queda temporalmente alto por el movimiento previo aunque el libro ya se haya girado
     violentamente. Autoriza el disparo si hay climax extremo confirmado en las 4 variables.
     """
-    if hurst_actual > 0.82:
+    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+    if float(ctrl.get("sens_climax_hurst_override", 1.0)) <= 0.0 or hurst_actual > 0.82:
         return False
     if direccion == "SHORT":
         return bool(

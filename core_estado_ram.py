@@ -306,6 +306,10 @@ class EstadoGlobalRAM:
             "mfe_stall_harvest_pct": cfg.COSECHA_ESTANCAMIENTO_MFE_PCT,
             "sesgo_escudo_long": 0.0,
             "sesgo_escudo_short": 0.0,
+            "sens_ofi_abort_cola": -0.35,
+            "sens_q_l1_hold_ratio": 0.55,
+            "sens_scratch_edad_rebote_seg": 32.0,
+            "sens_climax_hurst_override": 1.0,
         }
         self.inicializar_whitelist_campeones()
 
