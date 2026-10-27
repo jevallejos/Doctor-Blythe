@@ -130,54 +130,54 @@ TIMER_EOF
 verbot, doctor-blythe \- Consola de telemetria, auditoria forense y gestion de servicio para el motor HFT Doctor Blythe Terpsichora V1.0 (25.0 Hz Bybit UTA V5).
 .SH SYNOPSIS
 .B verbot
-[ICOMANDOR | IOPCIONR]
+[\fICOMANDO\fR | \fIOPCION\fR]
 .SH DESCRIPTION
 .B verbot
 es la interfaz de comando y control de cero latencia para el motor de ejecucion microestructural
 .B HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0
-(Arquitectura Micro-Kernel Hexagonal de 39 archivos canonicos dividida en Bofensiva/R, Bdefensiva/R y Bapoyo/R).
+(Arquitectura Micro-Kernel Hexagonal de 39 archivos canonicos dividida en \fBofensiva/\fR, \fBdefensiva/\fR y \fBapoyo/\fR).
 .PP
-Todos los comandos de visualizacion interceptan las senales de interrupcion localmente, garantizando que presionar BCtrl+CR cierre unicamente la vista de consola sin detener jamas el demonio en segundo plano.
+Todos los comandos de visualizacion interceptan las senales de interrupcion localmente, garantizando que presionar \fBCtrl+C\fR cierre unicamente la vista de consola sin detener jamas el demonio en segundo plano.
 .SH SERVICE MANAGEMENT COMMANDS
 .TP
 .B verbot start
-Inicia el motor HFT si se encuentra detenido. Verifica el cerrojo fisico B.tribrain.lockR para impedir instancias duplicadas y asigna prioridad de tiempo real (BNice=-10R, BIO=0R, BOOM_Adj=-800R).
+Inicia el motor HFT si se encuentra detenido. Verifica el cerrojo fisico \fB.tribrain.lock\fR para impedir instancias duplicadas y asigna prioridad de tiempo real (\fBNice=-10\fR, \fBIO=0\fR, \fBOOM_Adj=-800\fR).
 .TP
 .B verbot stop
-Detiene de forma ordenada (BSIGTERMR) el servicio Bdoctor-blythe.serviceR y cualquier bucle supervisor activo, cerrando los descriptores de log y liberando el cerrojo de instancia.
+Detiene de forma ordenada (\fBSIGTERM\fR) el servicio \fBdoctor-blythe.service\fR y cualquier bucle supervisor activo, cerrando los descriptores de log y liberando el cerrojo de instancia.
 .TP
-.B verbot restart R[B--hardR]
-Por defecto dispara una recarga atomica en caliente (Bos.execvR en < 400 ms) cuando BSlots == 0/1R. Con B--hardR reinicia el proceso completo a traves de BsystemdR.
+.B verbot restart \fR[\fB--hard\fR]
+Por defecto dispara una recarga atomica en caliente (\fBos.execv\fR en < 400 ms) cuando \fBSlots == 0/1\fR. Con \fB--hard\fR reinicia el proceso completo a traves de \fBsystemd\fR.
 .TP
 .B verbot status
-Muestra el panel de estado del servicio: estado del demonio, PID activo, Uptime, uso de CPU/RAM, prioridad del kernel, estado de auto-arranque (BsystemdR) y las ultimas trazas operativas.
+Muestra el panel de estado del servicio: estado del demonio, PID activo, Uptime, uso de CPU/RAM, prioridad del kernel, estado de auto-arranque (\fBsystemd\fR) y las ultimas trazas operativas.
 .TP
 .B verbot enable
-Habilita el auto-arranque automatico en el boot de Linux para Bdoctor-blythe.serviceR y Bdoctor-blythe-oos.timerR.
+Habilita el auto-arranque automatico en el boot de Linux para \fBdoctor-blythe.service\fR y \fBdoctor-blythe-oos.timer\fR.
 .TP
 .B verbot disable
 Deshabilita el auto-arranque del servicio en el boot del sistema operativo.
 .SH TELEMETRY & FORENSIC OPTIONS
 .TP
-.B verbot R(sin argumentos)
-Abre el HUD de telemetria coloreada en tiempo real a 25.0 Hz (Bbot_hft.logR).
+.B verbot \fR(sin argumentos)
+Abre el HUD de telemetria coloreada en tiempo real a 25.0 Hz (\fBbot_hft.log\fR).
 .TP
 .B verbot -s
-Muestra una instantanea rapida de la Caja Negra (B[BLACK BOX]R) y las ultimas 22 lineas de operacion.
+Muestra una instantanea rapida de la Caja Negra (\fB[BLACK BOX]\fR) y las ultimas 22 lineas de operacion.
 .TP
 .B verbot -a
-Ejecuta el BInspector Forense AnatomicoR (Bapoyo/micro_inspector_forense.pyR): desglose por par campeon, punteria de escudos a +15s y markouts post-cierre a +15s/+30s/+60s.
+Ejecuta el \fBInspector Forense Anatomico\fR (\fBapoyo/micro_inspector_forense.py\fR): desglose por par campeon, punteria de escudos a +15s y markouts post-cierre a +15s/+30s/+60s.
 .TP
 .B verbot -i
-Ejecuta la auditoria de infraestructura y kernel de baja latencia (BTCP BBRR, Bslow_start_after_idle=0R, BfqR, Bswappiness=1R, BNice=-10R y desfase de reloj atomico AWS).
+Ejecuta la auditoria de infraestructura y kernel de baja latencia (\fBTCP BBR\fR, \fBslow_start_after_idle=0\fR, \fBfq\fR, \fBswappiness=1\fR, \fBNice=-10\fR y desfase de reloj atomico AWS).
 .TP
 .B verbot -q
-Ejecuta el calibrador Walk-Forward Out-of-Sample (72h) bajo prioridad aislada (BNice=15R).
+Ejecuta el calibrador Walk-Forward Out-of-Sample (72h) bajo prioridad aislada (\fBNice=15\fR).
 .TP
 .B verbot -l
-Ejecuta el Gemelo Digital contrafactual de 3,456 combinaciones (B--labR) bajo prioridad aislada (BNice=15R).
+Ejecuta el Gemelo Digital contrafactual de 3,456 combinaciones (\fB--lab\fR) bajo prioridad aislada (\fBNice=15\fR).
 .TP
-.B verbot man R| Bverbot -hR | Bverbot --helpR
+.B verbot man \fR| \fBverbot -h\fR | \fBverbot --help\fR
 Muestra este manual tecnico.
 .SH FILES
 .TP
@@ -260,8 +260,8 @@ verbot() {
                 else
                     echo -e " -> Engine State    : [1;91mSTOPPED[0m"
                 fi
-                echo " -> Systemd Service : doctor-blythe.service ($(systemctl is-enabled doctor-blythe.service 2>/dev/null || echo 'unregistered') / $(systemctl is-active doctor-blythe.service 2>/dev/null || echo 'inactive'))"
-                echo " -> OOS Timer (8h)  : doctor-blythe-oos.timer ($(systemctl is-enabled doctor-blythe-oos.timer 2>/dev/null || echo 'disabled') / $(systemctl is-active doctor-blythe-oos.timer 2>/dev/null || echo 'inactive'))"
+                echo " -> Systemd Service : doctor-blythe.service ($(systemctl is-enabled doctor-blythe.service 2>/dev/null || echo 'unregistered') / $(systemctl is-active doctor-blythe.service 2>/dev/null || true))"
+                echo " -> OOS Timer (8h)  : doctor-blythe-oos.timer ($(systemctl is-enabled doctor-blythe-oos.timer 2>/dev/null || echo 'disabled') / $(systemctl is-active doctor-blythe-oos.timer 2>/dev/null || true))"
                 echo "--------------------------------------------------------------------------------------"
                 ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=5)"
                 ;;

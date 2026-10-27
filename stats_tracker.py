@@ -79,8 +79,15 @@ class GestorEstadisticasHFT:
                 tipo = obj.get("tipo_registro", "TRADE")
                 if tipo == "PARITY_SYNC":
                     self.ajuste_paridad_usdt += float(obj.get("delta_paridad_usdt", 0.0))
+                    if obj.get("balance_uta_real") is not None:
+                        self.real_uta_balance_usdt = float(obj["balance_uta_real"])
                 else:
                     self.operaciones.append(obj)
+            if self.ajuste_paridad_usdt != 0.0 or self.operaciones:
+                pnl_acum = sum(float(op.get("pnl_usdt", 0.0)) for op in self.operaciones)
+                self.real_uta_balance_usdt = round(
+                    self.base_balance_usdt + pnl_acum + self.ajuste_paridad_usdt, 4
+                )
         except Exception:
             pass
         self._cargado = True
