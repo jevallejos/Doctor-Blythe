@@ -31,11 +31,11 @@ def auto_calibrar_sensibilidades_en_vivo(estado_ram: Any, ejecutor: Any) -> Dict
             ctrl["sens_ofi_abort_cola"] = -0.28
             ctrl["sens_q_l1_hold_ratio"] = 0.65
         else:
-            ctrl["sens_ofi_abort_cola"] = -0.35
-            ctrl["sens_q_l1_hold_ratio"] = 0.55
+            ctrl["sens_ofi_abort_cola"] = -0.48
+            ctrl["sens_q_l1_hold_ratio"] = 0.22
     else:
-        ctrl["sens_ofi_abort_cola"] = -0.35
-        ctrl["sens_q_l1_hold_ratio"] = 0.55
+        ctrl["sens_ofi_abort_cola"] = -0.48
+        ctrl["sens_q_l1_hold_ratio"] = 0.22
 
     eventos = mif.cargar_eventos_baul_forense(max_lineas=80)
     post_cierres = [e for e in eventos if e.get("tipo_evento") == "AUDITORIA_POST_CIERRE_60S"]
@@ -58,7 +58,7 @@ def auto_calibrar_sensibilidades_en_vivo(estado_ram: Any, ejecutor: Any) -> Dict
         1 for e in opsr_eventos if e.get("veredicto_oraculo_15s") == "CAPITAL_SAVED_TRUE_SHIELD"
     )
     if opsr_missed_alpha >= (opsr_true_saves + 2):
-        ctrl["sens_q_l1_hold_ratio"] = max(0.45, round(float(ctrl["sens_q_l1_hold_ratio"]) - 0.05, 2))
+        ctrl["sens_q_l1_hold_ratio"] = max(0.18, round(float(ctrl["sens_q_l1_hold_ratio"]) - 0.05, 2))
         ctrl["sens_ofi_abort_cola"] = max(-0.44, round(float(ctrl["sens_ofi_abort_cola"]) - 0.04, 2))
     elif opsr_true_saves >= (opsr_missed_alpha + 2):
         ctrl["sens_q_l1_hold_ratio"] = min(0.68, round(float(ctrl["sens_q_l1_hold_ratio"]) + 0.05, 2))

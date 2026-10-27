@@ -390,6 +390,7 @@ class GestorPosicionesChronosTriz:
                 await self._procesar_cierre_externo_sl_exchange(pos, px_harvest)
         return False
 
+    # Enhanced Maker exit lifecycle with live fill polling
     async def _iniciar_o_actualizar_salida_maker(
         self,
         exchange: Any,
@@ -706,6 +707,18 @@ class GestorPosicionesChronosTriz:
                 exchange, pos, best_bid, best_ask, tick_size, "MAKER_UNWIND", ts_now
             )
 
+                # === [KEEP-ALIVE-ACTIVE-MAKER-EXIT] ===
+        if getattr(pos, "orden_salida_id", None) and not getattr(pos, "cerrada", False):
+            _motivo_act = "MAKER_SCRATCH_18S" if pos.mfe_max_pnl_pct <= 0.0008 else "MAKER_UNWIND"
+            _piso_act = calcular_piso_be_maker(pos.direccion, pos.entry_price, tick_size) if _motivo_act == "MAKER_UNWIND" else (
+                 best_ask if pos.direccion == "LONG" else best_bid
+            )
+            _target_px = max(_piso_act, best_ask if best_ask > 0 else precio_actual) if pos.direccion == "LONG" else min(_piso_act, best_bid if best_bid > 0 else precio_actual)
+            if await self._iniciar_o_actualizar_salida_maker(
+                pos, _target_px, tick_size, best_bid, best_ask, ts_now, _motivo_act
+            ):
+                return
+
         # 4. Pre-Escape Passive Evacuation at 72s
         if activar_pre_escape_72s or edad >= float(cfg.obtener_aux("PRE_ESCAPE_MAKER_SEG", 72.0)):
             motivo_72s = (
@@ -892,6 +905,8 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
             try:
                 if hasattr(exchange, "cancel_all_orders"):
                     for _sym_c in cfg.PARES_CAMPEONES_ALFA:
+                        if _sym_c in ram.ESTADO_GLOBAL.posiciones_activas:
+                            continue
                         try:
                             await exchange.cancel_all_orders(_sym_c)
                         except Exception:
