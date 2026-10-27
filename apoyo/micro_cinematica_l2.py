@@ -189,3 +189,77 @@ def calcular_aceleracion_lyapunov(precios: List[float], spread_pct: float = 0.0)
             return round(acel, 6)
         return round(max(acel, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO * 0.4), 6)
     return round(acel, 6)
+
+
+def calcular_desequilibrio_cancelacion_l1(
+    bids_prev: List[Tuple[float, float]],
+    asks_prev: List[Tuple[float, float]],
+    bids_curr: List[Tuple[float, float]],
+    asks_curr: List[Tuple[float, float]],
+) -> Tuple[float, float]:
+    """
+    Mejora de Frontera #2 (arXiv:2502.17417):
+    Calcula el desequilibrio estatico de la punta L1 (imb_l1 in [-1, +1]) y el
+    diferencial neto de cancelaciones agresivas en L1 (SC+ vs BC-).
+    """
+    if not bids_curr or not asks_curr:
+        return 0.0, 0.0
+    bc, bq_c = bids_curr[0]
+    ac, aq_c = asks_curr[0]
+    denom_l1 = max(1e-9, bq_c + aq_c)
+    imb_l1 = round(max(-1.0, min(1.0, (bq_c - aq_c) / denom_l1)), 4)
+
+    if not bids_prev or not asks_prev:
+        return imb_l1, 0.0
+    bp, bq_p = bids_prev[0]
+    ap, aq_p = asks_prev[0]
+
+    bc_minus = max(0.0, bq_p - bq_c) if abs(bc - bp) <= 1e-12 else (bq_p if bc < bp else 0.0)
+    sc_plus = max(0.0, aq_p - aq_c) if abs(ac - ap) <= 1e-12 else (aq_p if ac > ap else 0.0)
+    denom_c = max(1e-9, sc_plus + bc_minus + (0.10 * denom_l1))
+    cancel_net = round(max(-1.0, min(1.0, (sc_plus - bc_minus) / denom_c)), 4)
+    return imb_l1, cancel_net
+
+
+def calcular_irreversibilidad_temporal_lob(
+    precios_activos: List[float],
+    ofi_actual: float = 0.0,
+) -> float:
+    """
+    Mejora de Frontera #3 (arXiv:2610.16151):
+    Indice de Irreversibilidad Temporal (Delta S_LOB in [0.0, 1.0]) mediante
+    divergencia de Kullback-Leibler sobre transiciones de signo en ventana corta O(1).
+    """
+    if len(precios_activos) < 6:
+        return 0.0
+    ventana = precios_activos[-14:]
+    signos: List[int] = []
+    for i in range(1, len(ventana)):
+        dp = ventana[i] - ventana[i - 1]
+        if abs(dp) > 1e-12:
+            signos.append(1 if dp > 0.0 else -1)
+    if len(signos) < 4:
+        return 0.0
+
+    n_pp = 0.5
+    n_mm = 0.5
+    n_pm = 0.5
+    n_mp = 0.5
+    for i in range(1, len(signos)):
+        s0, s1 = signos[i - 1], signos[i]
+        if s0 > 0 and s1 > 0:
+            n_pp += 1.0
+        elif s0 < 0 and s1 < 0:
+            n_mm += 1.0
+        elif s0 > 0 and s1 < 0:
+            n_pm += 1.0
+        else:
+            n_mp += 1.0
+
+    tot = n_pp + n_mm + n_pm + n_mp
+    p_pp, p_mm, p_pm, p_mp = n_pp / tot, n_mm / tot, n_pm / tot, n_mp / tot
+    kl_cruce = (p_pm - p_mp) * math.log(p_pm / p_mp)
+    kl_racha = 0.35 * (p_pp - p_mm) * math.log(p_pp / p_mm)
+    acople_ofi = 0.15 * abs(float(ofi_actual)) if (signos[-1] * ofi_actual) > 0.0 else 0.0
+    entropia = max(0.0, min(1.0, kl_cruce + kl_racha + acople_ofi))
+    return round(entropia, 4)

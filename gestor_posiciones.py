@@ -29,6 +29,17 @@ import stats_tracker as st
 import telemetria_telegram as tel
 
 
+def calcular_pendiente_recuperacion_delise(
+    pnl_pct: float,
+    mae_pct: float,
+    edad_seg: float,
+    trayectoria_pnl: Optional[Dict[str, float]] = None,
+) -> float:
+    return mes.calcular_pendiente_recuperacion_delise(
+        pnl_pct=pnl_pct, mae_pct=mae_pct, edad_seg=edad_seg, trayectoria_pnl=trayectoria_pnl
+    )
+
+
 def calcular_piso_be_maker(
     precio_entrada: float,
     side: str,
@@ -538,7 +549,7 @@ class GestorPosicionesChronosTriz:
         )
         lambda_w = pos.lambda_wald
 
-        forzar_90s, _, motivo_esc = mer.evaluar_escape_temporal_posicion(
+        forzar_90s, activar_pre_escape_72s, motivo_esc = mer.evaluar_escape_temporal_posicion(
             edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.direccion, pos.en_proceso_cierre
         )
         if forzar_90s:
@@ -657,10 +668,15 @@ class GestorPosicionesChronosTriz:
                     exchange, pos, best_bid, best_ask, tick_size, "TRAILING_RATCHET_MAKER", ts_now
                 )
 
-        # 3. Phase 2 Stall Harvest (16s+) when MFE reached +0.11%..+0.21% and momentum stalls
+        # 3. Phase 2 Stall Harvest & [DIAMOND] Phase 2 Maker Shield PostOnly (16s+)
+        diamante_ok, _ = medf.evaluar_activacion_escudo_diamante_fase2(
+            pos.direccion, pos.precio_entrada, precio_actual, best_bid, best_ask,
+            edad, pnl_pct, lambda_w, tick_size, fase2_ya_ejecutada=pos.cosecha_activa,
+        )
         if (
             (
-                mdup.evaluar_cosecha_estancamiento_mfe(
+                diamante_ok
+                or mdup.evaluar_cosecha_estancamiento_mfe(
                     pos.direccion, edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, umbral_stall
                 )
                 or mdup.evaluar_desarme_maker_unwind_42s(
@@ -688,7 +704,7 @@ class GestorPosicionesChronosTriz:
             )
 
         # 4. Pre-Escape Passive Evacuation at 72s
-        if edad >= float(cfg.obtener_aux("PRE_ESCAPE_MAKER_SEG", 72.0)):
+        if activar_pre_escape_72s or edad >= float(cfg.obtener_aux("PRE_ESCAPE_MAKER_SEG", 72.0)):
             motivo_72s = (
                 "MAKER_UNWIND"
                 if (pos.trinquete_be_activo or pnl_pct >= cfg.TRINQUETE_BE_OFFSET_PCT)
@@ -719,13 +735,13 @@ class GestorPosicionesChronosTriz:
         )
         if pos.en_proceso_cierre and mes.debe_escalar_scratch_colgado_a_taker(
             pos.direccion,
-            max(0.0, ahora - pos.ts_orden_salida),
+            max(0.0, ts_now - pos.ts_orden_salida),
             pnl_pct,
             ofi_5s,
             pos.motivo_salida_pendiente,
         ):
             return await self._ejecutar_cierre_taker(
-                exchange, pos, mid_actual, "MAKER_SCRATCH_18S"
+                exchange, pos, precio_actual, "MAKER_SCRATCH_18S"
             )
         if wald_scratch_ready:
             if not pos.en_proceso_cierre:
@@ -782,8 +798,16 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
             side_raw = str(p.get("side", "long")).lower()
             entry_px = float(p.get("entryPrice") or p.get("avgPrice") or 0.0)
             mark_px = float(p.get("markPrice") or entry_px)
-            ts_ms = float(p.get("timestamp") or p.get("updatedTime") or (ahora_ms - 240000.0))
-            edad_seg = max(95.0, (ahora_ms - ts_ms) / 1000.0)
+            info_p = p.get("info") if isinstance(p.get("info"), dict) else {}
+            ts_ms = float(
+                info_p.get("updatedTime")
+                or info_p.get("uTime")
+                or p.get("updatedTime")
+                or p.get("timestamp")
+                or (ahora_ms - 240000.0)
+            )
+            raw_age = (ahora_ms - ts_ms) / 1000.0
+            edad_seg = 300.0 if raw_age > 86400.0 else max(95.0, raw_age)
             edad_min = edad_seg / 60.0
 
             ram.log_operativo(

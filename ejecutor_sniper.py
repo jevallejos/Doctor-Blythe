@@ -154,6 +154,11 @@ class EjecutorSniperBybit:
                 or (m_snap.bid_qty if (m_snap and dir_norm == "LONG") else (m_snap.ask_qty if m_snap else 0.0))
                 or 100.0
             )
+            q_opp_init = float(
+                senal.get("ask_qty" if dir_norm == "LONG" else "bid_qty")
+                or (m_snap.ask_qty if (m_snap and dir_norm == "LONG") else (m_snap.bid_qty if m_snap else 0.0))
+                or 100.0
+            )
 
             precio_inicial = calcular_precio_penny_jump(
                 best_bid, best_ask, tick_size, dir_norm, micro_price=micro_px
@@ -165,7 +170,7 @@ class EjecutorSniperBybit:
 
             kelly_frac, _, nocional_usdt = msk.calcular_dimension_kelly_uta(
                 tri,
-                capital_libre_usdt=ram.ESTADO_GLOBAL.free_usdt,
+                capital_libre_usdt=msk.resolver_capital_base_uta(ram.ESTADO_GLOBAL.free_usdt),
                 z_score=z_val,
                 ofi=ofi_val,
                 hurst=hurst_val,
@@ -254,6 +259,7 @@ class EjecutorSniperBybit:
                 m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
                 if m_live is not None and filled_actual <= 0.0 and permitir_repeg:
                     q_l1_now = m_live.bid_qty if dir_norm == "LONG" else m_live.ask_qty
+                    q_opp_now = m_live.ask_qty if dir_norm == "LONG" else m_live.bid_qty
                     veto_btc_activo = (
                         (dir_norm == "LONG" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_long_hasta)
                         or (dir_norm == "SHORT" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_short_hasta)
@@ -266,6 +272,8 @@ class EjecutorSniperBybit:
                         m_live.hurst,
                         elapsed,
                         veto_btc_activo,
+                        q_opp_inicial=q_opp_init,
+                        q_opp_actual=q_opp_now,
                     )
                     if cola_toxica and not fue_cancelada_postonly:
                         try:
@@ -291,7 +299,13 @@ class EjecutorSniperBybit:
                         fue_cancelada_postonly, elapsed, ultimo_repeg_elapsed
                     )
                     if repegs_hechos < 2 and listo_jump_250ms:
-                        nuevo_px = calcular_precio_penny_jump(
+                        salto_ok, px_penny = mmm.evaluar_salto_punta_penny(
+                            dir_norm, precio_orden, m_live.bid, m_live.ask, tick_size,
+                            m_live.ofi_profundo, m_live.hurst, repegs_hechos,
+                            edad_en_nivel_seg=elapsed - ultimo_repeg_elapsed,
+                            ofi_ticks_racha=m_live.ofi_ticks_consecutivos,
+                        )
+                        nuevo_px = px_penny if salto_ok else calcular_precio_penny_jump(
                             m_live.bid, m_live.ask, tick_size, dir_norm, micro_price=m_live.micro_price
                         )
                         if cola_enterrada and nuevo_px == precio_orden:
@@ -366,6 +380,15 @@ class EjecutorSniperBybit:
                     pass
 
             if filled_final <= 0.0:
+                esc_opsr = "OPSR_QUEUE_ABORT" if abortada_en_cola else "OPSR_TTL_EXPIRED"
+                ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
+                    symbol,
+                    dir_norm,
+                    esc_opsr,
+                    f"repeg={repegs_hechos}",
+                    precio_orden,
+                    {"z_entry": z_val, "ofi_entry": ofi_val, "hurst_entry": hurst_val},
+                )
                 if not abortada_en_cola:
                     ram.log_operativo(
                         f"{etiqueta_log} Order on {symbol} unfilled after {ttl_max:.1f}s "

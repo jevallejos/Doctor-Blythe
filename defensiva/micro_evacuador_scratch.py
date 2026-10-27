@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Defensivo #4: Geometria MarkPrice Stop-Loss (SEI-02), Calculo de
-Niveles SL Iniciales, Ley 2 (RF-18) de Evacuacion Pasiva Maker-Scratch 18.0s
-con Ventana de Maduracion Fractal (30.0s) y Tope Anti-Deslizamiento en Caida Libre.
+Micro-Modulo Defensivo #4: Geometria MarkPrice Stop-Loss (SEI-02), Calculo de Niveles SL Iniciales,
+Ley 2 (RF-18) de Evacuacion Pasiva Maker-Scratch 18.0s con Compensacion de Deriva Negativa Post-Fill
+de DeLise (arXiv:2407.16527, pendiente t=6s->18s) y Tope Anti-Deslizamiento en Caida Libre.
 """
-from typing import Tuple
+from typing import Dict, Optional, Tuple
 import config_parametros as cfg
 from ofensiva import micro_cotizador_stoikov as mcs
+from ofensiva import micro_impulso_runner as mir
 
 
 def calcular_niveles_sl_iniciales(
@@ -45,6 +46,26 @@ def ajustar_geometria_sl_markprice(
     return sl_seguro
 
 
+def calcular_pendiente_recuperacion_delise(
+    pnl_pct: float,
+    mae_pct: float,
+    edad_seg: float,
+    trayectoria_pnl: Optional[Dict[str, float]] = None,
+) -> float:
+    """
+    Mejora de Frontera #4 (arXiv:2407.16527 - DeLise Post-Fill Negative Drift):
+    Calcula la pendiente de recuperacion cinematica entre t=5..6s (o el piso MAE inicial)
+    y el instante actual t >= 12s.
+    """
+    if edad_seg < 8.0:
+        return 0.0
+    ref_pct = float(mae_pct)
+    if isinstance(trayectoria_pnl, dict) and "5s" in trayectoria_pnl:
+        ref_pct = min(float(mae_pct), float(trayectoria_pnl["5s"]) / 100.0)
+    dt = max(1.0, float(edad_seg) - 5.0)
+    return round((float(pnl_pct) - ref_pct) / dt, 6)
+
+
 def evaluar_gatillo_maker_scratch_18s(
     direccion: str,
     edad_seg: float,
@@ -55,27 +76,52 @@ def evaluar_gatillo_maker_scratch_18s(
     trinquete_be_activo: bool,
     hurst_actual: float = 0.42,
     fill_post_aborto: bool = False,
+    mae_pct: float = 0.0,
+    trayectoria_pnl: Optional[Dict[str, float]] = None,
 ) -> bool:
     t_scratch = float(cfg.obtener_aux("MAKER_SCRATCH_TIEMPO_SEG", 18.0))
     ofi_adv = float(cfg.obtener_aux("MAKER_SCRATCH_OFI_ADVERSO", -0.15))
 
-    # 0. Vigilancia acelerada (10.0s) si el fill ocurrio en transito durante un Early Queue Abort (Caso Trade #9)
+    # 0. Vigilancia acelerada (10.0s) si el fill ocurrio en transito durante un Early Queue Abort
     if fill_post_aborto and edad_seg >= 10.0 and not trinquete_be_activo:
         if mfe_pct <= 0.00015 and pnl_pct <= -0.00055:
             return True
 
-    # 1. Regla Invariante RF-18 (Test 16/18): Fill muerto sin ningun rebote (MFE <= +0.015%)
+    # Mejora #4 (DeLise arXiv:2407.16527): Pendiente de recuperacion entre 6s y 18s
+    pendiente_delise = calcular_pendiente_recuperacion_delise(
+        pnl_pct, mae_pct, edad_seg, trayectoria_pnl=trayectoria_pnl
+    )
+    flujo_recuperando = (
+        (direccion == "LONG" and ofi_5s >= 0.10)
+        or (direccion == "SHORT" and ofi_5s <= -0.10)
+    )
+    recuperacion_delise_activa = (
+        edad_seg < 28.0
+        and pendiente_delise >= 0.000025
+        and flujo_recuperando
+        and pnl_pct > -0.0012
+    )
+
+    # 1. Regla Invariante RF-18 (Test 16/18): Fill muerto sin rebote ni recuperacion DeLise
     sin_rebote_18s = (
         edad_seg >= 18.0
         and not trinquete_be_activo
         and mfe_pct <= 0.00015
         and pnl_pct <= -0.0007
+        and not recuperacion_delise_activa
     )
     if sin_rebote_18s:
         return True
 
-    # 2. Ventana de Maduracion Fractal (Casos Trade #6 y Trade #11):
-    tuvo_pulso_inicial = (mfe_pct >= 0.00040) and (hurst_actual <= 0.44)
+    # 2. Ventana de Maduracion Fractal y Proteccion de Semilla Ganadora
+    semilla_protegida = mir.proteger_semilla_ganadora_de_scratch(
+        edad_seg, pnl_pct, mfe_pct, ofi_5s, direccion
+    )
+    tuvo_pulso_inicial = (
+        semilla_protegida
+        or recuperacion_delise_activa
+        or ((mfe_pct >= 0.00040) and (hurst_actual <= 0.44))
+    )
     edad_min_flujo = 30.0 if tuvo_pulso_inicial else max(18.0, t_scratch)
 
     if tuvo_pulso_inicial and edad_seg < 30.0:
@@ -90,7 +136,6 @@ def evaluar_gatillo_maker_scratch_18s(
         (direccion == "LONG" and ofi_5s <= ofi_adv)
         or (direccion == "SHORT" and ofi_5s >= abs(ofi_adv))
     )
-
     scratch_por_flujo = (
         edad_seg >= edad_min_flujo
         and not trinquete_be_activo
@@ -113,12 +158,6 @@ def debe_escalar_scratch_colgado_a_taker(
     ofi_5s: float,
     motivo_pendiente: str,
 ) -> bool:
-    """
-    Evita el deslizamiento pasivo de 36s del Trade #2 (-0.3027%):
-    Si una orden PostOnly de MAKER_SCRATCH_18S lleva >= 5.0s sin llenarse mientras
-    el precio cae por debajo de -0.14% con flujo adverso, o si el PnL deteriora a <= -0.20%,
-    corta la espera pasiva y evacua de inmediato antes de llegar al Stop-Loss.
-    """
     if "SCRATCH" not in str(motivo_pendiente).upper():
         return False
     if pnl_pct <= -0.0020 and edad_orden_salida_seg >= 2.5:

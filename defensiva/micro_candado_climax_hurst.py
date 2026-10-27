@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Defensivo #6: Candado Fisico Anti-Override de Hurst en SHORT-SNIPER
-y Gobernador de Enfriamiento Post-Hurst (Prevencion del Caso WAL Trade #8 H=0.71).
+Micro-Modulo Defensivo #6: Candado Fisico Anti-Override de Hurst en SHORT-SNIPER,
+Discriminador Termodinamico de Irreversibilidad LOB (arXiv:2610.16151) y
+Gobernador de Enfriamiento Post-Hurst (Prevencion del Caso WAL Trade #8 H=0.71).
 """
 from typing import Tuple
 import config_parametros as cfg
@@ -15,15 +16,16 @@ def evaluar_tope_duro_climax_hurst(
     aceleracion_lyapunov: float,
     hurst_cap_base: float = 0.485,
     techo_duro_absoluto: float = 0.515,
+    irreversibilidad_lob: float = 0.0,
 ) -> Tuple[bool, float, str]:
     """
     Evalua si un disparo SHORT-SNIPER cumple la barrera fractal de Hurst:
     - Regla base: H <= hurst_cap_base (0.485).
-    - Si sens_climax_hurst_override esta activo y hay climax extremo (Z >= +5.20,
-      OFI <= -0.80, Lyapunov <= -0.00050), permite un margen maximo hasta 0.515.
-    - JAMAS permite vender en corto si H > 0.515 (evitando rupturas persistentes
-      como H = 0.7089 en WAL Trade #8).
-    Retorna (aprobado: bool, tope_aplicado: float, motivo: str).
+    - Si sens_climax_hurst_override esta activo, hay climax extremo (Z >= +5.20,
+      OFI <= -0.80, Lyapunov <= -0.00050) y la produccion de entropia direccional
+      no indica cascada alcista irreversible (irreversibilidad_lob <= 0.88),
+      permite un margen maximo hasta 0.515.
+    - JAMAS permite vender en corto si H > 0.515.
     """
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
     override_activo = float(ctrl.get("sens_climax_hurst_override", 1.0)) >= 0.5
@@ -31,7 +33,7 @@ def evaluar_tope_duro_climax_hurst(
     if hurst_actual <= hurst_cap_base:
         return True, hurst_cap_base, "OK"
 
-    if hurst_actual > techo_duro_absoluto:
+    if hurst_actual > techo_duro_absoluto or irreversibilidad_lob > 0.88:
         return False, hurst_cap_base, f"H={hurst_actual:.3f}>{hurst_cap_base:.3f}"
 
     climax_agotado = (

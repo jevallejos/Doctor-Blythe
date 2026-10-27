@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 import config_parametros as cfg
 from apoyo import micro_gemelo_digital_oos as mgd
+from apoyo import micro_inspector_forense as mif
 import core_estado_ram as ram
 import stats_tracker as st
 
@@ -41,18 +42,15 @@ def cargar_operaciones_ventana_72h(
 
 
 def cargar_eventos_baul_forense(ruta_baul: Optional[pathlib.Path] = None) -> List[Dict[str, Any]]:
-    target = ruta_baul if ruta_baul is not None else cfg.obtener_ruta_archivo("ARCHIVO_BAUL_IA_JSONL")
-    if not target.exists():
+    if ruta_baul is None:
+        return mif.cargar_eventos_baul_forense()
+    if not ruta_baul.exists():
         return []
-    eventos: List[Dict[str, Any]] = []
-    try:
-        for ln in target.read_text(encoding="utf-8").splitlines():
-            ln_s = ln.strip()
-            if ln_s:
-                eventos.append(json.loads(ln_s))
-    except Exception:
-        pass
-    return eventos
+    return [json.loads(ln.strip()) for ln in ruta_baul.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+
+def calcular_cvar_10pct_adversarial(retornos_usdt: List[float]) -> float:
+    return mgd.calcular_cvar_10pct_adversarial(retornos_usdt)
 
 
 def calcular_metricas_oos_72h(operaciones: List[Dict[str, Any]]) -> Dict[str, Any]:

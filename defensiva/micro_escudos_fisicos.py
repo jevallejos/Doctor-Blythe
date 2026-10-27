@@ -2,7 +2,8 @@
 """
 Micro-Modulo Defensivo #1: Escudos Fisicos de Entrada (Terpsichora V1.0).
 Aisla las barreras cinematicas y de microestructura (Lyapunov, Hurst,
-Absorcion OFI/Hawkes, Coherencia de Signo RF-06 y Conviccion Contra-EMA900).
+Absorcion OFI/Hawkes con Veto Anti-Spoofing L1 arXiv:2502.17417,
+Coherencia de Signo RF-06 y Conviccion Contra-EMA900).
 """
 from typing import Tuple
 
@@ -57,6 +58,8 @@ def evaluar_absorcion_ofi_hawkes(
     ofi_min_req: float = 0.13,
     ticks_min_req: int = 2,
     hawkes_min_req: float = 0.10,
+    imb_l1: float = 0.0,
+    cancel_net_l1: float = 0.0,
 ) -> Tuple[bool, str]:
     if direccion == "LONG":
         if ofi_actual < ofi_min_req or ticks_absorcion < ticks_min_req:
@@ -64,6 +67,10 @@ def evaluar_absorcion_ofi_hawkes(
                 False,
                 f"WAIT_BID_ABSORPTION(OFI={ofi_actual:+.2f}[{ticks_absorcion}/{ticks_min_req}t]<{ofi_min_req:+.2f})",
             )
+        # Mejora #2 (arXiv:2502.17417): Veto Anti-Spoofing cuando L2..L5 aparentan absorcion
+        # pero la punta L1 esta vacia por cancelacion agresiva de Bids (BC-).
+        if imb_l1 <= -0.78 and cancel_net_l1 <= -0.35 and ofi_actual < 0.35:
+            return False, f"WAIT_BID_ABSORPTION_L1_SPOOF(imbL1={imb_l1:+.2f},cancel={cancel_net_l1:+.2f})"
         if hawkes_actual < hawkes_min_req:
             return False, f"HAWKES_WEAK_LONG(I={hawkes_actual:+.2f}<{hawkes_min_req:+.2f})"
     else:
@@ -73,6 +80,8 @@ def evaluar_absorcion_ofi_hawkes(
                 False,
                 f"WAIT_ASK_ABSORPTION(OFI={ofi_actual:+.2f}[{ticks_absorcion}/{ticks_min_req}t]>{ofi_short_req:+.2f})",
             )
+        if imb_l1 >= 0.78 and cancel_net_l1 >= 0.35 and ofi_actual > -0.45:
+            return False, f"WAIT_ASK_ABSORPTION_L1_SPOOF(imbL1={imb_l1:+.2f},cancel={cancel_net_l1:+.2f})"
     return True, "OK"
 
 
@@ -83,14 +92,8 @@ def evaluar_conviccion_contratendencia_ema900(
     hurst_actual: float,
     z_score: float = 0.0,
 ) -> Tuple[bool, str]:
-    """
-    Escudo Contra-Tendencia Macro Extrema (Remediacion Trade #8 y Trade #2):
-    Cuando |EMA900| >= 0.50% en contra de la direccion y no es un climax extremo (|Z| < 6.0),
-    exige agotamiento fractal firme (H <= 0.435) y absorcion OFI profunda (|OFI| >= 0.42).
-    """
     if abs(z_score) >= 6.0:
         return True, "OK"
-
     if direccion == "SHORT" and ema900_dist_pct >= 0.0050:
         if hurst_actual > 0.435 or ofi_actual > -0.42:
             return (

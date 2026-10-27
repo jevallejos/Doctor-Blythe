@@ -22,6 +22,7 @@ import config_parametros as cfg
 from apoyo import micro_higiene_disco as mhd
 from apoyo import micro_inspector_forense as mif
 from apoyo import micro_sensibilidad_autonoma as msa
+from ofensiva import micro_sizing_kelly as msk
 import core_estado_ram as ram
 import ejecutor_sniper as eje
 import escudo_tricortex as tri
@@ -92,6 +93,9 @@ def _capturar_mtimes_codigo() -> Dict[str, float]:
         "gestor_posiciones.py",
         "evaluador_cuantico_oos.py",
         "main.py",
+        "ofensiva/__init__.py",
+        "defensiva/__init__.py",
+        "apoyo/__init__.py",
         "ofensiva/micro_motor_maker.py",
         "ofensiva/micro_motor_wald_exit.py",
         "ofensiva/micro_sizing_kelly.py",
@@ -404,7 +408,7 @@ async def ejecutar_orquestador_principal() -> int:
         await gp.reconciliar_posiciones_huerfanas_arranque(exchange)
         total_u, free_u, locked_u = await auditar_balance_uta_bybit(exchange, silencioso=False)
         _, margen_k, nocional_k = tri.calcular_dimension_kelly(
-            capital_libre_usdt=free_u,
+            capital_libre_usdt=msk.sanear_balance_libre_slot_vacio(free_u),
             z_score=-3.0,
             ofi=0.25,
             hurst=0.40,

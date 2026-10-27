@@ -12,7 +12,7 @@ def evaluar_choque_directo_btc(
     direccion: str,
     z_btc: float,
     ofi_btc: float,
-    umbral_ofi_veto: float = 0.40,
+    umbral_ofi_veto: float = 0.32,
     umbral_z_veto: float = 0.25,
 ) -> Tuple[bool, str]:
     """
@@ -21,19 +21,21 @@ def evaluar_choque_directo_btc(
     para que un pulso de OFI dispare el veto, evitando falsos bloqueos cuando BTC
     esta plano (Z = 0.00).
     """
+    z_caida = float(getattr(cfg, "BTC_VETO_Z_UMBRAL_CAIDA", -1.50))
+    z_subida = float(getattr(cfg, "BTC_VETO_Z_UMBRAL_SUBIDA", 1.45))
     if direccion == "LONG":
-        if z_btc <= -1.45:
+        if z_btc <= z_caida:
             return True, f"BTC_VETO_LONG(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
         if ofi_btc <= -abs(umbral_ofi_veto) and z_btc <= -0.15:
             return True, f"BTC_VETO_LONG(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
-        if z_btc <= -abs(umbral_z_veto) and ofi_btc <= -0.15:
+        if z_btc <= -abs(umbral_z_veto) and ofi_btc <= -0.25 and z_btc <= -0.50:
             return True, f"BTC_VETO_LONG(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
     else:
-        if z_btc >= 1.45:
+        if z_btc >= z_subida:
             return True, f"BTC_VETO_SHORT(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
         if ofi_btc >= abs(umbral_ofi_veto) and z_btc >= 0.15:
             return True, f"BTC_VETO_SHORT(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
-        if z_btc >= abs(umbral_z_veto) and ofi_btc >= 0.15:
+        if z_btc >= abs(umbral_z_veto) and ofi_btc >= 0.25 and z_btc >= 0.50:
             return True, f"BTC_VETO_SHORT(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
     return False, "OK"
 
@@ -89,32 +91,26 @@ def verificar_veto_macro_btc_completo(direccion: str, ahora: float) -> Tuple[boo
             f"(Z={m_btc.z_score:+.2f} <= -4.0)! Activating macro shield (30s)..."
         )
         return False, "CIRCUIT_BREAKER_BTC"
-    if direccion == "LONG":
-        caida_btc = (
-            (m_btc.ofi_profundo <= -umbral_ofi_btc and m_btc.z_score <= -0.25)
-            or (m_btc.z_score <= cfg.BTC_VETO_Z_UMBRAL_CAIDA)
-            or (m_btc.ofi_profundo <= -0.25 and m_btc.z_score <= -0.50)
-        )
-        if caida_btc:
+    dir_norm = "LONG" if str(direccion).upper() in ("BUY", "LONG") else "SHORT"
+    choque, motivo_ch = evaluar_choque_directo_btc(
+        dir_norm, m_btc.z_score, m_btc.ofi_profundo, umbral_ofi_veto=umbral_ofi_btc, umbral_z_veto=0.25
+    )
+    if dir_norm == "LONG":
+        if choque:
             ram.ESTADO_GLOBAL.btc_veto_long_hasta = max(
                 ram.ESTADO_GLOBAL.btc_veto_long_hasta,
                 ahora + cfg.BTC_VETO_COOLDOWN_SEG,
             )
-            return False, f"BTC_VETO_LONG(OFI={m_btc.ofi_profundo:+.2f},Z={m_btc.z_score:+.2f})"
+            return False, motivo_ch
         if ahora < ram.ESTADO_GLOBAL.btc_veto_long_hasta:
             return False, "BTC_VETO_COOLDOWN_12S"
     else:
-        subida_btc = (
-            (m_btc.ofi_profundo >= umbral_ofi_btc and m_btc.z_score >= 0.25)
-            or (m_btc.z_score >= cfg.BTC_VETO_Z_UMBRAL_SUBIDA)
-            or (m_btc.ofi_profundo >= 0.25 and m_btc.z_score >= 0.50)
-        )
-        if subida_btc:
+        if choque:
             ram.ESTADO_GLOBAL.btc_veto_short_hasta = max(
                 ram.ESTADO_GLOBAL.btc_veto_short_hasta,
                 ahora + cfg.BTC_VETO_COOLDOWN_SEG,
             )
-            return False, f"BTC_VETO_SHORT(OFI={m_btc.ofi_profundo:+.2f},Z={m_btc.z_score:+.2f})"
+            return False, motivo_ch
         if ahora < ram.ESTADO_GLOBAL.btc_veto_short_hasta:
             return False, "BTC_VETO_COOLDOWN_12S"
     return True, "OK"

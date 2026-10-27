@@ -127,6 +127,9 @@ class RadarVolatilidadHFT:
     def _verificar_veto_macro_btc(self, direccion: str, ahora: float) -> Tuple[bool, str]:
         return mvb.verificar_veto_macro_btc_completo(direccion, ahora)
 
+    def _evaluar_choque_directo_btc(self, direccion: str, z_btc: float, ofi_btc: float) -> Tuple[bool, str]:
+        return mvb.evaluar_choque_directo_btc(direccion, z_btc, ofi_btc)
+
     def procesar_instantanea_libro(
         self,
         symbol: str,
@@ -209,8 +212,12 @@ class RadarVolatilidadHFT:
         if ofi_inst <= -0.35:
             est.ultimo_pulso_toxico_ts = ahora
 
+        imb_l1, cancel_net_l1 = mcl.calcular_desequilibrio_cancelacion_l1(
+            est.bids_prev, est.asks_prev, bids, asks
+        )
         hurst = calcular_exponente_hurst(list(est.precios_activos), z_score_actual=z_score)
         acel_lyap = calcular_aceleracion_lyapunov(list(est.precios_activos), spread_pct=spread_pct)
+        irrev_lob = mcl.calcular_irreversibilidad_temporal_lob(list(est.precios_activos), ofi_actual=ofi_inst)
         tox_inst = min(
             1.0,
             (spread_pct / max(1e-6, cfg.SPREAD_MAX_PERMITIDO_PCT)) * 0.30
@@ -327,7 +334,13 @@ class RadarVolatilidadHFT:
                 )
                 return False, "LYAPUNOV_ACCELERATING_DROP", None
 
-            if ofi_inst < ofi_min_long or est.ofi_ticks_pos < cfg.OFI_TICKS_PERSISTENCIA_MIN:
+            ok_abs_l, mot_abs_l = mef.evaluar_absorcion_ofi_hawkes(
+                "LONG", ofi_inst, est.ofi_ticks_pos, est.intensidad_hawkes,
+                ofi_min_req=ofi_min_long, ticks_min_req=cfg.OFI_TICKS_PERSISTENCIA_MIN,
+                hawkes_min_req=cfg.HAWKES_INTENSIDAD_MIN_LONG,
+                imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
+            )
+            if not ok_abs_l and "WAIT_BID_ABSORPTION" in mot_abs_l:
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
                     est.ultimo_log_warn_ts = ahora
                     ram.log_operativo(
@@ -452,7 +465,13 @@ class RadarVolatilidadHFT:
             if not mef.evaluar_freno_lyapunov("SHORT", acel_lyap, umbral_agotamiento_short=cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO)[0]:
                 return False, "SHORT_NO_LYAPUNOV_EXHAUSTION", None
 
-            if ofi_inst > cfg.OFI_MAX_ENTRADA_SHORT or est.ofi_ticks_neg < cfg.OFI_TICKS_PERSISTENCIA_MIN:
+            ok_abs_s, _ = mef.evaluar_absorcion_ofi_hawkes(
+                "SHORT", ofi_inst, est.ofi_ticks_neg, est.intensidad_hawkes,
+                ofi_min_req=abs(cfg.OFI_MAX_ENTRADA_SHORT), ticks_min_req=cfg.OFI_TICKS_PERSISTENCIA_MIN,
+                hawkes_min_req=abs(cfg.HAWKES_INTENSIDAD_MAX_SHORT),
+                imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
+            )
+            if not ok_abs_s:
                 return False, "SHORT_OFI_INSUFFICIENT", None
 
             ok_ct_s, mot_ct_s = mef.evaluar_conviccion_contratendencia_ema900(
@@ -488,7 +507,7 @@ class RadarVolatilidadHFT:
 
             if (
                 not mef.evaluar_filtro_hurst_direccional("SHORT", hurst, h_cap_short, h_cap_short)[0]
-                and not mir.evaluar_override_climax_hurst("SHORT", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst)
+                and not mir.evaluar_override_climax_hurst("SHORT", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst, irreversibilidad_lob=irrev_lob)
             ):
                 est.ultimo_hurst_alto_short_ts = ahora
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:

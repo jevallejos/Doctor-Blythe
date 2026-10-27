@@ -330,6 +330,8 @@ async def ejecutar_suite_certificacion_v1() -> int:
         ex_nofill, "ZEREBRO/USDT:USDT", "LONG", sig_l, tick_size=0.00001, step_size=0.1, ttl_override=0.12
     )
     assert pos_none is None and len(ex_nofill.ordenes_canceladas) >= 1
+    ab_fp, er_fp = eje.mmm.evaluar_aborto_cola_moallemi("LONG", 1000.0, 420.0, -0.02, 0.44, 0.90, False, 500.0, 620.0)
+    assert ab_fp is True and er_fp is True
     ram.log_operativo(" [14/18] Passive Queue TTL Expiration and Margin Release validated.")
 
     # [15/18] SCAR-LOCK-14 Tick-Quantized Zero-Loss Floor, Early +0.11% BE Shield & 50/50 + Trailing Harvest
@@ -384,6 +386,8 @@ async def ejecutar_suite_certificacion_v1() -> int:
         ex_sc, pos_sc, 0.16984, 0.16983, 0.16985, ofi_5s=-0.05, tick_size=0.00001, step_size=0.1
     )
     assert reg_sc is not None and reg_sc["motivo_salida"] == "MAKER_SCRATCH_18S" and reg_sc["es_salida_maker"] is True
+    assert gp.calcular_pendiente_recuperacion_delise(-0.0005, -0.0018, 19.0, {"5s": -0.18}) > 0.0
+    assert gp.mes.evaluar_gatillo_maker_scratch_18s("LONG", 19.0, -0.0005, 0.0001, 0.18, 0.25, False, 0.40, False, -0.0018, {"5s": -0.18}) is False
     ram.log_operativo(" [16/18] Law 2 (RF-18) validated: 18.0s Passive Maker-Scratch evacuates dead MFE=0.0% fills before SL.")
 
     # [17/18] Native retCode: 110017 Capture (SL_EXCHANGE) & 1:1 Telegram Pairing
@@ -411,7 +415,8 @@ async def ejecutar_suite_certificacion_v1() -> int:
     cfg._ultimo_mtime_oos = 0.0
     ok_hr, ms_hr, _ = cfg.recargar_calibracion_oos_si_cambio()
     rep_lab = oos.ejecutar_laboratorio_gemelo_digital_3456(escribir_disco=False)
-    assert ok_hr and ms_hr < 50.0 and rep_lab["combinaciones_evaluadas"] == 3456
+    assert oos.calcular_cvar_10pct_adversarial([-0.08, 0.05, 0.07]) < 0.0
+    assert ok_hr and ms_hr < 50.0 and rep_lab["combinaciones_evaluadas"] == 3456 and "cvar_10pct_optimo_usdt" in rep_lab
     ram.log_operativo(
         f" [18/18] Quantum OOS Evaluator, Hot-Reload ({ms_hr:.2f} ms), and 3,456-Combination Digital Twin (--lab) validated."
     )

@@ -175,7 +175,6 @@ _mapa_clase_activo: Dict[str, str] = {
     "AVAX/USDT:USDT": CLASE_TIER1_LIQUIDO,
     "TAO/USDT:USDT": CLASE_TIER1_LIQUIDO,
     "ARB/USDT:USDT": CLASE_TIER1_LIQUIDO,
-    "INJ/USDT:USDT": CLASE_TIER1_LIQUIDO,
 }
 
 _limites_shadow_gate: Dict[str, Tuple[float, float]] = {

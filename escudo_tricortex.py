@@ -37,6 +37,10 @@ def evaluar_matriz_direccional_cuantitativa(
     )
 
 
+def calcular_bono_house_money() -> float:
+    return mck.calcular_bono_house_money()
+
+
 def calcular_fraccion_kelly_antifragil(
     z_score: float,
     ofi: float,

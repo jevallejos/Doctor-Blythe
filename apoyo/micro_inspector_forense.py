@@ -20,13 +20,16 @@ _C_YELLOW = "\033[1;93m"
 _C_WHITE = "\033[1;97m"
 
 
-def _cargar_baul() -> List[Dict[str, Any]]:
+def cargar_eventos_baul_forense(max_lineas: int = 0) -> List[Dict[str, Any]]:
     ruta = cfg.obtener_ruta_archivo("ARCHIVO_BAUL_IA_JSONL")
     if not ruta.exists():
         return []
     out: List[Dict[str, Any]] = []
     try:
-        for ln in ruta.read_text(encoding="utf-8", errors="replace").splitlines():
+        lineas = ruta.read_text(encoding="utf-8", errors="replace").splitlines()
+        if max_lineas > 0:
+            lineas = lineas[-max_lineas:]
+        for ln in lineas:
             s = ln.strip()
             if s:
                 out.append(json.loads(s))
@@ -38,7 +41,7 @@ def _cargar_baul() -> List[Dict[str, Any]]:
 def generar_reporte_anatomico_dict() -> Dict[str, Any]:
     st.GESTOR_ESTADISTICAS.cargar_historial_disco()
     ops = list(st.GESTOR_ESTADISTICAS.operaciones)
-    eventos = _cargar_baul()
+    eventos = cargar_eventos_baul_forense()
 
     por_par: Dict[str, Dict[str, Any]] = {}
     for par in cfg.PARES_CAMPEONES:

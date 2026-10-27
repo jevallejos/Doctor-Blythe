@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Ofensivo #1: Supervivencia en Cola L1 Moallemi & Yuan (2017)
+Micro-Modulo Ofensivo #1: Supervivencia en Cola L1 Moallemi & Yuan (2017),
+Carrera de Tiempos de Primer Paso (Muerte Pura vs Nacimiento-Muerte, arXiv:2403.02572v2)
 y Salto Pasivo Penny-Jump con Candado Anti-Sobreprecio.
 """
 from typing import Tuple
 import config_parametros as cfg
+import core_estado_ram as ram
 
 
 def evaluar_aborto_cola_moallemi(
@@ -14,45 +16,66 @@ def evaluar_aborto_cola_moallemi(
     ofi_actual: float,
     h_actual: float,
     edad_orden_seg: float,
-) -> Tuple[bool, str]:
+    veto_btc_activo: bool = False,
+    q_opp_inicial: float = 0.0,
+    q_opp_actual: float = 0.0,
+) -> Tuple[bool, bool]:
     """
-    Evalua si una orden PostOnly descansando en L1 sufre seleccion adversa real:
-    1. La disminucion de Q_L1 (< 30%) SOLO aborta si el flujo OFI es adverso
-       (evita cancelar cuando avanzamos al #1 de la fila FIFO con OFI >= 0).
-    2. El giro adverso de OFI solo aborta si supera -0.22 (en LONG) o +0.22 (en SHORT),
-       y si la liquidez L1 crecio o se mantuvo firme (>= 95%), tolera parpadeos hasta -0.28.
-    3. Hurst > 0.495 solo aborta si el flujo OFI NO esta empujando a nuestro favor.
+    Evalua si una orden PostOnly descansando en L1 sufre seleccion adversa real.
+    Integra la carrera de tiempos de primer paso (arXiv:2403.02572v2 & arXiv:2306.05479)
+    entre la tasa de vaciado propia (mu_own) y la opuesta (mu_opp).
+    Retorna (cola_toxica: bool, erosion_adversa: bool).
     """
+    if veto_btc_activo:
+        return True, False
+
     grace_seg = float(getattr(cfg, "MOALLEMI_MIN_AGE_ABORT_SEG", 0.35))
     if edad_orden_seg < grace_seg:
-        return False, "GRACE_WINDOW"
+        return False, False
+
+    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+    hold_ratio_dyn = float(ctrl.get("sens_q_l1_hold_ratio", 0.55))
+    ofi_abort_dyn = abs(float(ctrl.get("sens_ofi_abort_cola", -0.35)))
 
     ratio_min = float(getattr(cfg, "MOALLEMI_QUEUE_DEPLETION_ABORT_RATIO", 0.30))
-    ofi_flip_base = float(getattr(cfg, "MOALLEMI_OFI_ADVERSE_ABORT_THRESHOLD", 0.22))
+    ofi_flip_base = max(0.22, min(0.42, ofi_abort_dyn * 0.70))
     h_abort = float(getattr(cfg, "MOALLEMI_HURST_ABORT_THRESHOLD", 0.54))
 
     ratio_cola = (q_l1_actual / q_l1_inicial) if q_l1_inicial > 0.0 else 1.0
+    dt_eff = max(0.05, float(edad_orden_seg))
 
-    # Presion contraria en el libro
     presion_contra_leve = (
         (direccion == "LONG" and ofi_actual < -0.05)
         or (direccion == "SHORT" and ofi_actual > 0.05)
     )
-    # 1. Erosion toxica real: la fila se vacia (< 30%) MIENTRAS presionan en contra,
-    #    o colapso extremo (< 12%) de una fila grande (> 1000 contratos)
+
+    # Mejora #1 (arXiv:2403.02572v2): Carrera de Tiempos de Primer Paso (mu_own vs mu_opp)
+    # Solo activa aborto en la zona gris (ratio_cola <= hold_ratio_dyn) cuando OFI pierde traccion
+    # y nuestra fila se vacia > 2.5x mas rapido que la punta opuesta mientras la opuesta se engrosa.
+    carrera_primer_paso_adversa = False
+    if q_l1_inicial > 0.0 and q_opp_inicial > 0.0 and ratio_cola <= hold_ratio_dyn:
+        mu_own = max(0.0, q_l1_inicial - q_l1_actual) / dt_eff
+        mu_opp = max(0.0, q_opp_inicial - q_opp_actual) / dt_eff
+        opp_engrosando = q_opp_actual >= (q_opp_inicial * 1.05)
+        ofi_sin_traccion = (
+            (direccion == "LONG" and ofi_actual < 0.0)
+            or (direccion == "SHORT" and ofi_actual > 0.0)
+        )
+        if opp_engrosando and ofi_sin_traccion and mu_own > (2.5 * max(1e-6, mu_opp)):
+            carrera_primer_paso_adversa = True
+
     cola_erosionada = (q_l1_inicial > 0.0) and (
         (ratio_cola < ratio_min and presion_contra_leve)
         or (q_l1_inicial >= 1000.0 and ratio_cola < 0.12 and ofi_actual <= 0.0)
+        or carrera_primer_paso_adversa
     )
 
-    # 2. Giro adverso de OFI (si la fila L1 nos respalda >= 95%, exige giro mas fuerte >= 0.28)
     umbral_ofi_efectivo = max(ofi_flip_base, 0.28) if ratio_cola >= 0.95 else max(ofi_flip_base, 0.22)
     ofi_adverso = (
         (direccion == "LONG" and ofi_actual < -umbral_ofi_efectivo)
         or (direccion == "SHORT" and ofi_actual > umbral_ofi_efectivo)
     )
 
-    # 3. Hurst direccional: si OFI empuja a favor (>= +0.08) o la fila crecio, H <= 0.54 es rebote sano
     flujo_a_favor = (
         (direccion == "LONG" and ofi_actual >= 0.08)
         or (direccion == "SHORT" and ofi_actual <= -0.08)
@@ -63,11 +86,19 @@ def evaluar_aborto_cola_moallemi(
     )
 
     if cola_erosionada or ofi_adverso or hurst_toxico:
-        return (
-            True,
-            f"Q_L1={q_l1_actual:.1f}/{q_l1_inicial:.1f}, H={h_actual:.2f}, OFI={ofi_actual:+.2f}",
-        )
-    return False, "OK"
+        return True, bool(cola_erosionada)
+    return False, False
+
+
+def listo_para_repeg_cola(
+    fue_cancelada_postonly: bool,
+    elapsed_seg: float,
+    ultimo_repeg_elapsed_seg: float,
+) -> bool:
+    if fue_cancelada_postonly:
+        return True
+    intervalo = max(0.25, float(getattr(cfg, "REPEG_PASIVO_ENTRADA_SEG", 0.65)))
+    return bool((elapsed_seg - ultimo_repeg_elapsed_seg) >= intervalo)
 
 
 def evaluar_salto_punta_penny(
@@ -82,25 +113,14 @@ def evaluar_salto_punta_penny(
     edad_en_nivel_seg: float = 1.0,
     ofi_ticks_racha: int = 0,
 ) -> Tuple[bool, float]:
-    """
-    Penny-Jump con Candado Anti-Sobreprecio (Remediacion Trade #10):
-    - Maximo 1 salto (re_pegs_realizados < 1) tras >= 0.85s de reposo en L1.
-    - Prohibido saltar si la racha OFI de entrada ya es madura (>= 8 ticks)
-      o si 1 tick representa > 0.045% del precio.
-    - El nuevo precio jamas puede desplazarse mas de 1.0 tick desde precio_orden.
-    """
     if not bool(getattr(cfg, "PENNY_JUMP_HABILITADO", True)):
         return False, precio_orden
-
     if re_pegs_realizados >= 1 or tick_size <= 0.0 or precio_orden <= 0.0:
         return False, precio_orden
-
     if edad_en_nivel_seg < 0.85:
         return False, precio_orden
-
     if ofi_ticks_racha >= 8:
         return False, precio_orden
-
     if (tick_size / precio_orden) > 0.00045:
         return False, precio_orden
 
