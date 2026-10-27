@@ -144,3 +144,21 @@ def evaluar_salto_punta_penny(
                 return True, round(candidato, 8)
 
     return False, precio_orden
+
+# === [TERPSICHORA-QUEUE-HOLD-GUARD-V1] ===
+def debe_proteger_orden_en_cola_por_flujo_favorable(
+    q_ratio: float,
+    ofi_dir: float,
+    hurst: float,
+    min_q_floor: float = 0.22,
+) -> bool:
+    """
+    Inhibe Early Queue Abort cuando el OFI direccional es fuertemente favorable
+    (>= +0.10) y el Hurst se mantiene anti-persistente (<= 0.490), evitando
+    cancelar tiros ganadores en < 2.5s por oscilaciones normales de L1.
+    """
+    if hurst > 0.495:
+        return False
+    if ofi_dir >= 0.10 and q_ratio >= min(0.15, min_q_floor):
+        return True
+    return bool(q_ratio >= min_q_floor and ofi_dir >= -0.48)

@@ -114,3 +114,32 @@ def verificar_veto_macro_btc_completo(direccion: str, ahora: float) -> Tuple[boo
         if ahora < ram.ESTADO_GLOBAL.btc_veto_short_hasta:
             return False, "BTC_VETO_COOLDOWN_12S"
     return True, "OK"
+
+# === [TERPSICHORA-BTC-DYNAMIC-RELEASE-V1] ===
+def evaluar_desbloqueo_dinamico_flujo_btc(
+    z_btc: float,
+    ofi_btc: float,
+    dp_btc_pct: float,
+    ofi_alt: float,
+    hurst_alt: float,
+    acel_lyap_alt: float,
+    elapsed_cooldown_seg: float,
+    side: str = "LONG",
+) -> bool:
+    """
+    SCAR-LOCK-17: Desbloquea anticipadamente BTC_VETO_COOLDOWN_12S tras >= 1.5s
+    cuando BTC detiene su impulso adverso y el par hijo confirma absorcion L1-L5.
+    """
+    if elapsed_cooldown_seg < 1.50:
+        return False
+    if hurst_alt > 0.485:
+        return False
+    side_u = str(side).upper()
+    if side_u in ("LONG", "BUY"):
+        btc_estable = (ofi_btc >= -0.10 and z_btc >= -0.25) or (abs(dp_btc_pct) < 0.0003 and ofi_btc >= -0.08)
+        alt_absorbiendo = (ofi_alt >= 0.22 and acel_lyap_alt >= -0.00022)
+        return bool(btc_estable and alt_absorbiendo)
+    else:
+        btc_estable = (ofi_btc <= 0.10 and z_btc <= 0.25) or (abs(dp_btc_pct) < 0.0003 and ofi_btc <= 0.08)
+        alt_absorbiendo = (ofi_alt <= -0.22 and acel_lyap_alt <= 0.00022)
+        return bool(btc_estable and alt_absorbiendo)

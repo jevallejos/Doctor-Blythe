@@ -65,3 +65,30 @@ def calcular_intervalo_repeg_salida_maker(motivo: str) -> float:
     if "UNWIND" in m_up or "HARVEST" in m_up or "TRAILING" in m_up or "WALD" in m_up:
         return float(cfg.COSECHA_REPEG_INTERVALO_SEG)
     return 1.80
+
+# === [TERPSICHORA-BE-RATCHET-ENFORCER-V1] ===
+def verificar_disparo_fisico_trinquete_be(
+    side: str,
+    trinquete_be_armado: bool,
+    sl_actual: float,
+    entry_price: float,
+    current_price: float,
+    be_offset_pct: float = 0.00065,
+) -> tuple[bool, float]:
+    """
+    Garantiza fisicamente que una vez armado el Early Break-Even Ratchet
+    (ej. SL 0.03442 en Trade #5 WAL SHORT), si el precio regresa y toca
+    el nivel ratcheteado, se dispare la evacuacion inmediata cancelando
+    cualquier orden Phase 2 Maker Shield colgada.
+    """
+    if not trinquete_be_armado or current_price <= 0.0 or entry_price <= 0.0:
+        return False, float(sl_actual)
+    side_u = str(side).upper()
+    if side_u in ("LONG", "BUY"):
+        piso_be = round(entry_price * (1.0 + be_offset_pct), 8)
+        sl_efectivo = max(float(sl_actual), piso_be) if sl_actual > 0 else piso_be
+        return bool(current_price <= sl_efectivo), sl_efectivo
+    else:
+        techo_be = round(entry_price * (1.0 - be_offset_pct), 8)
+        sl_efectivo = min(float(sl_actual), techo_be) if sl_actual > 0 else techo_be
+        return bool(current_price >= sl_efectivo), sl_efectivo

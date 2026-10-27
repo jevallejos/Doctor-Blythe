@@ -5,6 +5,8 @@ Level 5 DAG: 25.0 Hz L2 Microstructural Radar, Bipower Variation Z-Score Engine,
 for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
+from defensiva.micro_veto_macro_btc import evaluar_desbloqueo_dinamico_flujo_btc
+from ofensiva.micro_enganche_fase import confirmar_disparo_vertice_armado
 
 import collections
 import math

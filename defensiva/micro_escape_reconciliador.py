@@ -65,3 +65,25 @@ def clasificar_posicion_huerfana_arranque(
         "pnl_bruto_pct": pnl_bruto_pct,
         "motivo": "ESCAPE_HUERFANA_BOOT",
     }
+
+# === [TERPSICHORA-ORPHAN-GRACE-SHIELD-V1] ===
+def debe_adoptar_en_lugar_de_liquidar_huerfana(
+    symbol: str,
+    locks_pre_fill: dict,
+    posiciones_activas: dict,
+    now_ts: float,
+    grace_seg: float = 5.0,
+) -> bool:
+    """
+    Impide que el reconciliador liquide a mercado como ESCAPE_HUERFANA_BOOT
+    una posicion que acaba de ser abierta por el Sniper (en vuelo o dentro
+    de los primeros 5.0 segundos de registro en RAM).
+    """
+    if symbol in posiciones_activas:
+        return True
+    lock_ts = locks_pre_fill.get(symbol)
+    if isinstance(lock_ts, (int, float)) and (now_ts - float(lock_ts)) <= grace_seg:
+        return True
+    if lock_ts is True:
+        return True
+    return False

@@ -169,3 +169,60 @@ def debe_escalar_scratch_colgado_a_taker(
     if edad_orden_salida_seg >= 5.0 and pnl_pct <= -0.0014 and flujo_fuerte_contra:
         return True
     return False
+
+# === [TERPSICHORA-ELASTIC-SCRATCH-GOVERNOR-V1] ===
+def calcular_precio_scratch_acotado_un_tick(
+    side: str,
+    entry_price: float,
+    best_bid: float,
+    best_ask: float,
+    tick_size: float,
+    ofi_5s_dir: float,
+) -> float:
+    """
+    Prohibe que MAKER_SCRATCH persiga el libro hacia abajo generando perdidas de
+    -0.20% a -0.30% (como en Trade #2 y #11). Si el flujo no esta en colapso
+    severo (|OFI_5s| < 0.35), ancla el precio pasivo a un maximo de 1 tick
+    respecto al precio de entrada.
+    """
+    t_size = max(float(tick_size or 0.00001), 1e-8)
+    side_u = str(side).upper()
+    flujo_neutral = abs(float(ofi_5s_dir)) < 0.35
+    if side_u in ("LONG", "BUY"):
+        piso_1tick = round(float(entry_price) - t_size, 8)
+        cotizacion_libro = float(best_ask) if best_ask > 0 else float(entry_price)
+        if flujo_neutral:
+            return max(piso_1tick, cotizacion_libro)
+        return max(round(float(entry_price) - 2.0 * t_size, 8), cotizacion_libro)
+    else:
+        techo_1tick = round(float(entry_price) + t_size, 8)
+        cotizacion_libro = float(best_bid) if best_bid > 0 else float(entry_price)
+        if flujo_neutral:
+            return min(techo_1tick, cotizacion_libro)
+        return min(round(float(entry_price) + 2.0 * t_size, 8), cotizacion_libro)
+
+
+def evaluar_ventana_elastica_scratch_28s(
+    edad_seg: float,
+    mfe_pct: float,
+    pnl_unrealized_pct: float,
+    ofi_dir: float,
+    acel_lyap_dir: float = 0.0,
+    tiempo_base_seg: float = 18.0,
+    tiempo_rebote_seg: float = 28.0,
+) -> bool:
+    """
+    - Si a los 18.0s el flujo es adverso o estancado (ofi_dir <= 0.05), evacua
+      inmediatamente (cumpliendo RF-18 y Test [16/18]).
+    - Si a los 18.0s el flujo esta absorbiendo con fuerza (ofi_dir > 0.05 y
+      perdida latente > -0.0012), otorga hasta 28.0s para evitar SCRATCH_EARLY_REBOUND.
+    """
+    if edad_seg < tiempo_base_seg:
+        return False
+    if mfe_pct > 0.0008:
+        return False
+    if ofi_dir <= 0.05:
+        return True
+    if edad_seg < tiempo_rebote_seg and pnl_unrealized_pct > -0.0012 and acel_lyap_dir >= -0.00025:
+        return False
+    return bool(edad_seg >= tiempo_rebote_seg and pnl_unrealized_pct <= 0.0002)

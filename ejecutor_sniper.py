@@ -6,6 +6,7 @@ Pre-Validated Bybit V5 MarkPrice Stop-Loss Geometry (SEI-02) for
 HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
+from ofensiva.micro_motor_maker import debe_proteger_orden_en_cola_por_flujo_favorable
 
 import asyncio
 import time

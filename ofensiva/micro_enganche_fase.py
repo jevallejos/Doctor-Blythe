@@ -96,3 +96,35 @@ def evaluar_sobreextension_y_rollover_short(
         and ofi_inst <= (cfg.OFI_MAX_ENTRADA_SHORT - 0.06)
     )
     return bool(sobreextension_short), bool(latch_short_vigente), bool(rollover_techo_vigente)
+
+# === [TERPSICHORA-ARM-AND-FIRE-VERTEX-V1] ===
+def confirmar_disparo_vertice_armado(
+    z_score: float,
+    hurst: float,
+    acel_lyapunov: float,
+    ofi_actual: float,
+    ofi_previo: float,
+    latched_activo: bool,
+    side: str = "LONG",
+    ofi_min_umbral: float = 0.06,
+) -> bool:
+    """
+    Permite disparar PostOnly en el vertice de la mecha dentro de la envolvente
+    Arm-and-Fire (1200ms-4500ms) en cuanto Lyapunov desacelera y el H-OFI gira.
+    """
+    if hurst > 0.485:
+        return False
+    delta_ofi = float(ofi_actual) - float(ofi_previo)
+    side_u = str(side).upper()
+    if side_u in ("LONG", "BUY"):
+        freno_ok = acel_lyapunov >= -0.00022
+        giro_ofi_ok = (ofi_actual >= ofi_min_umbral) or (
+            latched_activo and z_score <= -2.80 and ofi_actual >= 0.02 and delta_ofi >= 0.12
+        )
+        return bool(freno_ok and giro_ofi_ok)
+    else:
+        freno_ok = acel_lyapunov <= 0.00022
+        giro_ofi_ok = (ofi_actual <= -max(0.18, ofi_min_umbral)) or (
+            latched_activo and z_score >= 2.80 and ofi_actual <= -0.08 and delta_ofi <= -0.12
+        )
+        return bool(freno_ok and giro_ofi_ok)

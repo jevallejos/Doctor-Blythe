@@ -6,6 +6,9 @@ Maker Scratch, Startup Orphan Reconciler, and Colorized Live CLI HUD (verbot)
 for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
+from ofensiva.micro_escudo_diamante_fase2 import verificar_disparo_fisico_trinquete_be
+from defensiva.micro_evacuador_scratch import calcular_precio_scratch_acotado_un_tick, evaluar_ventana_elastica_scratch_28s
+from defensiva.micro_escape_reconciliador import debe_adoptar_en_lugar_de_liquidar_huerfana
 
 import asyncio
 import time
