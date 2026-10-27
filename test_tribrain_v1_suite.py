@@ -100,7 +100,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
     print(f" STARTING CERTIFICATION SUITE: {cfg.NOMBRE_ESTRATEGIA}")
     print("=" * 74)
 
-    # [1/18] AST & UTF-8 no BOM across all 30 Python modules (Root Orchestrators + 3 Micro-Domains)
+    # [1/18] AST & UTF-8 no BOM across all 32 Python modules (Root Orchestrators + 3 Micro-Domains)
     modulos_py = [
         "config_parametros.py",
         "core_estado_ram.py",
@@ -128,6 +128,8 @@ async def ejecutar_suite_certificacion_v1() -> int:
         "apoyo/micro_paridad_lvr_uta.py",
         "apoyo/micro_hud_ansi_telegram.py",
         "apoyo/micro_gemelo_digital_oos.py",
+        "apoyo/micro_higiene_disco.py",
+        "apoyo/micro_inspector_forense.py",
         "main.py",
         "evaluador_cuantico_oos.py",
         "test_tribrain_v1_suite.py",
@@ -138,7 +140,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
         assert not raw.startswith(b"\xef\xbb\xbf"), f"BOM detected in {m_rel}"
         assert b"\r\n" not in raw, f"CRLF detected in {m_rel}"
         ast.parse(raw.decode("utf-8"), filename=m_rel)
-    ram.log_operativo(" [1/18] AST compilation and pure UTF-8/LF encoding verified across all 30 Python modules.")
+    ram.log_operativo(" [1/18] AST compilation and pure UTF-8/LF encoding verified across all 32 Python modules.")
 
     # [2/18] 100-Constant Contract & Terpsichora V1.0 Hardened Parameters
     tree_cfg = ast.parse((base / "config_parametros.py").read_text(encoding="utf-8"))

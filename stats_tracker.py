@@ -199,6 +199,7 @@ class GestorEstadisticasHFT:
                         **registro,
                     }
                 )
+                ram.ESTADO_GLOBAL.encolar_auditoria_post_cierre(registro)
             except Exception:
                 pass
         return registro

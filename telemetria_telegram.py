@@ -200,3 +200,22 @@ def notificar_cierre_confirmado(
         BUZON_TEST.append({"tipo": tipo_ev, "symbol": symbol, "motivo": motivo, "pnl_usdt": pnl_usdt, "texto": msg})
         return True
     return _enviar_http_telegram(msg)
+
+
+def notificar_digest_ejecutivo(
+    resumen_stats: Dict[str, Any],
+    salvamentos_15s: int,
+    ahorro_escudos_usdt: float,
+) -> bool:
+    msg = (
+        f"{ICONO_DIAMANTE} [DOCTOR-BLYTHE V1.0 ? 4H EXECUTIVE DIGEST]\n"
+        f"UTA Balance: {resumen_stats.get('real_usdt', 0.0):.4f} USDT (1:1 Parity)\n"
+        f"Session Trades: {resumen_stats.get('trades', 0)} "
+        f"(W:{resumen_stats.get('wins', 0)} / L:{resumen_stats.get('losses', 0)} / S:{resumen_stats.get('scratches', 0)})\n"
+        f"Net PnL: {resumen_stats.get('total_pnl_usdt', 0.0):+.4f} USDT | LVR: {resumen_stats.get('lvr', 0.0):.4f}\n"
+        f"Shield Interceptions (+15s): {salvamentos_15s} saved (+{ahorro_escudos_usdt:.4f} USDT est.)"
+    )
+    if cfg.es_modo_test():
+        BUZON_TEST.append({"tipo": "DIGEST_4H", "symbol": "GLOBAL", "texto": msg})
+        return True
+    return _enviar_http_telegram(msg)

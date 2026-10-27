@@ -254,6 +254,23 @@ class EventoForensePendiente:
     vector_mercado: Dict[str, Any]
 
 
+@dataclasses.dataclass
+class EventoPostCierrePendiente:
+    timestamp_cierre: float
+    trade_id: int
+    symbol: str
+    side: str
+    motivo_salida: str
+    precio_entrada: float
+    precio_salida: float
+    pnl_usdt: float
+    pnl_pct: float
+    map_usdt: float
+    px_15s: float = 0.0
+    px_30s: float = 0.0
+
+
+
 class EstadoGlobalRAM:
     """
     Deterministic O(1) in-memory state store for Doctor Blythe Terpsichora V1.0.
@@ -267,6 +284,7 @@ class EstadoGlobalRAM:
         self.locks_pre_fill: Dict[str, float] = {}
         self.eventos_colapso_recientes: Dict[str, float] = {}
         self.cola_forense_15s: Deque[EventoForensePendiente] = collections.deque(maxlen=256)
+        self.cola_post_cierre_60s: Deque[EventoPostCierrePendiente] = collections.deque(maxlen=128)
         self.capital_total_uta: float = cfg.CAPITAL_BASE_HISTORICO_USDT
         self.capital_libre_uta: float = cfg.CAPITAL_BASE_HISTORICO_USDT
         self.capital_bloqueado_uta: float = 0.0
@@ -486,7 +504,89 @@ class EstadoGlobalRAM:
             }
             guardar_registro_baul_forense(registro)
             procesados += 1
+        procesados += self.procesar_cola_post_cierre_60s(ts_now)
         return procesados
+
+    def encolar_auditoria_post_cierre(self, registro_trade: Dict[str, Any]) -> None:
+        try:
+            px_out = float(registro_trade.get("precio_salida", 0.0))
+            if px_out <= 0.0:
+                return
+            self.cola_post_cierre_60s.append(
+                EventoPostCierrePendiente(
+                    timestamp_cierre=float(registro_trade.get("timestamp", time.time())),
+                    trade_id=int(registro_trade.get("trade_id", 0)),
+                    symbol=str(registro_trade.get("symbol", "")),
+                    side=str(registro_trade.get("side", "LONG")),
+                    motivo_salida=str(registro_trade.get("motivo_salida", "")),
+                    precio_entrada=float(registro_trade.get("precio_entrada", px_out)),
+                    precio_salida=px_out,
+                    pnl_usdt=float(registro_trade.get("pnl_usdt", 0.0)),
+                    pnl_pct=float(registro_trade.get("pnl_pct", 0.0)),
+                    map_usdt=float(registro_trade.get("map_usdt", 15.5) or 15.5),
+                )
+            )
+        except Exception:
+            pass
+
+    def procesar_cola_post_cierre_60s(self, ahora: Optional[float] = None) -> int:
+        ts_now = ahora if ahora is not None else time.time()
+        completados = 0
+        for ev in list(self.cola_post_cierre_60s):
+            edad = ts_now - ev.timestamp_cierre
+            m = self.metricas_ticks.get(ev.symbol)
+            px_now = m.mid if (m and m.mid > 0.0) else ev.precio_salida
+            if edad >= 15.0 and ev.px_15s <= 0.0:
+                ev.px_15s = px_now
+            if edad >= 30.0 and ev.px_30s <= 0.0:
+                ev.px_30s = px_now
+
+        while self.cola_post_cierre_60s and (ts_now - self.cola_post_cierre_60s[0].timestamp_cierre) >= 60.0:
+            ev = self.cola_post_cierre_60s.popleft()
+            m = self.metricas_ticks.get(ev.symbol)
+            px_60s = m.mid if (m and m.mid > 0.0) else ev.precio_salida
+            px_15 = ev.px_15s if ev.px_15s > 0.0 else px_60s
+            px_30 = ev.px_30s if ev.px_30s > 0.0 else px_60s
+            es_long = ev.side.upper() in ("BUY", "LONG")
+            signo = 1.0 if es_long else -1.0
+
+            cont_15 = signo * ((px_15 - ev.precio_salida) / ev.precio_salida) * 100.0
+            cont_30 = signo * ((px_30 - ev.precio_salida) / ev.precio_salida) * 100.0
+            cont_60 = signo * ((px_60s - ev.precio_salida) / ev.precio_salida) * 100.0
+
+            es_sc = "SCRATCH" in ev.motivo_salida.upper()
+            ahorro_sc = 0.0
+            if es_sc and cont_60 < 0.0:
+                ahorro_sc = round(abs(cont_60 / 100.0) * ev.map_usdt, 4)
+
+            if es_sc:
+                veredicto = "SCRATCH_SAVED_DUMP" if cont_60 <= -0.08 else ("SCRATCH_EARLY_REBOUND" if cont_60 >= 0.18 else "SCRATCH_NEUTRAL")
+            elif ev.pnl_usdt > 0.0:
+                veredicto = "WALD_CREST_OPTIMAL" if cont_30 <= 0.05 else "WALD_RUNNER_CONTINUED"
+            else:
+                veredicto = "LOSS_CONTAINED"
+
+            guardar_registro_baul_forense(
+                {
+                    "tipo_evento": "AUDITORIA_POST_CIERRE_60S",
+                    "timestamp": round(ts_now, 3),
+                    "fecha_utc": datetime.datetime.fromtimestamp(ts_now, _TZ_UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                    "trade_id": ev.trade_id,
+                    "symbol": ev.symbol,
+                    "side": ev.side,
+                    "motivo_salida": ev.motivo_salida,
+                    "precio_entrada": ev.precio_entrada,
+                    "precio_salida": ev.precio_salida,
+                    "pnl_usdt": ev.pnl_usdt,
+                    "continuation_15s_pct": round(cont_15, 4),
+                    "continuation_30s_pct": round(cont_30, 4),
+                    "continuation_60s_pct": round(cont_60, 4),
+                    "ahorro_post_scratch_usdt": ahorro_sc,
+                    "veredicto_post_cierre": veredicto,
+                }
+            )
+            completados += 1
+        return completados
 
 
 def guardar_registro_baul_forense(registro: Dict[str, Any]) -> None:

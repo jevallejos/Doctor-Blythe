@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Ofensivo #2: Piso Zero-Loss (SCAR-LOCK-14), Oxigeno Temprano MFE (22s)
-e Inhibidor de MAKER_UNWIND en Pleno Rally Ganador.
+Micro-Modulo Ofensivo #2: Piso Zero-Loss (SCAR-LOCK-14), Oxigeno Temprano MFE (24s)
+con Elasticidad por Clase (High-Beta vs Tier-1) e Inhibidor de MAKER_UNWIND en Rally.
 """
 import math
 import config_parametros as cfg
@@ -42,17 +42,21 @@ def debe_absorber_micro_retroceso_be_temprano(
     ofi_5s: float,
     lambda_wald: float,
     trailing_wald_activo: bool,
+    symbol: str = "",
 ) -> bool:
     if trailing_wald_activo or mfe_pct >= cfg.COSECHA_TRIZ_ACTIVACION_PCT:
         return False
-    if edad_seg >= 22.0:
+    es_hb = cfg.obtener_clase_activo(symbol) == cfg.CLASE_HIGH_BETA if symbol else True
+    ventana_max = 24.0 if es_hb else 18.0
+    if edad_seg >= ventana_max:
         return False
-    if pnl_pct < 0.00055:
+    piso_neto_vivo = 0.00048 if es_hb else 0.00055
+    if pnl_pct < piso_neto_vivo:
         return False
 
     flujo_vivo = (
-        (direccion == "LONG" and ofi_5s >= 0.08 and lambda_wald >= 0.0)
-        or (direccion == "SHORT" and ofi_5s <= -0.08 and lambda_wald >= 0.0)
+        (direccion == "LONG" and ofi_5s >= 0.06 and lambda_wald >= -0.10)
+        or (direccion == "SHORT" and ofi_5s <= -0.06 and lambda_wald >= -0.10)
     )
     return bool(flujo_vivo)
 
@@ -62,12 +66,15 @@ def debe_inhibir_maker_unwind_en_rally(
     pnl_pct: float,
     mfe_actual: float,
     ofi_5s: float,
+    symbol: str = "",
 ) -> bool:
-    if pnl_pct < 0.0012:
+    if pnl_pct < 0.0011:
         return False
+    es_hb = cfg.obtener_clase_activo(symbol) == cfg.CLASE_HIGH_BETA if symbol else True
+    tol_retroceso = 0.00045 if es_hb else 0.00030
     retroceso = max(0.0, mfe_actual - pnl_pct)
     flujo_fuerte = (
-        (direccion == "LONG" and ofi_5s >= 0.12)
-        or (direccion == "SHORT" and ofi_5s <= -0.12)
+        (direccion == "LONG" and ofi_5s >= 0.10)
+        or (direccion == "SHORT" and ofi_5s <= -0.10)
     )
-    return bool(retroceso <= 0.00035 and flujo_fuerte)
+    return bool(retroceso <= tol_retroceso and flujo_fuerte)

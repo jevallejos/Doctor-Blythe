@@ -16,6 +16,7 @@ from ofensiva import micro_cresta_convexo_sprt as mcw
 from ofensiva import micro_motor_wald_exit as mmw
 from defensiva import micro_evacuador_scratch as mes
 from apoyo import micro_hud_ansi_telegram as mht
+from apoyo import micro_inspector_forense as mif
 import core_estado_ram as ram
 import ejecutor_sniper as eje
 import escudo_tricortex as tri
@@ -548,6 +549,7 @@ class GestorPosicionesChronosTriz:
                     ofi_5s,
                     lambda_w,
                     pos.trailing_activo,
+                    pos.symbol,
                 ):
                     return None
                 res_be = await self._iniciar_o_actualizar_salida_maker(
@@ -637,7 +639,7 @@ class GestorPosicionesChronosTriz:
             edad >= 16.0
             and pnl_pct >= umbral_stall
             and (lambda_w <= 0.15 or ofi_5s <= 0.08)
-            and (not mmw.debe_inhibir_maker_unwind_en_rally(pos.direccion, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s))
+            and (not mmw.debe_inhibir_maker_unwind_en_rally(pos.direccion, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.symbol))
         ):
             if not pos.trinquete_be_activo:
                 piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
@@ -802,6 +804,10 @@ def seguir_log_en_vivo_cli(lineas_iniciales: int = 16) -> None:
 
 def imprimir_radiografia_uta_cli() -> None:
     mht.imprimir_hud_verbot_cli(lineas_log=12)
+
+
+def imprimir_auditoria_forense_cli() -> None:
+    mif.imprimir_auditoria_forense_cli()
 
 
 GESTOR_POSICIONES = GestorPosicionesChronosTriz()

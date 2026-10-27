@@ -34,6 +34,8 @@ verbot() {
             ./venv/bin/python -u evaluador_cuantico_oos.py
         elif [ "${1}" = "-l" ]; then
             ./venv/bin/python -u evaluador_cuantico_oos.py --lab
+        elif [ "${1}" = "-a" ]; then
+            ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.imprimir_auditoria_forense_cli()"
         else
             ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.seguir_log_en_vivo_cli(lineas_iniciales=16)"
         fi

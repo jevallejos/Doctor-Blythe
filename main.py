@@ -18,6 +18,8 @@ from typing import Any, Dict, Optional, Tuple
 from dotenv import load_dotenv
 
 import config_parametros as cfg
+from apoyo import micro_higiene_disco as mhd
+from apoyo import micro_inspector_forense as mif
 import core_estado_ram as ram
 import ejecutor_sniper as eje
 import escudo_tricortex as tri
@@ -103,6 +105,8 @@ def _capturar_mtimes_codigo() -> Dict[str, float]:
         "apoyo/micro_paridad_lvr_uta.py",
         "apoyo/micro_hud_ansi_telegram.py",
         "apoyo/micro_gemelo_digital_oos.py",
+        "apoyo/micro_higiene_disco.py",
+        "apoyo/micro_inspector_forense.py",
     ):
         p = base_dir / nombre
         if p.exists():
@@ -229,6 +233,7 @@ async def bucle_gobernador_mantenimiento(
     mtimes_iniciales: Dict[str, float],
 ) -> None:
     ts_ultimo_panel: float = time.time()
+    ts_ultimo_digest_4h: float = time.time()
     ts_ultimo_lpu: float = 0.0
     ts_ultimo_oos: float = 0.0
     ts_ultimo_pulso_radar: float = 0.0
@@ -289,6 +294,15 @@ async def bucle_gobernador_mantenimiento(
                 ts_ultimo_panel = ahora
                 await auditar_balance_uta_bybit(exchange, silencioso=True)
                 st.imprimir_panel_caja_negra()
+                mhd.ejecutar_mantenimiento_silencioso_disco(ram.ESTADO_GLOBAL)
+
+            if (ahora - ts_ultimo_digest_4h) >= 14400.0:
+                ts_ultimo_digest_4h = ahora
+                rep_an = mif.generar_reporte_anatomico_dict()
+                esc_d = rep_an.get("escudos_15s", {})
+                tot_saved = sum(int(v.get("saved", 0)) for v in esc_d.values())
+                usdt_saved = sum(float(v.get("usdt_saved", 0.0)) for v in esc_d.values())
+                tel.notificar_digest_ejecutivo(rep_an["resumen_global"], tot_saved, usdt_saved)
 
             if not ram.ESTADO_GLOBAL.posiciones_activas:
                 actuales = _capturar_mtimes_codigo()
