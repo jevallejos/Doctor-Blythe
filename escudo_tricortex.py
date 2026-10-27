@@ -6,7 +6,6 @@ HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 """
 from __future__ import annotations
 
-import math
 import os
 import time
 from typing import Tuple
@@ -165,10 +164,7 @@ class OrquestadorTriCortexLPU:
         modelo = self.modelos_forense[self._idx_c3 % len(self.modelos_forense)]
         self._idx_c3 += 1
 
-        if "SL" in motivo.upper():
-            cuarentena_seg = float(cfg.obtener_aux("COOLDOWN_POST_SL_SEG", 240.0))
-        else:
-            cuarentena_seg = float(cfg.obtener_aux("COOLDOWN_MAKER_SCRATCH_18S", 75.0))
+        cuarentena_seg = mcc.calcular_segundos_cuarentena_post_perdida(motivo)
 
         ram.ESTADO_GLOBAL.activar_cuarentena_par(symbol, cuarentena_seg, motivo=f"FORENSIC_{motivo}")
         lat_ms = int((time.perf_counter() - t0) * 1000)

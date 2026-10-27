@@ -8,7 +8,6 @@ HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 from __future__ import annotations
 
 import asyncio
-import math
 import time
 from typing import Any, Dict, Optional, Tuple
 
@@ -96,15 +95,13 @@ class EjecutorSniperBybit:
         if exchange is None or not hasattr(exchange, "set_trading_stop"):
             return False
         try:
-            t_size = max(1e-8, float(tick_size))
             dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
-            sl_seguro = float(sl_precio)
             m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
-            if m_live is not None and m_live.bid > 0.0 and m_live.ask > 0.0:
-                if dir_norm == "LONG" and sl_seguro >= m_live.bid:
-                    sl_seguro = cuantizar_tick(m_live.bid - (2.0 * t_size), t_size, modo="floor")
-                elif dir_norm == "SHORT" and sl_seguro <= m_live.ask:
-                    sl_seguro = cuantizar_tick(m_live.ask + (2.0 * t_size), t_size, modo="ceil")
+            bid_l = m_live.bid if m_live is not None else 0.0
+            ask_l = m_live.ask if m_live is not None else 0.0
+            sl_seguro = mes.ajustar_geometria_sl_markprice(
+                sl_precio, dir_norm, bid_l, ask_l, tick_size, buffer_ticks=2.0
+            )
 
             await exchange.set_trading_stop(
                 symbol,
@@ -368,10 +365,7 @@ class EjecutorSniperBybit:
             await self._colocar_sl_servidor_bybit(exchange, symbol, sl_srv, side=dir_norm, tick_size=tick_size)
 
             vol_bv = float(senal.get("volatilidad_bv", cfg.VOLATILIDAD_BV_PISO_MIN))
-            tp_din = max(
-                cfg.COSECHA_ESTANCAMIENTO_MFE_PCT,
-                min(0.0032, max(cfg.COSECHA_TRIZ_ACTIVACION_PCT, vol_bv * 3.2)),
-            )
+            tp_din = mcs.calcular_tp_dinamico_volatilidad(vol_bv)
             fee_entrada = abs(filled_final * precio_fill) * cfg.COMISION_MAKER_PCT
 
             pos = ram.PosicionActiva(

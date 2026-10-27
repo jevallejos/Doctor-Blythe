@@ -8,7 +8,6 @@ for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 from __future__ import annotations
 
 import asyncio
-import math
 import time
 from typing import Any, Dict, Optional
 
@@ -29,27 +28,7 @@ def calcular_piso_be_maker(
     side: str,
     tick_size: float = 0.0001,
 ) -> float:
-    """
-    SCAR-LOCK-14: Tick-Quantized Net-of-Fee Zero-Loss Floor.
-    Guarantees strictly positive net PnL after round-trip Maker/Taker fees.
-    """
-    offset_min = max(
-        float(cfg.TRINQUETE_BE_OFFSET_PCT),
-        (cfg.COMISION_MAKER_PCT + cfg.COMISION_TAKER_PCT) * 1.15,
-    )
-    dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
-    if dir_norm == "LONG":
-        raw = precio_entrada * (1.0 + offset_min)
-        piso = eje.cuantizar_tick(raw, tick_size, modo="ceil")
-        if piso <= precio_entrada:
-            piso = round(precio_entrada + max(tick_size, 1e-6), 6)
-        return piso
-
-    raw = precio_entrada * (1.0 - offset_min)
-    techo = eje.cuantizar_tick(raw, tick_size, modo="floor")
-    if techo >= precio_entrada:
-        techo = round(precio_entrada - max(tick_size, 1e-6), 6)
-    return techo
+    return mmw.calcular_piso_cero_perdida(precio_entrada, side, tick_size=tick_size)
 
 
 def calcular_kappa_convexo_wald(mfe_pct: float) -> float:
@@ -107,14 +86,12 @@ class GestorPosicionesChronosTriz:
         if exchange is None or not hasattr(exchange, "set_trading_stop"):
             return False
         try:
-            t_size = max(1e-8, float(tick_size))
-            sl_seguro = float(nuevo_sl)
             m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(pos.symbol)
-            if m_live is not None and m_live.bid > 0.0 and m_live.ask > 0.0:
-                if pos.direccion == "LONG" and sl_seguro >= m_live.bid:
-                    sl_seguro = eje.cuantizar_tick(m_live.bid - t_size, t_size, modo="floor")
-                elif pos.direccion == "SHORT" and sl_seguro <= m_live.ask:
-                    sl_seguro = eje.cuantizar_tick(m_live.ask + t_size, t_size, modo="ceil")
+            bid_l = m_live.bid if m_live is not None else 0.0
+            ask_l = m_live.ask if m_live is not None else 0.0
+            sl_seguro = mes.ajustar_geometria_sl_markprice(
+                nuevo_sl, pos.direccion, bid_l, ask_l, tick_size, buffer_ticks=1.0
+            )
 
             await exchange.set_trading_stop(
                 pos.symbol,

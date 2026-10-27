@@ -7,7 +7,6 @@ Production Baseline Terpsichora V1.0.
 from __future__ import annotations
 
 import datetime
-import itertools
 import json
 import pathlib
 import sys

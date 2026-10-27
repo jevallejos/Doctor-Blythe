@@ -7,7 +7,6 @@ for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 from __future__ import annotations
 
 import collections
-import datetime
 import math
 import time
 from typing import Any, Deque, Dict, List, Optional, Tuple
@@ -19,8 +18,6 @@ from defensiva import micro_veto_macro_btc as mvb
 from apoyo import micro_cinematica_l2 as mcl
 import core_estado_ram as ram
 import escudo_tricortex as tri
-
-_TZ_UTC = datetime.timezone.utc
 
 # ==============================================================================
 # IMMUTABLE SCAR-TISSUE LEDGER (SCAR-LOCK-00 THROUGH SCAR-LOCK-18)
@@ -287,11 +284,6 @@ class RadarVolatilidadHFT:
         # ======================================================================
         # PATH A: TERPSICHORA V1.0 PHASE-LATCHED LONG V-BOTTOM ENGINE (4.50s)
         # ======================================================================
-        z_umbral_long = cfg.Z_SCORE_UMBRAL_HIGH_BETA if es_hb else cfg.Z_SCORE_UMBRAL_TIER1
-        dp_min_long = cfg.DP_MIN_EXCURSION_LONG_HB if es_hb else cfg.DP_MIN_EXCURSION_LONG_T1
-        ema_piso_base = cfg.EMA900_DISTANCIA_MIN_LONG_HB if es_hb else cfg.EMA900_DISTANCIA_MIN_LONG_T1
-        recorrido_req = -0.0018 if es_hb else -0.0014
-        piso_anti_ruido = -0.0011 if es_hb else -0.0009
         h_cap_long = cfg.HURST_MAX_ENTRADA_LONG if es_hb else cfg.HURST_MAX_ENTRADA_LONG_T1
         ofi_min_long = max(cfg.OFI_MIN_ENTRADA, min(0.16, float(ctrl.get("w1_ofi_long", cfg.OFI_MIN_ENTRADA))))
 
@@ -422,8 +414,6 @@ class RadarVolatilidadHFT:
         # ======================================================================
         # PATH B: TERPSICHORA V1.0 EXHAUSTED-TOP & ROLLOVER SHORT-SNIPER ENGINE
         # ======================================================================
-        ema_min_short = cfg.EMA900_SOBREEXTENSION_SHORT_HB if es_hb else cfg.EMA900_SOBREEXTENSION_SHORT_T1
-        dp_min_short = cfg.DP_MIN_EXCURSION_SHORT_HB if es_hb else cfg.DP_MIN_EXCURSION_SHORT_T1
         h_cap_short = min(
             cfg.HURST_TECHO_DURO_ABSOLUTO,
             float(ctrl.get("hurst_cap_short_mod", cfg.HURST_MAX_ENTRADA_SHORT)),
@@ -448,12 +438,25 @@ class RadarVolatilidadHFT:
                 "percentil_24h": etiqueta_p,
             }
 
-            if acel_lyap > cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO:
+            if not mef.evaluar_freno_lyapunov("SHORT", acel_lyap, umbral_agotamiento_short=cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO)[0]:
                 return False, "SHORT_NO_LYAPUNOV_EXHAUSTION", None
 
             if ofi_inst > cfg.OFI_MAX_ENTRADA_SHORT or est.ofi_ticks_neg < cfg.OFI_TICKS_PERSISTENCIA_MIN:
                 return False, "SHORT_OFI_INSUFFICIENT", None
 
+            if ahora < ram.ESTADO_GLOBAL.btc_veto_short_hasta:
+                m_b = ram.ESTADO_GLOBAL.metricas_ticks.get(cfg.PAR_LIDER_MACRO)
+                if m_b is not None and mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(
+                    "SHORT",
+                    ram.ESTADO_GLOBAL.btc_veto_short_hasta - ahora,
+                    m_b.z_score,
+                    m_b.ofi_profundo,
+                    ofi_inst,
+                    hurst,
+                    acel_lyap,
+                    cfg.BTC_VETO_COOLDOWN_SEG,
+                ):
+                    ram.ESTADO_GLOBAL.btc_veto_short_hasta = 0.0
             ok_btc_s, motivo_btc_s = self._verificar_veto_macro_btc("SHORT", ahora)
             if not ok_btc_s:
                 ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
@@ -466,7 +469,7 @@ class RadarVolatilidadHFT:
                 if mid <= perm_par.step_lock_short_price * 1.0015 and ema900_slope_pct > 0.02:
                     return False, "ANTI_SQUEEZE_STEP_LOCK", None
 
-            if hurst > h_cap_short:
+            if not mef.evaluar_filtro_hurst_direccional("SHORT", hurst, h_cap_short, h_cap_short)[0]:
                 est.ultimo_hurst_alto_short_ts = ahora
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
                     est.ultimo_log_warn_ts = ahora

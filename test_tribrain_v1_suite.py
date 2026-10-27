@@ -100,7 +100,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
     print(f" STARTING CERTIFICATION SUITE: {cfg.NOMBRE_ESTRATEGIA}")
     print("=" * 74)
 
-    # [1/18] AST & UTF-8 no BOM across all 12 Python modules
+    # [1/18] AST & UTF-8 no BOM across all 30 Python modules (Root Orchestrators + 3 Micro-Domains)
     modulos_py = [
         "config_parametros.py",
         "core_estado_ram.py",
@@ -110,6 +110,24 @@ async def ejecutar_suite_certificacion_v1() -> int:
         "radar_volatilidad.py",
         "ejecutor_sniper.py",
         "gestor_posiciones.py",
+        "ofensiva/__init__.py",
+        "ofensiva/micro_motor_maker.py",
+        "ofensiva/micro_motor_wald_exit.py",
+        "ofensiva/micro_sizing_kelly.py",
+        "ofensiva/micro_cotizador_stoikov.py",
+        "ofensiva/micro_cresta_convexo_sprt.py",
+        "ofensiva/micro_conviccion_kelly.py",
+        "ofensiva/micro_enganche_fase.py",
+        "defensiva/__init__.py",
+        "defensiva/micro_escudos_fisicos.py",
+        "defensiva/micro_veto_macro_btc.py",
+        "defensiva/micro_cortafuegos_contagio.py",
+        "defensiva/micro_evacuador_scratch.py",
+        "apoyo/__init__.py",
+        "apoyo/micro_cinematica_l2.py",
+        "apoyo/micro_paridad_lvr_uta.py",
+        "apoyo/micro_hud_ansi_telegram.py",
+        "apoyo/micro_gemelo_digital_oos.py",
         "main.py",
         "evaluador_cuantico_oos.py",
         "test_tribrain_v1_suite.py",
@@ -120,7 +138,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
         assert not raw.startswith(b"\xef\xbb\xbf"), f"BOM detected in {m_rel}"
         assert b"\r\n" not in raw, f"CRLF detected in {m_rel}"
         ast.parse(raw.decode("utf-8"), filename=m_rel)
-    ram.log_operativo(" [1/18] AST compilation and pure UTF-8/LF encoding verified across all 12 Python modules.")
+    ram.log_operativo(" [1/18] AST compilation and pure UTF-8/LF encoding verified across all 30 Python modules.")
 
     # [2/18] 100-Constant Contract & Terpsichora V1.0 Hardened Parameters
     tree_cfg = ast.parse((base / "config_parametros.py").read_text(encoding="utf-8"))

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import math
 import pathlib
 import time
 from typing import Any, Dict, List, Optional
