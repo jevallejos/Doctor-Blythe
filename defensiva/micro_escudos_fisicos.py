@@ -42,7 +42,7 @@ def evaluar_filtro_hurst_direccional(
     hurst_max_long: float = 0.485,
     hurst_max_short: float = 0.485,
 ) -> Tuple[bool, str]:
-    tope = hurst_max_long if direccion == "LONG" else hurst_max_short
+    tope = max(float(hurst_max_long), 0.58) if direccion == "LONG" else float(hurst_max_short)
     if hurst_actual > tope:
         etiqueta = "HURST_FILTER" if direccion == "LONG" else "P-02_HURST_SHORT"
         return False, f"{etiqueta}(H={hurst_actual:.3f}>{tope:.3f})"

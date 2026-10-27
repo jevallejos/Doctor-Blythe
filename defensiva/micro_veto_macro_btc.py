@@ -15,15 +15,25 @@ def evaluar_choque_directo_btc(
     umbral_ofi_veto: float = 0.40,
     umbral_z_veto: float = 0.25,
 ) -> Tuple[bool, str]:
+    """
+    Evalua si el lider macro (BTC/USDT:USDT) esta empujando activamente en contra
+    de la direccion del disparo. Exige movimiento real de precio (|z_btc| >= 0.15)
+    para que un pulso de OFI dispare el veto, evitando falsos bloqueos cuando BTC
+    esta plano (Z = 0.00).
+    """
     if direccion == "LONG":
-        if ofi_btc <= -abs(umbral_ofi_veto) and z_btc <= 0.05:
+        if z_btc <= -1.45:
             return True, f"BTC_VETO_LONG(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
-        if z_btc <= -abs(umbral_z_veto) and ofi_btc < 0.0:
+        if ofi_btc <= -abs(umbral_ofi_veto) and z_btc <= -0.15:
+            return True, f"BTC_VETO_LONG(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
+        if z_btc <= -abs(umbral_z_veto) and ofi_btc <= -0.15:
             return True, f"BTC_VETO_LONG(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
     else:
-        if ofi_btc >= abs(umbral_ofi_veto) and z_btc >= -0.05:
+        if z_btc >= 1.45:
             return True, f"BTC_VETO_SHORT(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
-        if z_btc >= abs(umbral_z_veto) and ofi_btc > 0.0:
+        if ofi_btc >= abs(umbral_ofi_veto) and z_btc >= 0.15:
+            return True, f"BTC_VETO_SHORT(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
+        if z_btc >= abs(umbral_z_veto) and ofi_btc >= 0.15:
             return True, f"BTC_VETO_SHORT(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
     return False, "OK"
 
@@ -39,32 +49,28 @@ def puede_liberar_cooldown_btc_en_giro_sincronizado(
     cooldown_total_seg: float = 12.0,
 ) -> bool:
     """
-    Desbloquea BTC_VETO_COOLDOWN_12S cuando han pasado >= 2.0s del choque inicial,
-    el libro L2 de BTC ya giro a favor (OFI_BTC >= +0.15 con Z_BTC > -0.90, o
-    OFI_BTC >= +0.35 con Z_BTC > -1.35) y la altcoin presenta frenado de Lyapunov
-    confirmado (a >= 0.0), Hurst <= 0.465 y absorcion OFI >= +0.16 (Solucion a los
-    97 bloqueos de cooldown como WAL +0.5763% y ZEREBRO +0.2904%).
+    Libera anticipadamente la cola residual de BTC_VETO_COOLDOWN_12S cuando:
+    1. Han transcurrido al menos 1.5s desde el pulso de choque inicial de BTC.
+    2. BTC ya detuvo la caida (z_btc >= -0.08 y ofi_btc >= -0.05 en LONG).
+    3. La altcoin presenta absorcion compradora (OFI >= +0.25) y frenado de Lyapunov.
     """
     tiempo_transcurrido = max(0.0, cooldown_total_seg - segundos_restantes_cooldown)
-    if tiempo_transcurrido < 2.0:
+    if tiempo_transcurrido < 1.5:
         return False
-    if hurst_alt > 0.465:
+
+    if hurst_alt > 0.62:
         return False
 
     if direccion == "LONG":
-        btc_recuperado = (
-            (ofi_btc >= 0.15 and z_btc > -0.90)
-            or (ofi_btc >= 0.35 and z_btc > -1.35)
-        )
-        alt_en_rebote_limpio = (ofi_alt >= 0.16) and (lyapunov_alt >= 0.0)
-        return bool(btc_recuperado and alt_en_rebote_limpio)
+        btc_estabilizado = (z_btc >= -0.08) and (ofi_btc >= -0.05)
+        alt_absorbiendo_piso = (ofi_alt >= 0.25) and (lyapunov_alt >= -0.00035)
+        return bool(btc_estabilizado and alt_absorbiendo_piso)
     else:
-        btc_girado_abajo = (
-            (ofi_btc <= -0.15 and z_btc < 0.90)
-            or (ofi_btc <= -0.35 and z_btc < 1.35)
-        )
-        alt_en_caida_limpia = (ofi_alt <= -0.25) and (lyapunov_alt <= 0.0)
-        return bool(btc_girado_abajo and alt_en_caida_limpia)
+        if hurst_alt > 0.485:
+            return False
+        btc_estabilizado_short = (z_btc <= 0.08) and (ofi_btc <= 0.05)
+        alt_absorbiendo_techo = (ofi_alt <= -0.25) and (lyapunov_alt <= 0.00035)
+        return bool(btc_estabilizado_short and alt_absorbiendo_techo)
 
 
 def verificar_veto_macro_btc_completo(direccion: str, ahora: float) -> Tuple[bool, str]:

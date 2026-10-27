@@ -347,6 +347,21 @@ class EjecutorSniperBybit:
                     if filled_post > filled_final:
                         filled_final = filled_post
                         estado_orden = estado_post
+                    if filled_final <= 0.0 and hasattr(exchange, "fetch_positions") and not str(orden_id).startswith("oid-"):
+                        await asyncio.sleep(0.15)
+                        pos_list = await exchange.fetch_positions([symbol])
+                        for p_chk in (pos_list or []):
+                            if str(p_chk.get("symbol", "")) == symbol:
+                                c_chk = abs(float(p_chk.get("contracts") or p_chk.get("info", {}).get("size") or 0.0))
+                                if c_chk > 0.0:
+                                    filled_final = c_chk
+                                    px_chk = float(p_chk.get("entryPrice") or p_chk.get("info", {}).get("avgPrice") or precio_orden)
+                                    estado_orden = {"id": orden_id, "status": "closed", "filled": c_chk, "average": px_chk, "price": px_chk}
+                                    ram.log_operativo(
+                                        f"{etiqueta_log} [ORPHAN-SHIELD] Late fill captured via UTA position sync on {symbol}: "
+                                        f"{c_chk} contracts @ {px_chk} adopted into active slot."
+                                    )
+                                    break
                 except Exception:
                     pass
 
