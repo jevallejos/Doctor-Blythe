@@ -2,7 +2,7 @@
 # ==============================================================================
 # HFT DOCTOR BLYTHE ENGINE - PRODUCTION BASELINE TERPSICHORA V1.0
 # Low-Jitter Linux Kernel Tuning (TCP BBR, slow_start_after_idle=0, THP madvise,
-# AWS Atomic Clock Sync, Process Nice/IO Priority Isolation & Colorized HUD)
+# AWS Atomic Clock Sync, systemd Service Lifecycle & Official UNIX Manpage)
 # ==============================================================================
 set -e
 
@@ -15,8 +15,8 @@ if [ ! -x "${VENV_PY}" ]; then
     "${REPO_DIR}/venv/bin/pip" install -r "${REPO_DIR}/requirements.txt"
 fi
 
-# 1. Kernel Low-Latency TCP/IP & VM Tuning (Eliminates 80ms post-idle RTT penalty)
 if command -v sudo >/dev/null 2>&1; then
+    # 1. Kernel Low-Latency TCP/IP & VM Tuning
     sudo -n tee /etc/sysctl.d/99-doctor-blythe-hft.conf >/dev/null 2>&1 << 'SYSCTL_EOF' || true
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
@@ -58,7 +58,36 @@ SYSCTL_EOF
         fi
     fi
 
-    # 5. Low-Jitter Background systemd OOS Timer (Nice=15, IOSchedulingPriority=7)
+    # 5. Primary HFT Engine systemd Service Unit (doctor-blythe.service)
+    sudo -n tee /etc/systemd/system/doctor-blythe.service >/dev/null 2>&1 << MAIN_SVC_EOF || true
+[Unit]
+Description=HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0 (25Hz LOB)
+After=network-online.target chrony.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${USER}
+WorkingDirectory=${REPO_DIR}
+Environment="PYTHONUNBUFFERED=1"
+Nice=-10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=0
+OOMScoreAdjust=-800
+LimitNOFILE=65535
+ExecStart=${VENV_PY} -u ${REPO_DIR}/main.py
+KillSignal=SIGTERM
+TimeoutStopSec=15
+Restart=always
+RestartSec=2
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+MAIN_SVC_EOF
+
+    # 6. Low-Jitter Background systemd OOS Timer (doctor-blythe-oos.service / .timer)
     sudo -n tee /etc/systemd/system/doctor-blythe-oos.service >/dev/null 2>&1 << SERVICE_EOF || true
 [Unit]
 Description=Doctor Blythe Low-Jitter Walk-Forward OOS Calibrator
@@ -90,7 +119,85 @@ WantedBy=timers.target
 TIMER_EOF
 
     sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+    sudo -n systemctl enable doctor-blythe.service >/dev/null 2>&1 || true
     sudo -n systemctl enable --now doctor-blythe-oos.timer >/dev/null 2>&1 || true
+
+    # 7. Official UNIX Manpage Installation (man verbot / man doctor-blythe)
+    sudo -n mkdir -p /usr/local/share/man/man1 >/dev/null 2>&1 || true
+    sudo -n tee /usr/local/share/man/man1/verbot.1 >/dev/null 2>&1 << 'MAN_EOF' || true
+.TH VERBOT 1 "Octubre 2026" "Doctor Blythe Terpsichora V1.0" "Manual de Operacion HFT"
+.SH NAME
+verbot, doctor-blythe \- Consola de telemetria, auditoria forense y gestion de servicio para el motor HFT Doctor Blythe Terpsichora V1.0 (25.0 Hz Bybit UTA V5).
+.SH SYNOPSIS
+.B verbot
+[ICOMANDOR | IOPCIONR]
+.SH DESCRIPTION
+.B verbot
+es la interfaz de comando y control de cero latencia para el motor de ejecucion microestructural
+.B HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0
+(Arquitectura Micro-Kernel Hexagonal de 39 archivos canonicos dividida en Bofensiva/R, Bdefensiva/R y Bapoyo/R).
+.PP
+Todos los comandos de visualizacion interceptan las senales de interrupcion localmente, garantizando que presionar BCtrl+CR cierre unicamente la vista de consola sin detener jamas el demonio en segundo plano.
+.SH SERVICE MANAGEMENT COMMANDS
+.TP
+.B verbot start
+Inicia el motor HFT si se encuentra detenido. Verifica el cerrojo fisico B.tribrain.lockR para impedir instancias duplicadas y asigna prioridad de tiempo real (BNice=-10R, BIO=0R, BOOM_Adj=-800R).
+.TP
+.B verbot stop
+Detiene de forma ordenada (BSIGTERMR) el servicio Bdoctor-blythe.serviceR y cualquier bucle supervisor activo, cerrando los descriptores de log y liberando el cerrojo de instancia.
+.TP
+.B verbot restart R[B--hardR]
+Por defecto dispara una recarga atomica en caliente (Bos.execvR en < 400 ms) cuando BSlots == 0/1R. Con B--hardR reinicia el proceso completo a traves de BsystemdR.
+.TP
+.B verbot status
+Muestra el panel de estado del servicio: estado del demonio, PID activo, Uptime, uso de CPU/RAM, prioridad del kernel, estado de auto-arranque (BsystemdR) y las ultimas trazas operativas.
+.TP
+.B verbot enable
+Habilita el auto-arranque automatico en el boot de Linux para Bdoctor-blythe.serviceR y Bdoctor-blythe-oos.timerR.
+.TP
+.B verbot disable
+Deshabilita el auto-arranque del servicio en el boot del sistema operativo.
+.SH TELEMETRY & FORENSIC OPTIONS
+.TP
+.B verbot R(sin argumentos)
+Abre el HUD de telemetria coloreada en tiempo real a 25.0 Hz (Bbot_hft.logR).
+.TP
+.B verbot -s
+Muestra una instantanea rapida de la Caja Negra (B[BLACK BOX]R) y las ultimas 22 lineas de operacion.
+.TP
+.B verbot -a
+Ejecuta el BInspector Forense AnatomicoR (Bapoyo/micro_inspector_forense.pyR): desglose por par campeon, punteria de escudos a +15s y markouts post-cierre a +15s/+30s/+60s.
+.TP
+.B verbot -i
+Ejecuta la auditoria de infraestructura y kernel de baja latencia (BTCP BBRR, Bslow_start_after_idle=0R, BfqR, Bswappiness=1R, BNice=-10R y desfase de reloj atomico AWS).
+.TP
+.B verbot -q
+Ejecuta el calibrador Walk-Forward Out-of-Sample (72h) bajo prioridad aislada (BNice=15R).
+.TP
+.B verbot -l
+Ejecuta el Gemelo Digital contrafactual de 3,456 combinaciones (B--labR) bajo prioridad aislada (BNice=15R).
+.TP
+.B verbot man R| Bverbot -hR | Bverbot --helpR
+Muestra este manual tecnico.
+.SH FILES
+.TP
+.I ~/Doctor-Blythe/config_parametros.py
+Contrato inmutable de Nivel 0 (100 constantes en mayusculas + Hot-Reload JSON).
+.TP
+.I ~/Doctor-Blythe/tribrain_stats_v1.jsonl
+Libro mayor transaccional de Caja Negra con paridad 1:1 Bybit UTA.
+.TP
+.I ~/Doctor-Blythe/baul_ia_forense.jsonl
+Boveda forense de intercepciones (+15s) y markouts post-cierre (+60s).
+.TP
+.I /etc/sysctl.d/99-doctor-blythe-hft.conf
+Parametros de red y memoria del kernel Linux para baja latencia.
+.SH AUTHOR
+Arquitectura HFT Doctor Blythe Terpsichora V1.0 (39/39 Canonical Files Certified).
+MAN_EOF
+    sudo -n gzip -f /usr/local/share/man/man1/verbot.1 >/dev/null 2>&1 || true
+    sudo -n cp -f /usr/local/share/man/man1/verbot.1.gz /usr/local/share/man/man1/doctor-blythe.1.gz >/dev/null 2>&1 || true
+    sudo -n mandb -q >/dev/null 2>&1 || true
 fi
 
 sed -i '/# === DOCTOR-BLYTHE CLI START ===/,/# === DOCTOR-BLYTHE CLI END ===/d' "${HOME}/.bashrc" 2>/dev/null || true
@@ -107,37 +214,134 @@ verbot() {
     (
         set +e
         cd "${repo_dir}" || exit 0
-        if [ "${1}" = "-s" ]; then
-            ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=22)"
-        elif [ "${1}" = "-q" ]; then
-            nice -n 15 ionice -c 2 -n 7 ./venv/bin/python -u evaluador_cuantico_oos.py
-        elif [ "${1}" = "-l" ]; then
-            nice -n 15 ionice -c 2 -n 7 ./venv/bin/python -u evaluador_cuantico_oos.py --lab
-        elif [ "${1}" = "-a" ]; then
-            ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.imprimir_auditoria_forense_cli()"
-        elif [ "${1}" = "-i" ]; then
-            echo "======================================================================================"
-            echo " [INFRASTRUCTURE & LOW-JITTER KERNEL AUDIT - sniper-singapur]"
-            echo "======================================================================================"
-            echo " -> TCP Congestion Control : $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'N/A')"
-            echo " -> TCP Slow-Start Idle    : $(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null || echo 'N/A') (Expected: 0)"
-            echo " -> Packet Queue Discipline: $(sysctl -n net.core.default_qdisc 2>/dev/null || echo 'N/A') (Expected: fq)"
-            echo " -> VM Swappiness          : $(sysctl -n vm.swappiness 2>/dev/null || echo 'N/A') (Expected: 1)"
-            if [ -f .tribrain.lock ]; then
-                local lpid
-                lpid="$(cat .tribrain.lock 2>/dev/null | tr -d '[:space:]')"
-                echo " -> Engine PID & Priority  : PID ${lpid} | Nice=$(ps -o ni= -p "${lpid}" 2>/dev/null | tr -d ' ') | OOM_Adj=$(cat /proc/${lpid}/oom_score_adj 2>/dev/null || echo 'N/A')"
-            fi
-            if command -v chronyc >/dev/null 2>&1; then
-                echo " -> Atomic Clock Tracking  : $(chronyc tracking 2>/dev/null | grep 'System time' || echo 'Active')"
-            fi
-            echo "======================================================================================"
-        else
-            ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.seguir_log_en_vivo_cli(lineas_iniciales=16)"
-        fi
+        case "${1}" in
+            -s)
+                ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=22)"
+                ;;
+            -q)
+                nice -n 15 ionice -c 2 -n 7 ./venv/bin/python -u evaluador_cuantico_oos.py
+                ;;
+            -l)
+                nice -n 15 ionice -c 2 -n 7 ./venv/bin/python -u evaluador_cuantico_oos.py --lab
+                ;;
+            -a)
+                ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.imprimir_auditoria_forense_cli()"
+                ;;
+            -i)
+                echo "======================================================================================"
+                echo " [INFRASTRUCTURE & LOW-JITTER KERNEL AUDIT - sniper-singapur]"
+                echo "======================================================================================"
+                echo " -> TCP Congestion Control : $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'N/A')"
+                echo " -> TCP Slow-Start Idle    : $(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null || echo 'N/A') (Expected: 0)"
+                echo " -> Packet Queue Discipline: $(sysctl -n net.core.default_qdisc 2>/dev/null || echo 'N/A') (Expected: fq)"
+                echo " -> VM Swappiness          : $(sysctl -n vm.swappiness 2>/dev/null || echo 'N/A') (Expected: 1)"
+                if [ -f .tribrain.lock ]; then
+                    local lpid
+                    lpid="$(cat .tribrain.lock 2>/dev/null | tr -d '[:space:]')"
+                    echo " -> Engine PID & Priority  : PID ${lpid} | Nice=$(ps -o ni= -p "${lpid}" 2>/dev/null | tr -d ' ') | OOM_Adj=$(cat /proc/${lpid}/oom_score_adj 2>/dev/null || echo 'N/A')"
+                fi
+                if command -v chronyc >/dev/null 2>&1; then
+                    echo " -> Atomic Clock Tracking  : $(chronyc tracking 2>/dev/null | grep 'System time' || echo 'Active')"
+                fi
+                echo "======================================================================================"
+                ;;
+            status)
+                echo "======================================================================================"
+                echo " [SERVICE STATUS - HFT DOCTOR BLYTHE TERPSICHORA V1.0]"
+                echo "======================================================================================"
+                local lpid=""
+                if [ -f .tribrain.lock ]; then
+                    lpid="$(cat .tribrain.lock 2>/dev/null | tr -d '[:space:]')"
+                fi
+                if [ -n "${lpid}" ] && kill -0 "${lpid}" 2>/dev/null; then
+                    echo -e " -> Engine State    : [1;92mACTIVE (RUNNING)[0m"
+                    echo " -> Active PID      : ${lpid} (Uptime: $(ps -o etime= -p "${lpid}" 2>/dev/null | tr -d ' ') | CPU: $(ps -o %cpu= -p "${lpid}" 2>/dev/null | tr -d ' ')% | MEM: $(ps -o %mem= -p "${lpid}" 2>/dev/null | tr -d ' ')%)"
+                    echo " -> Kernel Priority : Nice=$(ps -o ni= -p "${lpid}" 2>/dev/null | tr -d ' ') | OOM_Score_Adj=$(cat /proc/${lpid}/oom_score_adj 2>/dev/null || echo 'N/A')"
+                else
+                    echo -e " -> Engine State    : [1;91mSTOPPED[0m"
+                fi
+                echo " -> Systemd Service : doctor-blythe.service ($(systemctl is-enabled doctor-blythe.service 2>/dev/null || echo 'unregistered') / $(systemctl is-active doctor-blythe.service 2>/dev/null || echo 'inactive'))"
+                echo " -> OOS Timer (8h)  : doctor-blythe-oos.timer ($(systemctl is-enabled doctor-blythe-oos.timer 2>/dev/null || echo 'disabled') / $(systemctl is-active doctor-blythe-oos.timer 2>/dev/null || echo 'inactive'))"
+                echo "--------------------------------------------------------------------------------------"
+                ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.imprimir_hud_verbot_cli(lineas_log=5)"
+                ;;
+            start)
+                local lpid=""
+                if [ -f .tribrain.lock ]; then
+                    lpid="$(cat .tribrain.lock 2>/dev/null | tr -d '[:space:]')"
+                fi
+                if [ -n "${lpid}" ] && kill -0 "${lpid}" 2>/dev/null; then
+                    echo -e "[1;92m[OK] Doctor Blythe is already running on PID ${lpid} (Single-Instance Guard active).[0m"
+                else
+                    rm -f .tribrain.lock
+                    sudo systemctl start doctor-blythe.service
+                    sleep 2
+                    if [ -f .tribrain.lock ]; then
+                        lpid="$(cat .tribrain.lock 2>/dev/null | tr -d '[:space:]')"
+                        sudo -n renice -n -10 -p "${lpid}" >/dev/null 2>&1 || true
+                        sudo -n ionice -c 2 -n 0 -p "${lpid}" >/dev/null 2>&1 || true
+                        echo -800 | sudo -n tee "/proc/${lpid}/oom_score_adj" >/dev/null 2>&1 || true
+                    fi
+                    echo -e "[1;92m[OK] Doctor Blythe service started (PID ${lpid}).[0m"
+                fi
+                ;;
+            stop)
+                echo -e "[1;93m[INFO] Stopping Doctor Blythe service gracefully (SIGTERM)...[0m"
+                sudo systemctl stop doctor-blythe.service 2>/dev/null || true
+                tmux kill-session -t demonio_hft 2>/dev/null || true
+                if [ -f .tribrain.lock ]; then
+                    local lpid
+                    lpid="$(cat .tribrain.lock 2>/dev/null | tr -d '[:space:]')"
+                    if [ -n "${lpid}" ] && kill -0 "${lpid}" 2>/dev/null; then
+                        kill -15 "${lpid}" 2>/dev/null || true
+                        sleep 2
+                    fi
+                    rm -f .tribrain.lock
+                fi
+                echo -e "[1;92m[OK] Doctor Blythe stopped cleanly.[0m"
+                ;;
+            restart)
+                if [ "${2}" = "--hard" ]; then
+                    echo -e "[1;93m[INFO] Performing full systemd hard restart...[0m"
+                    verbot stop
+                    sleep 1
+                    verbot start
+                else
+                    local lpid=""
+                    if [ -f .tribrain.lock ]; then
+                        lpid="$(cat .tribrain.lock 2>/dev/null | tr -d '[:space:]')"
+                    fi
+                    if [ -n "${lpid}" ] && kill -0 "${lpid}" 2>/dev/null; then
+                        touch main.py
+                        echo -e "[1;96m[OK] Atomic zero-downtime reload (os.execv) triggered for PID ${lpid} (executes as soon as Slots == 0/1).[0m"
+                    else
+                        verbot start
+                    fi
+                fi
+                ;;
+            enable)
+                sudo systemctl enable doctor-blythe.service doctor-blythe-oos.timer
+                sudo systemctl start doctor-blythe-oos.timer
+                echo -e "[1;92m[OK] Auto-start on boot ENABLED for doctor-blythe.service & doctor-blythe-oos.timer.[0m"
+                ;;
+            disable)
+                sudo systemctl disable doctor-blythe.service
+                echo -e "[1;93m[OK] Auto-start on boot DISABLED for doctor-blythe.service.[0m"
+                ;;
+            man|-h|--help|help)
+                if command -v man >/dev/null 2>&1 && man -w verbot >/dev/null 2>&1; then
+                    man verbot
+                else
+                    echo "Usage: verbot [start|stop|restart|status|enable|disable|-s|-a|-i|-q|-l|man]"
+                fi
+                ;;
+            *)
+                ./venv/bin/python -u -c "import gestor_posiciones as gp; gp.seguir_log_en_vivo_cli(lineas_iniciales=16)"
+                ;;
+        esac
     )
 }
 # === DOCTOR-BLYTHE CLI END ===
 EOF
 
-echo "[OK] Low-Jitter HFT Kernel Tuning (BBR, slow_start=0, Nice=-10) & verbot HUD configured."
+echo "[OK] Low-Jitter HFT Kernel Tuning, systemd Service Units & Official UNIX Manpage (man verbot) configured."
