@@ -1,48 +1,79 @@
 # HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0
 
-Autonomous 25.0 Hz Limit Order Book (LOB) Microstructural Execution System for Bybit Unified Trading Account (UTA V5).
+* **Repositorio**: https://github.com/jevallejos/Doctor-Blythe.git
+* **Arquitectura**: Micro-Kernel Hexagonal (45/45 Archivos Canonicos Certificados)
+* **Exchange Objetivo**: Bybit Unified Trading Account (UTA V5) - Futuros Perpetuos USDT (25.0 Hz L2)
+* **Entorno Productivo**: Python 3.11+ (`uvloop`, `ccxt.pro`) sobre Ubuntu Linux (`TCP BBR`, `fq`, `Nice=-10`, `OOM_Adj=-800`)
 
-## Hexagonal Micro-Kernel Architecture (45 Canonical Files)
+---
 
-### Root Orchestrators (10 Pure I/O, State & Lifecycle Coordinators)
-- **Level 0 (`config_parametros.py`)**: 100 immutable uppercase constants (`AST_100_CONSTANTES_OK`) & sub-ms OOS JSON hot-reload.
-- **Level 1 (`core_estado_ram.py`)**: O(1) in-memory state machine, persistent line-buffered log I/O, +15s shield vault, and +60s post-exit markout queue.
-- **Level 2 (`telemetria_telegram.py`)**: 1:1 transactional Telegram notifications, 12s canonical deduplication, and 4h executive digest.
-- **Level 3 (`stats_tracker.py`)**: Transactional Black Box ledger (`tribrain_stats_v1.jsonl`) and 1:1 UTA parity orchestrator.
-- **Level 4 (`escudo_tricortex.py`)**: Asynchronous Groq LPU ensemble orchestrator with scratch-excluded Win-Rate sizing.
-- **Level 5 (`radar_volatilidad.py`)**: 25.0 Hz L2 microstructural radar orchestrator and `SCAR-LOCK-00..18` ledger.
-- **Level 6A (`ejecutor_sniper.py`)**: Passive `PostOnly` execution lifecycle and post-abort late-fill guard.
-- **Level 6B (`gestor_posiciones.py`)**: Active position lifecycle governor and startup orphan reconciler.
-- **Level 7 (`main.py`)**: Central 25.0 Hz WebSocket orchestrator, physical PID lock, and atomic `os.execv` auto-respawn across all 35 runtime modules.
-- **Level 8 (`evaluador_cuantico_oos.py`)**: Walk-Forward OOS calibration orchestrator.
+## 1. Dualidad Arquitectonica: Doctor Blythe (Defensa) + Terpsichora V1.0 (Ofensiva)
 
-### 1. `ofensiva/` (11 Alpha Capture, Quoting, Sizing & Winner-Maximization Micro-Modules)
-- `ofensiva/micro_motor_maker.py`: Moallemi L1 support-aware queue survival and directional re-peg cadence.
-- `ofensiva/micro_motor_wald_exit.py`: Tick-quantized Zero-Loss floor (`SCAR-LOCK-14`), class-elastic early BE breathing room, and `MAKER_UNWIND` rally inhibitor.
-- `ofensiva/micro_sizing_kelly.py`: Full-power UTA free-margin recovery when `Slots == 0/1`.
-- `ofensiva/micro_cotizador_stoikov.py`: Stoikov micro-price pre-lead quoting (`Penny-Jump`), tick/lot quantization, and dynamic volatility TP.
-- `ofensiva/micro_cresta_convexo_sprt.py`: Hyperbolic retention factor `kappa(MFE_t)` and Abraham Wald SPRT log-likelihood crest detector.
-- `ofensiva/micro_conviccion_kelly.py`: Anti-fragile Kelly conviction bonuses, House-Money compounder, and outlier convex expansion (`|Z| >= 6.0`).
-- `ofensiva/micro_enganche_fase.py`: 4.50s Puppeteer Phase-Latched Envelope for `LONG` V-bottoms and `SHORT-SNIPER` top-rollovers.
-- `ofensiva/micro_impulso_runner.py`: Extreme climax Hurst override (hard-capped at `H <= 0.515`), winning-seed scratch protector (`MFE >= +0.045%`), and stalled-scratch escalation guard.
-- `ofensiva/micro_escudo_diamante_fase2.py`: Phase 2 `[DIAMOND]` Maker Shield `PostOnly` activator and active Maker chase re-peg cadence.
-- `ofensiva/micro_retenedor_fill_parcial.py`: Partial-fill queue retention extender (`+0.85s` on strong favorable OFI) and minimum lot fill validator.
-- `ofensiva/micro_desarme_unwind_pasivo.py`: MFE stall harvest trigger (`16s+`) and `42.0s` passive `[MAKER_UNWIND]` governor.
+* **Doctor Blythe (Cirujano Reconstructor - Defensa Inmutable)**:
+  Garantiza la supervivencia de la cuenta mediante el contrato estatico de 100 constantes (`AST_100_CONSTANTES_OK`), 18 escudos microestructurales no-regresivos (`SCAR-LOCK-00` a `SCAR-LOCK-18`), estado en RAM O(1) (`< 1.0 us`), paridad contable 1:1 con Bybit UTA y auditoria contrafactual a `+15.0s / +60.0s`.
 
-### 2. `defensiva/` (7 Kinematic Shields, Macro BTC Veto, Contagion, Scratch & Escape Micro-Modules)
-- `defensiva/micro_escudos_fisicos.py`: Lyapunov braking kinematics, directional Hurst caps, OFI/Hawkes absorption, and `RF-06` sign coherence.
-- `defensiva/micro_veto_macro_btc.py`: Macro BTC circuit breaker (`Z <= -4.0`), 12s lead-lag cooldown, and synchronized reversal unlock.
-- `defensiva/micro_cortafuegos_contagio.py`: Structural Anti-LUNA filter, quantitative directional matrix, and post-loss quarantine timer.
-- `defensiva/micro_evacuador_scratch.py`: Pre-validated Bybit V5 `MarkPrice` SL geometry (`SEI-02`) and 18.0s passive `Maker-Scratch` (`RF-18`).
-- `defensiva/micro_escape_reconciliador.py`: `72.0s` passive pre-escape, `90.0s` `[ESCAPE_TEMPORAL]` hard stop, and startup `[ESCAPE_HUERFANA_BOOT]` classifier.
-- `defensiva/micro_candado_climax_hurst.py`: Hard physical Hurst ceiling (`H <= 0.515`) for `SHORT-SNIPER` climax overrides and `15.0s` post-Hurst cooldown.
-- `defensiva/micro_decaimiento_chronos_sl.py`: Stochastic `CHRONOS` time-decay internal Stop-Loss compression after `42.0s`.
+* **Terpsichora V1.0 (Titiritera Ofensiva - Cosecha Maker)**:
+  1. **Enganche de Fase (Phase-Latch 1800ms - 4500ms)**: Detecta dislocaciones extremas respecto a la `EMA900` y espera la confirmacion cinematica de frenado (Lyapunov + Hurst <= 0.485 + absorcion OFI/Hawkes) antes de disparar en `LONG` o `SHORT-SNIPER`.
+  2. **Escudo Macro BTC (12.0s) con Liberacion Sincronizada**: Bloquea entradas durante sacudidas de Bitcoin y libera tempranamente el enfriamiento tras `3.5s` si BTC y la altcoin confirman un giro en V sincronizado.
+  3. **Ejecucion 100% Maker (`PostOnly`) y Supervivencia en Cola**: Cotizacion Avellaneda-Stoikov, aborto prematuro de colas toxicas (`Early Queue Abort` a `0.80s`), captura anti-huerfanas de llenados en transito y filtro de lote minimo (`>= 15%`).
+  4. **Gobernador de Salida Abraham Wald SPRT y Piso Cero-Perdida**: Evalua la continuacion del impulso, protege ganancias con el `Early Break-Even Ratchet`, ejecuta cosechas pasivas `DIAMOND Phase 2` y evacua posiciones estancadas a los `18.0s` (`MAKER_SCRATCH_18S`).
 
-### 3. `apoyo/` (7 L2 Math, UTA Parity, ANSI HUD, Hygiene, Anatomy & Auto-Sensitivity Micro-Modules)
-- `apoyo/micro_cinematica_l2.py`: Jump-robust Bipower Variation `VentanaZ`, 5-level deep OFI, Hurst, Lyapunov, and 24h seasonality curve.
-- `apoyo/micro_paridad_lvr_uta.py`: Continuous-time LOB LVR toxicity estimator and ASCII Black Box formatter.
-- `apoyo/micro_hud_ansi_telegram.py`: Zero-disk-contamination ANSI live colorizer for `verbot`.
-- `apoyo/micro_gemelo_digital_oos.py`: 72h Walk-Forward Bayesian metrics and 3,456-combination counterfactual Digital Twin (`--lab`).
-- `apoyo/micro_higiene_disco.py`: 4-cycle slot-gated RAM/UTA/Log self-cleaning governor and `.gz` log rotation when `Slots == 0/1`.
-- `apoyo/micro_inspector_forense.py`: Anatomical CLI inspector (`verbot -a`) for per-pair efficiency, +15s shield accuracy, and +60s post-exit markouts.
-- `apoyo/micro_sensibilidad_autonoma.py`: Closed-loop real-time sensitivity governor driven by queue abort rates and +60s markouts.
+---
+
+## 2. Estructura del Repositorio (45/45 Archivos Certificados en Gate 0)
+
+### A. Orquestadores en Raiz (10 Modulos)
+* `main.py`: Cerrojo de instancia unica (`.tribrain.lock`), reconciliador de arranque, auto-recarga atomica (`os.execv`) y bucle central.
+* `config_parametros.py`: Catalogo maestro de 100 constantes (`AST_100_CONSTANTES_OK`) y recarga en caliente OOS (`< 0.5 ms`).
+* `core_estado_ram.py`: Estado O(1) en RAM, cerrojos pre-fill y cola forense de `+15s`.
+* `radar_volatilidad.py`: Orquestador WebSocket L2 a `25.0 Hz`, silenciador de slot activo y enrutador de senales.
+* `ejecutor_sniper.py`: Orquestador de ordenes `PostOnly`, monitoreo de cola L1 y captura post-cancelacion.
+* `gestor_posiciones.py`: Orquestador de posiciones abiertas (Wald SPRT, Break-Even Ratchet, Diamond Phase 2 y Scratch 18s).
+* `escudo_tricortex.py`: Orquestador asincrono Groq LPU, matriz direccional y dimensionamiento Kelly.
+* `stats_tracker.py`: Caja Negra (`tribrain_stats_v1.jsonl`) con paridad 1:1 Bybit UTA y LVR continuo.
+* `telemetria_telegram.py`: Notificaciones transaccionales 1:1 en Telegram sin duplicados.
+* `evaluador_cuantico_oos.py`: Calibrador Bayesiano Walk-Forward (72h) y Gemelo Digital (3,456 combinaciones).
+
+### B. Paquete `ofensiva/` (11 Micro-Modulos + `__init__.py`)
+* `micro_motor_maker.py`, `micro_motor_wald_exit.py`, `micro_sizing_kelly.py`, `micro_cotizador_stoikov.py`, `micro_cresta_convexo_sprt.py`, `micro_conviccion_kelly.py`, `micro_enganche_fase.py`, `micro_impulso_runner.py`, `micro_escudo_diamante_fase2.py`, `micro_retenedor_fill_parcial.py`, `micro_desarme_unwind_pasivo.py`.
+
+### C. Paquete `defensiva/` (7 Micro-Modulos + `__init__.py`)
+* `micro_escudos_fisicos.py`, `micro_veto_macro_btc.py`, `micro_cortafuegos_contagio.py`, `micro_evacuador_scratch.py`, `micro_escape_reconciliador.py`, `micro_candado_climax_hurst.py`, `micro_decaimiento_chronos_sl.py`.
+
+### D. Paquete `apoyo/` (7 Micro-Modulos + `__init__.py`)
+* `micro_cinematica_l2.py`, `micro_paridad_lvr_uta.py`, `micro_hud_ansi_telegram.py`, `micro_gemelo_digital_oos.py`, `micro_higiene_disco.py`, `micro_inspector_forense.py`, `micro_sensibilidad_autonoma.py`.
+
+### E. Infraestructura, Pruebas y Configuracion (7 Archivos)
+* `tools/validate_pool.py`, `test_tribrain_v1_suite.py`, `instalar_infraestructura.sh`, `calibracion_oos.json`, `requirements.txt`, `.gitignore`, `README.md`.
+
+---
+
+## 3. Comandos de Operacion y Control de Servicio (`verbot`)
+
+Presionar `Ctrl+C` dentro de cualquier vista de `verbot` cierra unicamente la pantalla actual sin detener jamas el demonio HFT.
+
+### Gestion del Servicio (`systemd`)
+* `verbot status`          : Estado del servicio, PID activo, Uptime, CPU/RAM, prioridad `Nice=-10` y ultimas trazas.
+* `verbot start`           : Inicia el motor verificando el cerrojo fisico `.tribrain.lock`.
+* `verbot stop`            : Detiene limpiamente (`SIGTERM`) el servicio y libera `.tribrain.lock`.
+* `verbot restart`         : Recarga atomica en caliente (`os.execv < 400 ms`) cuando `Slots == 0/1`.
+* `verbot restart --hard`  : Reinicio completo del servicio mediante `systemd`.
+* `verbot enable` / `disable`: Habilita o deshabilita el arranque automatico al iniciar el servidor Linux.
+
+### Telemetria, Auditoria Forense e Inspeccion
+* `verbot`                 : Consola en vivo a `25.0 Hz` con marcador `[BLACK BOX]` y flujo ANSI coloreado.
+* `verbot -s`              : Resumen instantaneo (snapshot) de la Caja Negra y estado actual.
+* `verbot -a`              : Inspector Forense Anatomico (PnL por par, Fill Rate, escudos `+15s` y markouts `+60s`).
+* `verbot -i`              : Auditoria de baja latencia del kernel Linux (`bbr`, `fq`, `swappiness=1`, reloj NTP).
+* `verbot -q`              : Reporte del calibrador cuantico OOS y parametros activos en `calibracion_oos.json`.
+* `verbot -l`              : Simulacion del Gemelo Digital sobre 3,456 combinaciones.
+* `verbot -h [filtro]`     : Historial filtrado (`trades`, `radar`, `ia`, `error`).
+* `man verbot`             : Abre el manual tecnico oficial de UNIX (`VERBOT(1)`).
+
+---
+
+## 4. Verificacion Rapida (Gate 0 + Suite 18/18)
+
+    python tools/validate_pool.py --sanitize
+    python tools/validate_pool.py
+    python test_tribrain_v1_suite.py
