@@ -16,6 +16,7 @@ from ofensiva import micro_enganche_fase as mep
 from ofensiva import micro_impulso_runner as mir
 from defensiva import micro_escudos_fisicos as mef
 from defensiva import micro_veto_macro_btc as mvb
+from defensiva import micro_candado_climax_hurst as mcch
 from apoyo import micro_cinematica_l2 as mcl
 import core_estado_ram as ram
 import escudo_tricortex as tri

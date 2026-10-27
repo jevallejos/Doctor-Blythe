@@ -15,6 +15,7 @@ import config_parametros as cfg
 from ofensiva import micro_cotizador_stoikov as mcs
 from ofensiva import micro_motor_maker as mmm
 from ofensiva import micro_sizing_kelly as msk
+from ofensiva import micro_retenedor_fill_parcial as mrfp
 from defensiva import micro_evacuador_scratch as mes
 import core_estado_ram as ram
 import escudo_tricortex as tri

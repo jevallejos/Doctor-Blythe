@@ -2,7 +2,7 @@
 """
 Gate 0 Static Auditor for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
 Verifies pure UTF-8 (no BOM), Unix LF line endings, AST compilation, and the
-exact 100-uppercase-constant contract (AST_100_CONSTANTES_OK) across all 39 canonical files.
+exact 100-uppercase-constant contract (AST_100_CONSTANTES_OK) across all 45 canonical files.
 """
 from __future__ import annotations
 
@@ -35,11 +35,17 @@ ARCHIVOS_CANONICOS: Tuple[Tuple[str, str], ...] = (
     ("ofensiva/micro_conviccion_kelly.py", "PY"),
     ("ofensiva/micro_enganche_fase.py", "PY"),
     ("ofensiva/micro_impulso_runner.py", "PY"),
+    ("ofensiva/micro_escudo_diamante_fase2.py", "PY"),
+    ("ofensiva/micro_retenedor_fill_parcial.py", "PY"),
+    ("ofensiva/micro_desarme_unwind_pasivo.py", "PY"),
     ("defensiva/__init__.py", "PY"),
     ("defensiva/micro_escudos_fisicos.py", "PY"),
     ("defensiva/micro_veto_macro_btc.py", "PY"),
     ("defensiva/micro_cortafuegos_contagio.py", "PY"),
     ("defensiva/micro_evacuador_scratch.py", "PY"),
+    ("defensiva/micro_escape_reconciliador.py", "PY"),
+    ("defensiva/micro_candado_climax_hurst.py", "PY"),
+    ("defensiva/micro_decaimiento_chronos_sl.py", "PY"),
     ("apoyo/__init__.py", "PY"),
     ("apoyo/micro_cinematica_l2.py", "PY"),
     ("apoyo/micro_paridad_lvr_uta.py", "PY"),
@@ -127,7 +133,7 @@ def main() -> int:
             errores += 1
     print("=" * 90)
     if errores == 0:
-        print(" FINAL RESULT: 0 ERRORS DETECTED | DOCTOR-BLYTHE TERPSICHORA V1.0 (39/39) CERTIFIED")
+        print(" FINAL RESULT: 0 ERRORS DETECTED | DOCTOR-BLYTHE TERPSICHORA V1.0 (45/45) CERTIFIED")
         print("=" * 90)
         return 0
     print(f" FINAL RESULT: {errores} FILE(S) WITH VALIDATION ERRORS")

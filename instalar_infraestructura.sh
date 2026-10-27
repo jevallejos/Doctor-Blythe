@@ -135,7 +135,7 @@ verbot, doctor-blythe \- Consola de telemetria, auditoria forense y gestion de s
 .B verbot
 es la interfaz de comando y control de cero latencia para el motor de ejecucion microestructural
 .B HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0
-(Arquitectura Micro-Kernel Hexagonal de 39 archivos canonicos dividida en \fBofensiva/\fR, \fBdefensiva/\fR y \fBapoyo/\fR).
+(Arquitectura Micro-Kernel Hexagonal de 45 archivos canonicos dividida en \fBofensiva/\fR, \fBdefensiva/\fR y \fBapoyo/\fR).
 .PP
 Todos los comandos de visualizacion interceptan las senales de interrupcion localmente, garantizando que presionar \fBCtrl+C\fR cierre unicamente la vista de consola sin detener jamas el demonio en segundo plano.
 .SH SERVICE MANAGEMENT COMMANDS

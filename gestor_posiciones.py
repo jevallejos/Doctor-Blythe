@@ -16,6 +16,10 @@ from ofensiva import micro_cresta_convexo_sprt as mcw
 from ofensiva import micro_impulso_runner as mir
 from ofensiva import micro_motor_wald_exit as mmw
 from defensiva import micro_evacuador_scratch as mes
+from defensiva import micro_escape_reconciliador as mer
+from defensiva import micro_decaimiento_chronos_sl as mdcs
+from ofensiva import micro_escudo_diamante_fase2 as medf
+from ofensiva import micro_desarme_unwind_pasivo as mdup
 from apoyo import micro_hud_ansi_telegram as mht
 from apoyo import micro_inspector_forense as mif
 import core_estado_ram as ram

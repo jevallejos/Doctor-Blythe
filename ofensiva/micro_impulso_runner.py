@@ -8,35 +8,22 @@ import core_estado_ram as ram
 
 
 def evaluar_override_climax_hurst(
-    direccion: str,
     z_score: float,
-    ofi_inst: float,
-    hawkes: float,
-    acel_lyap: float,
     hurst_actual: float,
+    ofi_actual: float,
+    aceleracion_lyapunov: float,
+    hurst_cap_base: float = 0.485,
 ) -> bool:
     """
-    Cuando un activo sufre un pump o dump vertical (ej. WAL SHORT @ 04:03:39 UTC con
-    Z=+5.40, OFI=-0.96, Hawkes=-0.78, a_Lyap=-0.2602%), el exponente de Hurst de 28 ticks
-    queda temporalmente alto por el movimiento previo aunque el libro ya se haya girado
-    violentamente. Autoriza el disparo si hay climax extremo confirmado en las 4 variables.
+    Permite relajar ligeramente hurst_cap_base (0.485) SOLO hasta un techo duro
+    de 0.515 cuando existe agotamiento de climax extremo, bloqueando siempre
+    cualquier entrada contra tendencia persistente (H > 0.515, Caso WAL Trade #8).
     """
-    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
-    if float(ctrl.get("sens_climax_hurst_override", 1.0)) <= 0.0 or hurst_actual > 0.82:
+    if hurst_actual <= hurst_cap_base:
+        return True
+    if hurst_actual > 0.515:
         return False
-    if direccion == "SHORT":
-        return bool(
-            z_score >= 4.20
-            and ofi_inst <= -0.80
-            and hawkes <= -0.65
-            and acel_lyap <= -0.0012
-        )
-    return bool(
-        z_score <= -4.00
-        and ofi_inst >= 0.80
-        and hawkes >= 0.65
-        and acel_lyap >= 0.00015
-    )
+    return bool(z_score >= 5.20 and ofi_actual <= -0.80 and aceleracion_lyapunov <= -0.00050)
 
 
 def proteger_semilla_ganadora_de_scratch(

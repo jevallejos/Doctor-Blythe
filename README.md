@@ -2,7 +2,7 @@
 
 Autonomous 25.0 Hz Limit Order Book (LOB) Microstructural Execution System for Bybit Unified Trading Account (UTA V5).
 
-## Hexagonal Micro-Kernel Architecture (39 Canonical Files)
+## Hexagonal Micro-Kernel Architecture (45 Canonical Files)
 
 ### Root Orchestrators (10 Pure I/O, State & Lifecycle Coordinators)
 - **Level 0 (`config_parametros.py`)**: 100 immutable uppercase constants (`AST_100_CONSTANTES_OK`) & sub-ms OOS JSON hot-reload.

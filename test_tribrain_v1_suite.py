@@ -100,7 +100,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
     print(f" STARTING CERTIFICATION SUITE: {cfg.NOMBRE_ESTRATEGIA}")
     print("=" * 74)
 
-    # [1/18] AST & UTF-8 no BOM across all 34 Python modules (Root Orchestrators + 3 Micro-Domains)
+    # [1/18] AST & UTF-8 no BOM across all 40 Python modules (Root Orchestrators + 3 Micro-Domains)
     modulos_py = [
         "config_parametros.py",
         "core_estado_ram.py",
@@ -119,11 +119,17 @@ async def ejecutar_suite_certificacion_v1() -> int:
         "ofensiva/micro_conviccion_kelly.py",
         "ofensiva/micro_enganche_fase.py",
         "ofensiva/micro_impulso_runner.py",
+        "ofensiva/micro_escudo_diamante_fase2.py",
+        "ofensiva/micro_retenedor_fill_parcial.py",
+        "ofensiva/micro_desarme_unwind_pasivo.py",
         "defensiva/__init__.py",
         "defensiva/micro_escudos_fisicos.py",
         "defensiva/micro_veto_macro_btc.py",
         "defensiva/micro_cortafuegos_contagio.py",
         "defensiva/micro_evacuador_scratch.py",
+        "defensiva/micro_escape_reconciliador.py",
+        "defensiva/micro_candado_climax_hurst.py",
+        "defensiva/micro_decaimiento_chronos_sl.py",
         "apoyo/__init__.py",
         "apoyo/micro_cinematica_l2.py",
         "apoyo/micro_paridad_lvr_uta.py",
@@ -142,7 +148,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
         assert not raw.startswith(b"\xef\xbb\xbf"), f"BOM detected in {m_rel}"
         assert b"\r\n" not in raw, f"CRLF detected in {m_rel}"
         ast.parse(raw.decode("utf-8"), filename=m_rel)
-    ram.log_operativo(" [1/18] AST compilation and pure UTF-8/LF encoding verified across all 34 Python modules.")
+    ram.log_operativo(" [1/18] AST compilation and pure UTF-8/LF encoding verified across all 40 Python modules.")
 
     # [2/18] 100-Constant Contract & Terpsichora V1.0 Hardened Parameters
     tree_cfg = ast.parse((base / "config_parametros.py").read_text(encoding="utf-8"))

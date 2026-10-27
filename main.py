@@ -99,11 +99,17 @@ def _capturar_mtimes_codigo() -> Dict[str, float]:
         "ofensiva/micro_cresta_convexo_sprt.py",
         "ofensiva/micro_conviccion_kelly.py",
         "ofensiva/micro_enganche_fase.py",
-        "ofensiva/micro_impulso_runner.py",
+                "ofensiva/micro_impulso_runner.py",
+        "ofensiva/micro_escudo_diamante_fase2.py",
+        "ofensiva/micro_retenedor_fill_parcial.py",
+        "ofensiva/micro_desarme_unwind_pasivo.py",
         "defensiva/micro_escudos_fisicos.py",
         "defensiva/micro_veto_macro_btc.py",
         "defensiva/micro_cortafuegos_contagio.py",
-        "defensiva/micro_evacuador_scratch.py",
+                "defensiva/micro_evacuador_scratch.py",
+        "defensiva/micro_escape_reconciliador.py",
+        "defensiva/micro_candado_climax_hurst.py",
+        "defensiva/micro_decaimiento_chronos_sl.py",
         "apoyo/micro_cinematica_l2.py",
         "apoyo/micro_paridad_lvr_uta.py",
         "apoyo/micro_hud_ansi_telegram.py",
@@ -310,7 +316,7 @@ async def bucle_gobernador_mantenimiento(
                 ts_ultimo_keepalive_uta = ahora
                 await auditar_balance_uta_bybit(exchange, silencioso=True)
                 st.imprimir_panel_caja_negra()
-                mhd.ejecutar_ciclo_higiene_4_niveles(time.time(), slots_ocupados=0, radar_ref=getattr(self, 'radar', None))
+                mhd.ejecutar_ciclo_higiene_4_niveles(ahora, slots_ocupados=len(ram.ESTADO_GLOBAL.posiciones_activas), radar_ref=rad.RADAR_GLOBAL)
                 mhd.ejecutar_mantenimiento_silencioso_disco(ram.ESTADO_GLOBAL)
 
             if (ahora - ts_ultimo_digest_4h) >= 14400.0:
