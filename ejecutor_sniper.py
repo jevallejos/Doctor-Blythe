@@ -256,6 +256,7 @@ class EjecutorSniperBybit:
             )
             repegs_hechos = 0
             ultimo_repeg_elapsed = 0.0
+            abortada_en_cola = False
             ts_inicio = time.perf_counter()
             paso_poll = min(0.08, max(0.02, ttl_max / 10.0))
 
@@ -314,7 +315,8 @@ class EjecutorSniperBybit:
                             f"{elapsed:.2f}s due to adverse queue erosion/shift "
                             f"(Q_L1={q_l1_now:.1f}/{q_l1_init:.1f}, H={m_live.hurst:.2f}, OFI={m_live.ofi_profundo:+.2f})."
                         )
-                        return None
+                        abortada_en_cola = True
+                        break
 
                     cola_enterrada = (
                         q_l1_init > 0.0
@@ -377,15 +379,19 @@ class EjecutorSniperBybit:
                     pass
                 try:
                     estado_post = await consultar_orden_segura(exchange, orden_id, symbol, precio_orden)
-                    filled_final = max(filled_final, float(estado_post.get("filled", 0.0) or 0.0))
+                    filled_post = float(estado_post.get("filled", 0.0) or 0.0)
+                    if filled_post > filled_final:
+                        filled_final = filled_post
+                        estado_orden = estado_post
                 except Exception:
                     pass
 
             if filled_final <= 0.0:
-                ram.log_operativo(
-                    f"{etiqueta_log} Order on {symbol} unfilled after {ttl_max:.1f}s "
-                    f"(RePegs={repegs_hechos}): margin released."
-                )
+                if not abortada_en_cola:
+                    ram.log_operativo(
+                        f"{etiqueta_log} Order on {symbol} unfilled after {ttl_max:.1f}s "
+                        f"(RePegs={repegs_hechos}): margin released."
+                    )
                 return None
 
             if (filled_final / contratos) < cfg.FRACCION_MINIMA_FILL_LOTE:
