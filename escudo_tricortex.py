@@ -140,17 +140,16 @@ class OrquestadorTriCortexLPU:
             if float(op.get("pnl_usdt", 0.0)) <= 0.0 and not op.get("es_scratch", False)
         )
         pnl_12 = sum(float(op.get("pnl_usdt", 0.0)) for op in ultimos)
-        wr_12 = (wins / len(ultimos)) if ultimos else 1.0
-
-        if len(ultimos) >= 4 and (pnl_12 < -0.25 or wr_12 < 0.30):
+        ciclos_reales = wins + losses
+        wr_12 = (wins / ciclos_reales) if ciclos_reales > 0 else 1.0
+        if pnl_12 < -0.25 or (ciclos_reales >= 4 and wr_12 < 0.30):
             mult = 0.72
-        elif len(ultimos) >= 4 and pnl_12 < -0.10:
+        elif ciclos_reales >= 3 and pnl_12 < -0.12:
             mult = 0.85
-        elif len(ultimos) >= 4 and pnl_12 > 0.08:
+        elif wins >= 2 and pnl_12 > 0.06:
             mult = 1.05
         else:
             mult = 1.00
-
         ram.ESTADO_GLOBAL.multiplicador_kelly_ia = mult
         lat_ms = int((time.perf_counter() - t0) * 1000)
         ram.log_operativo(
