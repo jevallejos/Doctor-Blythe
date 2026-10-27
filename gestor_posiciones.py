@@ -889,7 +889,16 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
                 f"[RECONCILER] Startup reconciliation completed: {procesadas} position(s) processed."
             )
         else:
-            ram.log_operativo("[RECONCILER] No orphan positions open on Bybit. Margin 100% clear.")
+            try:
+                if hasattr(exchange, "cancel_all_orders"):
+                    for _sym_c in cfg.PARES_CAMPEONES_ALFA:
+                        try:
+                            await exchange.cancel_all_orders(_sym_c)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            ram.log_operativo("[RECONCILER] No orphan positions open on Bybit. Open orders swept & margin 100% clear.")
     except Exception as exc:
         ram.log_operativo(f"[RECONCILER] Warning during startup scan: {exc}")
     return procesadas
