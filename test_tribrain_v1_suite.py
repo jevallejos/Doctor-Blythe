@@ -6,6 +6,20 @@ Executes 100% in isolated test mode (TRIBRAIN_TEST_MODE=1) with zero external
 network calls, certifying all 6 forensic fixes and SCAR-LOCK-00..18 invariants.
 """
 from __future__ import annotations
+# === [TERPSICHORA-PROTECT-CAL-OOS-SNAPSHOT] ===
+import atexit as _atexit_cal_guard
+import pathlib as _pathlib_cal_guard
+
+_CAL_OOS_PATH_GUARD = _pathlib_cal_guard.Path(__file__).resolve().parent / "calibracion_oos.json"
+_SNAPSHOT_CAL_OOS_BYTES = _CAL_OOS_PATH_GUARD.read_bytes() if _CAL_OOS_PATH_GUARD.exists() else None
+
+
+def _restaurar_calibracion_oos_post_test() -> None:
+    if _SNAPSHOT_CAL_OOS_BYTES is not None:
+        _CAL_OOS_PATH_GUARD.write_bytes(_SNAPSHOT_CAL_OOS_BYTES)
+
+
+_atexit_cal_guard.register(_restaurar_calibracion_oos_post_test)
 # === [TERPSICHORA-CAL-OOS-RESTORE-GUARD] ===
 import atexit as _atexit_cal_guard
 import pathlib as _pathlib_cal_guard
