@@ -17,8 +17,8 @@ def evaluar_dislocacion_y_latch_long(
 ) -> Tuple[bool, bool]:
     z_umbral_long = cfg.Z_SCORE_UMBRAL_HIGH_BETA if es_hb else cfg.Z_SCORE_UMBRAL_TIER1
     dp_min_long = cfg.DP_MIN_EXCURSION_LONG_HB if es_hb else cfg.DP_MIN_EXCURSION_LONG_T1
-    recorrido_req = -0.0018 if es_hb else -0.0014
-    piso_anti_ruido = -0.0011 if es_hb else -0.0009
+    recorrido_req = -0.0018 if es_hb else -0.0011
+    piso_anti_ruido = -0.0011 if es_hb else -0.00075
 
     excursion_dual_ok = (
         min(dp_pct, ema900_dist_pct) <= recorrido_req

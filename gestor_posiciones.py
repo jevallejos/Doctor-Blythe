@@ -798,6 +798,8 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
             side_raw = str(p.get("side", "long")).lower()
             entry_px = float(p.get("entryPrice") or p.get("avgPrice") or 0.0)
             mark_px = float(p.get("markPrice") or entry_px)
+            if symbol in ram.ESTADO_GLOBAL.posiciones_activas:
+                continue
             info_p = p.get("info") if isinstance(p.get("info"), dict) else {}
             ts_ms = float(
                 info_p.get("updatedTime")
@@ -806,7 +808,29 @@ async def reconciliar_posiciones_huerfanas_arranque(exchange: Any) -> int:
                 or p.get("timestamp")
                 or (ahora_ms - 240000.0)
             )
-            raw_age = (ahora_ms - ts_ms) / 1000.0
+            raw_age = max(0.0, (ahora_ms - ts_ms) / 1000.0)
+            if 0.0 < raw_age < 75.0 and len(ram.ESTADO_GLOBAL.posiciones_activas) < cfg.SLOTS_CONCURRENTES_MAX:
+                dir_ad = "LONG" if side_raw in ("long", "buy") else "SHORT"
+                sl_int_a, sl_srv_a = eje.calcular_niveles_sl_iniciales(entry_px, dir_ad, 0.0001)
+                pos_ad = ram.PosicionActiva(
+                    symbol=symbol,
+                    side=dir_ad,
+                    contratos=contratos,
+                    contratos_iniciales=contratos,
+                    precio_entrada=entry_px,
+                    timestamp_apertura=time.time() - raw_age,
+                    sl_interno=sl_int_a,
+                    sl_bybit=sl_srv_a,
+                    fees_acumulados_usdt=round(abs(contratos * entry_px) * cfg.COMISION_MAKER_PCT, 6),
+                    es_entrada_maker=True,
+                )
+                ram.ESTADO_GLOBAL.posiciones_activas[symbol] = pos_ad
+                await GESTOR_POSICIONES._actualizar_sl_bybit(exchange, pos_ad, sl_srv_a, tick_size=0.0001)
+                ram.log_operativo(
+                    f"[RECONCILER] [ORPHAN-SHIELD] Fresh UTA position on {symbol} (age {raw_age:.1f}s < 75s) "
+                    f"adopted into active Wald custody: {contratos} @ {entry_px} (SL {sl_int_a})."
+                )
+                continue
             edad_seg = 300.0 if raw_age > 86400.0 else max(95.0, raw_age)
             edad_min = edad_seg / 60.0
 

@@ -141,6 +141,8 @@ class EjecutorSniperBybit:
         if not ram.ESTADO_GLOBAL.adquirir_lock_pre_fill(symbol, ttl_seg=8.0):
             return None
 
+        orden_id: str = ""
+        pos: Optional[ram.PosicionActiva] = None
         try:
             best_bid = float(senal.get("bid") or senal.get("precio_ref") or 0.0)
             best_ask = float(senal.get("ask") or senal.get("precio_ref") or 0.0)
@@ -467,6 +469,11 @@ class EjecutorSniperBybit:
             )
             return pos
         finally:
+            if pos is None and orden_id and exchange is not None:
+                try:
+                    await exchange.cancel_order(orden_id, symbol)
+                except Exception:
+                    pass
             ram.ESTADO_GLOBAL.liberar_lock_pre_fill(symbol)
 
 
