@@ -13,6 +13,8 @@ import time
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import config_parametros as cfg
+import micro_escudos_fisicos as mef
+import micro_veto_macro_btc as mvb
 import core_estado_ram as ram
 import escudo_tricortex as tri
 

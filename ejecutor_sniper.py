@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import config_parametros as cfg
 import micro_motor_maker as mmm
+import micro_sizing_kelly as msk
 import core_estado_ram as ram
 import escudo_tricortex as tri
 import radar_volatilidad as rad
@@ -210,7 +211,8 @@ class EjecutorSniperBybit:
             ofi_val = float(senal.get("ofi", 0.0))
             hurst_val = float(senal.get("hurst", 0.42))
 
-            kelly_frac, _, nocional_usdt = tri.calcular_dimension_kelly(
+            kelly_frac, _, nocional_usdt = msk.calcular_dimension_kelly_uta(
+                tri,
                 capital_libre_usdt=ram.ESTADO_GLOBAL.free_usdt,
                 z_score=z_val,
                 ofi=ofi_val,

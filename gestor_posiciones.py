@@ -13,6 +13,7 @@ import time
 from typing import Any, Dict, Optional
 
 import config_parametros as cfg
+import micro_motor_wald_exit as mmw
 import core_estado_ram as ram
 import ejecutor_sniper as eje
 import escudo_tricortex as tri
