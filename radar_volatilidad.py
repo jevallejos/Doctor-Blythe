@@ -168,14 +168,16 @@ class RadarVolatilidadHFT:
         if not est.precios_activos or abs(micro_price - est.precios_activos[-1]) > 1e-12:
             est.precios_activos.append(micro_price)
 
-        top5_cambio = (bids != est.bids_prev) or (asks != est.asks_prev)
-        if not est.bids_prev or not est.asks_prev:
+        bids_ant = est.bids_prev
+        asks_ant = est.asks_prev
+        top5_cambio = (bids != bids_ant) or (asks != asks_ant)
+        if not bids_ant or not asks_ant:
             ofi_inst = 0.0
             est.ultimo_ofi_top5 = 0.0
             est.bids_prev = bids
             est.asks_prev = asks
         elif top5_cambio:
-            ofi_raw = calcular_ofi_profundo(est.bids_prev, est.asks_prev, bids, asks)
+            ofi_raw = calcular_ofi_profundo(bids_ant, asks_ant, bids, asks)
             est.bids_prev = bids
             est.asks_prev = asks
             if abs(ofi_raw) < 0.06 and (ofi_raw * est.ultimo_ofi_top5) >= 0.0:
@@ -215,11 +217,12 @@ class RadarVolatilidadHFT:
             est.ultimo_pulso_toxico_ts = ahora
 
         imb_l1, cancel_net_l1 = mcl.calcular_desequilibrio_cancelacion_l1(
-            est.bids_prev, est.asks_prev, bids, asks
+            bids_ant, asks_ant, bids, asks
         )
-        hurst = calcular_exponente_hurst(list(est.precios_activos), z_score_actual=z_score)
-        acel_lyap = calcular_aceleracion_lyapunov(list(est.precios_activos), spread_pct=spread_pct)
-        irrev_lob = mcl.calcular_irreversibilidad_temporal_lob(list(est.precios_activos), ofi_actual=ofi_inst)
+        seq_precios = list(est.precios_activos)
+        hurst = calcular_exponente_hurst(seq_precios, z_score_actual=z_score)
+        acel_lyap = calcular_aceleracion_lyapunov(seq_precios, spread_pct=spread_pct)
+        irrev_lob = mcl.calcular_irreversibilidad_temporal_lob(seq_precios, ofi_actual=ofi_inst)
         tox_inst = min(
             1.0,
             (spread_pct / max(1e-6, cfg.SPREAD_MAX_PERMITIDO_PCT)) * 0.30

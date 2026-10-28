@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo de Apoyo #1: Motores Matematicos L2 de Variacion Bipower (VentanaZ),
-OFI Profundo de 5 Niveles, Exponente de Hurst, Cinematica de Lyapunov y Curva 24h.
+OFI Profundo de 5 Niveles, Exponente de Hurst con Correccion de Muestra Finita,
+Cinematica de Lyapunov, Desequilibrio de Cancelacion L1 y Entropia Temporal LOB.
 """
 import collections
 import datetime
 import math
 import time
 from typing import Deque, List, Optional, Tuple
+
 import config_parametros as cfg
 
 _TZ_UTC = datetime.timezone.utc
@@ -39,8 +41,10 @@ def calcular_percentil_intradia_24h(
 
 class VentanaZ:
     """
-    Jump-Robust Bipower Variation Z-Score & Horizon-Synchronized Excursion Engine.
+    Jump-Robust Bipower Variation Z-Score & Horizon-Synchronized Excursion Engine
+    with O(1) Bipower Product Ring Buffer and Boxcar-EMA Sign Coherence.
     """
+
     def __init__(
         self,
         maxlen: int = cfg.VENTANA_Z_TICKS,
@@ -50,6 +54,7 @@ class VentanaZ:
         self.piso_volatilidad: float = max(0.00035, float(piso_volatilidad))
         self.precios: Deque[float] = collections.deque(maxlen=self.maxlen)
         self.retornos: Deque[float] = collections.deque(maxlen=self.maxlen)
+        self.pares_bv: Deque[float] = collections.deque(maxlen=self.maxlen)
         self.ema_rapida: float = 0.0
         self.ema_macro: float = 0.0
         self.ema_macro_prev: float = 0.0
@@ -61,12 +66,18 @@ class VentanaZ:
         p = float(precio)
         if p <= 0.0:
             return self.z_score, self.dp_pct, self.volatilidad_bv
+
         if self.precios:
             prev = self.precios[-1]
             ret = (p - prev) / prev if prev > 0.0 else 0.0
             if abs(ret) > 1e-9:
+                abs_ret = abs(ret)
+                if self.retornos:
+                    self.pares_bv.append(abs_ret * abs(self.retornos[-1]))
                 self.retornos.append(ret)
+
         self.precios.append(p)
+
         alpha_fast = 2.0 / (cfg.EMA_RAPIDA_TICKS + 1.0)
         alpha_macro = 2.0 / (cfg.EMA_MACRO_TICKS + 1.0)
         if self.ema_rapida <= 0.0:
@@ -77,23 +88,30 @@ class VentanaZ:
             self.ema_rapida = (alpha_fast * p) + ((1.0 - alpha_fast) * self.ema_rapida)
             self.ema_macro_prev = self.ema_macro
             self.ema_macro = (alpha_macro * p) + ((1.0 - alpha_macro) * self.ema_macro)
+
         if len(self.precios) < 4:
             return 0.0, 0.0, self.volatilidad_bv
+
         p_base = self.precios[0]
         self.dp_pct = (p - p_base) / p_base if p_base > 0.0 else 0.0
-        rets_activos = [abs(r) for r in self.retornos if abs(r) > 1e-9]
-        if len(rets_activos) >= 4:
-            pares_bv = [
-                rets_activos[i] * rets_activos[i - 1]
-                for i in range(1, len(rets_activos))
-            ]
-            media_bv = (math.pi / 2.0) * (sum(pares_bv) / len(pares_bv))
+
+        n_bv = len(self.pares_bv)
+        if n_bv >= 3:
+            media_bv = (math.pi / 2.0) * (sum(self.pares_bv) / n_bv)
             sigma_tick = math.sqrt(max(0.0, media_bv))
-            sigma_horizonte = sigma_tick * math.sqrt(min(12.0, float(len(rets_activos))))
+            n_rets = len(self.retornos)
+            sigma_horizonte = sigma_tick * math.sqrt(min(12.0, float(n_rets)))
             self.volatilidad_bv = max(self.piso_volatilidad, min(0.00110, sigma_horizonte))
         else:
             self.volatilidad_bv = max(self.piso_volatilidad, cfg.VOLATILIDAD_BV_PISO_MIN)
-        desviacion_compuesta = 0.72 * self.dp_pct + 0.28 * ((p - self.ema_rapida) / self.ema_rapida)
+
+        dp_ema = (p - self.ema_rapida) / self.ema_rapida if self.ema_rapida > 0.0 else self.dp_pct
+        if (self.dp_pct * dp_ema) < 0.0:
+            # Amortigua eco de borde (boxcar drop-off) cuando contradice a la EMA rapida
+            desviacion_compuesta = (0.45 * self.dp_pct) + (0.55 * dp_ema)
+        else:
+            desviacion_compuesta = (0.72 * self.dp_pct) + (0.28 * dp_ema)
+
         self.z_score = round(desviacion_compuesta / self.volatilidad_bv, 4)
         return self.z_score, round(self.dp_pct, 6), round(self.volatilidad_bv, 6)
 
@@ -108,29 +126,38 @@ def calcular_ofi_profundo(
     niveles = min(cfg.OFI_NIVELES_PROFUNDO, len(pesos))
     num = 0.0
     den = 0.0
+    n_bp = len(bids_prev)
+    n_ap = len(asks_prev)
+    n_bc = len(bids_curr)
+    n_ac = len(asks_curr)
+
     for idx in range(niveles):
         w = pesos[idx]
-        bp, bq_p = bids_prev[idx] if idx < len(bids_prev) else (0.0, 0.0)
-        ap, aq_p = asks_prev[idx] if idx < len(asks_prev) else (0.0, 0.0)
-        bc, bq_c = bids_curr[idx] if idx < len(bids_curr) else (0.0, 0.0)
-        ac, aq_c = asks_curr[idx] if idx < len(asks_curr) else (0.0, 0.0)
+        bp, bq_p = bids_prev[idx] if idx < n_bp else (0.0, 0.0)
+        ap, aq_p = asks_prev[idx] if idx < n_ap else (0.0, 0.0)
+        bc, bq_c = bids_curr[idx] if idx < n_bc else (0.0, 0.0)
+        ac, aq_c = asks_curr[idx] if idx < n_ac else (0.0, 0.0)
+
         if bc > bp:
             delta_b = bq_c
         elif bc == bp:
             delta_b = bq_c - bq_p
         else:
             delta_b = -bq_p
+
         if ac < ap:
             delta_a = aq_c
         elif ac == ap:
             delta_a = aq_c - aq_p
         else:
             delta_a = -aq_p
+
         ofi_lvl = delta_b - delta_a
         flujo_activo = abs(delta_b) + abs(delta_a)
         reg_liquidez = (bq_c + aq_c) * 0.035
         num += w * ofi_lvl
         den += w * max(flujo_activo + reg_liquidez, 1e-9)
+
     if den <= 1e-9:
         return 0.0
     est = max(-1.0, min(1.0, num / den))
@@ -138,12 +165,15 @@ def calcular_ofi_profundo(
 
 
 def calcular_exponente_hurst(precios_activos: List[float], z_score_actual: float = 0.0) -> float:
-    cambios = [precios_activos[0]] if precios_activos else []
+    if len(precios_activos) < 8:
+        return 0.40
+    cambios = [precios_activos[0]]
     for p in precios_activos[1:]:
         if abs(p - cambios[-1]) > 1e-12:
             cambios.append(p)
     if len(cambios) < 8:
         return 0.40
+
     ventana = cambios[-max(12, cfg.HURST_VENTANA_TICKS):]
     rets = [
         math.log(ventana[i] / ventana[i - 1])
@@ -152,22 +182,41 @@ def calcular_exponente_hurst(precios_activos: List[float], z_score_actual: float
     ]
     if len(rets) < 6:
         return 0.40
+
     abs_rets = sorted(abs(r) for r in rets if abs(r) > 0.0)
     med = abs_rets[len(abs_rets) // 2] if abs_rets else 1e-4
     cap = max(med * 2.5, 1e-5)
     r_clip = [max(-cap, min(cap, r)) for r in rets]
+
     tramo_local = r_clip[-16:]
-    media_local = sum(tramo_local) / len(tramo_local)
+    n_loc = len(tramo_local)
+    media_local = sum(tramo_local) / n_loc
     frenado_activo = (r_clip[-1] * media_local) <= 0.0 or abs(r_clip[-1]) < abs(media_local) * 0.65
-    serie_eval = [r - media_local for r in tramo_local] if frenado_activo else r_clip
+    serie_eval = [r - media_local for r in tramo_local] if frenado_activo else [r - (0.35 * media_local) for r in r_clip]
+
     denom = sum(r * r for r in serie_eval)
     if denom <= 1e-15:
         return 0.38
+
     num = sum(serie_eval[i] * serie_eval[i - 1] for i in range(1, len(serie_eval)))
-    rho1 = max(-0.45, min(0.75, num / denom))
+    rho1_raw = max(-0.45, min(0.75, num / denom))
+
+    # Correccion suave de sesgo de muestra finita (Marriott-Pope) cuando no hay giro confirmado
+    if not frenado_activo and n_loc >= 6:
+        rho1 = min(0.75, rho1_raw + (1.0 - (rho1_raw * rho1_raw)) / (2.0 * n_loc))
+    else:
+        rho1 = rho1_raw
+
     h_raw = 0.50 + (0.50 * (math.log(max(0.25, 1.0 + rho1)) / math.log(2.0)))
+
     if len(rets) >= 5 and (all(r > 0.0 for r in rets[-5:]) or all(r < 0.0 for r in rets[-5:])):
         h_raw = max(h_raw, 0.56)
+    elif len(rets) >= 8 and not frenado_activo:
+        pos_8 = sum(1 for r in rets[-8:] if r > 0.0)
+        neg_8 = sum(1 for r in rets[-8:] if r < 0.0)
+        if max(pos_8, neg_8) >= 7:
+            h_raw = max(h_raw, 0.495)
+
     if z_score_actual >= cfg.Z_SCORE_IGNICION_SHORT_VETO and ventana[-1] >= max(ventana[:-1]):
         h_raw = max(h_raw, 0.58)
     return round(max(0.20, min(0.80, h_raw)), 4)
@@ -184,7 +233,8 @@ def calcular_aceleracion_lyapunov(precios: List[float], spread_pct: float = 0.0)
     v2 = (p_end - p_mid) / p_mid
     acel = v2 - v1
     umbral_tick = max(spread_pct * 1.25, 0.00042)
-    if acel < 0.0 and (v2 >= 0.0 or abs(v2) <= umbral_tick):
+    # Solo amortigua ruido de micro-tick si la caida NO se esta acelerando (v2 >= v1 o v2 >= 0)
+    if acel < 0.0 and (v2 >= 0.0 or (abs(v2) <= umbral_tick and abs(v2) <= abs(v1))):
         if v1 > umbral_tick and v2 <= 0.0:
             return round(acel, 6)
         return round(max(acel, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO * 0.4), 6)
@@ -227,17 +277,23 @@ def calcular_irreversibilidad_temporal_lob(
 ) -> float:
     """
     Mejora de Frontera #3 (arXiv:2610.16151):
-    Indice de Irreversibilidad Temporal (Delta S_LOB in [0.0, 1.0]) mediante
-    divergencia de Kullback-Leibler sobre transiciones de signo en ventana corta O(1).
+    Indice de Irreversibilidad Temporal (Delta S_LOB in [0.0, 1.0]) combinando
+    divergencia de Kullback-Leibler de rachas Markovianas y asimetria energetica de saltos.
     """
     if len(precios_activos) < 6:
         return 0.0
     ventana = precios_activos[-14:]
     signos: List[int] = []
+    energia_pos = 1e-9
+    energia_neg = 1e-9
     for i in range(1, len(ventana)):
         dp = ventana[i] - ventana[i - 1]
         if abs(dp) > 1e-12:
             signos.append(1 if dp > 0.0 else -1)
+            if dp > 0.0:
+                energia_pos += abs(dp)
+            else:
+                energia_neg += abs(dp)
     if len(signos) < 4:
         return 0.0
 
@@ -259,7 +315,12 @@ def calcular_irreversibilidad_temporal_lob(
     tot = n_pp + n_mm + n_pm + n_mp
     p_pp, p_mm, p_pm, p_mp = n_pp / tot, n_mm / tot, n_pm / tot, n_mp / tot
     kl_cruce = (p_pm - p_mp) * math.log(p_pm / p_mp)
-    kl_racha = 0.35 * (p_pp - p_mm) * math.log(p_pp / p_mm)
+    kl_racha = 0.38 * (p_pp - p_mm) * math.log(p_pp / p_mm)
+
+    e_tot = energia_pos + energia_neg
+    q_pos, q_neg = energia_pos / e_tot, energia_neg / e_tot
+    kl_energia = 0.22 * (q_pos - q_neg) * math.log(q_pos / q_neg)
+
     acople_ofi = 0.15 * abs(float(ofi_actual)) if (signos[-1] * ofi_actual) > 0.0 else 0.0
-    entropia = max(0.0, min(1.0, kl_cruce + kl_racha + acople_ofi))
+    entropia = max(0.0, min(1.0, kl_cruce + kl_racha + kl_energia + acople_ofi))
     return round(entropia, 4)
