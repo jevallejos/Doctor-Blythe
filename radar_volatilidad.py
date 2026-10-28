@@ -271,6 +271,7 @@ class RadarVolatilidadHFT:
 
         if symbol == cfg.PAR_LIDER_MACRO:
             self._verificar_veto_macro_btc("LONG", ahora)
+            self._verificar_veto_macro_btc("SHORT", ahora)
             return False, "MACRO_LEADER_UPDATED", None
 
         tri.evaluar_filtro_anti_luna(symbol, dp_pct, ofi_inst)
@@ -345,6 +346,16 @@ class RadarVolatilidadHFT:
                 hawkes_min_req=cfg.HAWKES_INTENSIDAD_MIN_LONG,
                 imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
             )
+            if not ok_abs_l and "L1_SPOOF" in mot_abs_l:
+                ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
+                    symbol, "LONG", "L1_SPOOF_SHIELD", mot_abs_l, mid, vector_snap
+                )
+                return False, "L1_SPOOF_DETECTED", None
+            ok_ct_l, mot_ct_l = mef.evaluar_conviccion_contratendencia_ema900(
+                "LONG", ema900_dist_pct, ofi_inst, hurst, z_score
+            )
+            if not ok_ct_l:
+                return False, mot_ct_l, None
             vertice_ok_l = confirmar_disparo_vertice_armado(z_score, hurst, acel_lyap, ofi_inst, est.ofi_ema_5s, latch_long_vigente, "LONG", ofi_min_long)
             if (not ok_abs_l and not vertice_ok_l) and "WAIT_BID_ABSORPTION" in mot_abs_l:
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
