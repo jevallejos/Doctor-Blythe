@@ -173,23 +173,31 @@ def calcular_precio_scratch_acotado_un_tick(
     best_ask: float,
     tick_size: float,
     ofi_5s_dir: float,
+    edad_orden_salida_seg: float = 0.0,
 ) -> float:
+    """
+    Cotizador elastico de evacuacion pasiva Maker-Scratch:
+    - En t_orden < 9s con flujo neutral (OFI_dir > -0.22), ancla a +-1 tick de entrada.
+    - A medida que edad_orden_salida_seg avanza (ej. ARB estancado en Trades #9 y #12),
+      relaja progresivamente 1 tick adicional cada 9.0s (hasta 4 ticks o 0.06%) para
+      garantizar el llenado PostOnly en best_ask/best_bid antes de ESCAPE_TEMPORAL (90s).
+    """
     t_size = max(float(tick_size or 0.00001), 1e-8)
     side_u = str(side).upper()
     flujo_neutral = float(ofi_5s_dir) > -0.22
+    escalones_tiempo = int(max(0.0, float(edad_orden_salida_seg)) // 9.0)
+    max_ticks_base = 1.0 if flujo_neutral else 3.0
+    ticks_permitidos = min(4.0, max_ticks_base + float(escalones_tiempo))
+    max_dist_precio = max(ticks_permitidos * t_size, float(entry_price) * min(0.00065, 0.00020 * ticks_permitidos))
+
     if side_u in ("LONG", "BUY"):
-        piso_1tick = round(float(entry_price) - t_size, 8)
+        piso_elastico = round(float(entry_price) - max_dist_precio, 8)
         cotizacion_libro = float(best_ask) if best_ask > 0 else float(entry_price)
-        if flujo_neutral:
-            return max(piso_1tick, cotizacion_libro)
-        # Si el flujo es adverso (-0.22 a -0.45), permite cotizar en best_ask hasta -3 ticks para llenar Maker sin pagar Taker
-        return max(round(float(entry_price) - 3.0 * t_size, 8), cotizacion_libro)
+        return max(piso_elastico, cotizacion_libro)
     else:
-        techo_1tick = round(float(entry_price) + t_size, 8)
+        techo_elastico = round(float(entry_price) + max_dist_precio, 8)
         cotizacion_libro = float(best_bid) if best_bid > 0 else float(entry_price)
-        if flujo_neutral:
-            return min(techo_1tick, cotizacion_libro)
-        return min(round(float(entry_price) + 3.0 * t_size, 8), cotizacion_libro)
+        return min(techo_elastico, cotizacion_libro)
 
 
 def evaluar_ventana_elastica_scratch_28s(
