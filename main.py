@@ -203,9 +203,11 @@ async def bucle_stream_par(
             mkt = exchange.markets[symbol]
             prec = mkt.get("precision") or {}
             if prec.get("price"):
-                tick_size = float(prec["price"])
+                p_val = float(prec["price"])
+                tick_size = (10.0 ** (-int(p_val))) if (p_val >= 1.0 and p_val.is_integer() and p_val <= 10.0) else p_val
             if prec.get("amount"):
-                step_size = float(prec["amount"])
+                a_val = float(prec["amount"])
+                step_size = (10.0 ** (-int(a_val))) if (a_val >= 2.0 and a_val.is_integer() and a_val <= 8.0) else a_val
     except Exception:
         pass
 
@@ -419,6 +421,10 @@ async def ejecutar_orquestador_principal() -> int:
             await exchange.load_markets()
         except Exception:
             pass
+        cfg.recargar_calibracion_oos_si_cambio()
+        msa.auto_calibrar_sensibilidades_en_vivo(ram.ESTADO_GLOBAL, eje.EJECUTOR_GLOBAL)
+        await tri.ORQUESTADOR_TRICORTEX.sincronizar_matriz_direccional()
+        await tri.ORQUESTADOR_TRICORTEX.sincronizar_multiplicador_kelly()
         async with _LOCK_RECONCILIACION_UTA:
             await gp.reconciliar_posiciones_huerfanas_arranque(exchange)
             total_u, free_u, locked_u = await auditar_balance_uta_bybit(exchange, silencioso=False)

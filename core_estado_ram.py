@@ -422,7 +422,7 @@ class EstadoGlobalRAM:
         return True
 
     def liberar_lock_pre_fill(self, symbol: str) -> None:
-        self.locks_pre_fill.pop(symbol, None)
+        self.locks_pre_fill[symbol] = -time.time()
 
     def tiene_capacidad_slot(self, direccion: str = "LONG") -> bool:
         activas = [p for p in self.posiciones_activas.values() if not p.cerrada]
@@ -502,7 +502,7 @@ class EstadoGlobalRAM:
                 "precio_bloqueo": ev.precio_ref,
                 "precio_15s": precio_15s,
                 "excursion_15s_pct": round(excursion_pct * 100.0, 4),
-                "ahorro_estimado_usdt": round(max(0.0, -excursion_pct) * 15.5, 4),
+                "ahorro_estimado_usdt": round(max(0.0, -excursion_pct) * max(float(cfg.ORDEN_MINIMA_BYBIT_USDT), self.capital_total_uta * float(cfg.KELLY_FRACCION_BASE) * float(cfg.APALANCAMIENTO_OPERATIVO)), 4),
                 "veredicto_oraculo_15s": veredicto,
                 "vector_entrada": ev.vector_mercado,
             }

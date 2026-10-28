@@ -36,6 +36,10 @@ def _purgar_dedup(ahora: float) -> None:
     expirados = [k for k, ts in _CACHE_DEDUP_12S.items() if (ahora - ts) > 12.0]
     for k in expirados:
         _CACHE_DEDUP_12S.pop(k, None)
+    ttl_ap = max(180.0, float(cfg.TIEMPO_MAX_HOLD_SEG) * 2.0)
+    ap_exp = [s for s, d in _APERTURAS_CONFIRMABLES.items() if (ahora - float(d.get("timestamp", ahora))) > ttl_ap]
+    for s in ap_exp:
+        _APERTURAS_CONFIRMABLES.pop(s, None)
 
 
 def _obtener_credenciales_telegram() -> Tuple[str, str]:

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Defensivo #5: Gobernador de [ESCAPE_TEMPORAL] (90s),
-Pre-Escape Pasivo Maker (72s) y Reconciliador [ESCAPE_HUERFANA_BOOT].
+Pre-Escape Pasivo Maker (72s) y Reconciliador [ESCAPE_HUERFANA_BOOT] con Gracia Post-Lock.
 """
 from typing import Any, Dict, Tuple
 import config_parametros as cfg
@@ -24,17 +24,15 @@ def evaluar_escape_temporal_posicion(
     """
     tope_hold = float(max_hold_seg if max_hold_seg > 0.0 else cfg.TIEMPO_MAX_HOLD_SEG)
     pre_escape_seg = float(cfg.obtener_aux("PRE_ESCAPE_MAKER_SEG", max(60.0, tope_hold - 18.0)))
-
     if edad_seg >= tope_hold:
         return True, False, "ESCAPE_TEMPORAL"
-
+    es_long = str(direccion).upper() in ("BUY", "LONG")
     flujo_runner_fuerte = (
-        (direccion == "LONG" and ofi_5s >= 0.25 and pnl_pct >= 0.0015)
-        or (direccion == "SHORT" and ofi_5s <= -0.25 and pnl_pct >= 0.0015)
+        (es_long and ofi_5s >= 0.25 and pnl_pct >= 0.0015)
+        or ((not es_long) and ofi_5s <= -0.25 and pnl_pct >= 0.0015)
     )
     if edad_seg >= pre_escape_seg and (not en_proceso_cierre) and (not flujo_runner_fuerte):
         return False, True, "PRE_ESCAPE_MAKER_72S"
-
     return False, False, "OK"
 
 
@@ -66,7 +64,7 @@ def clasificar_posicion_huerfana_arranque(
         "motivo": "ESCAPE_HUERFANA_BOOT",
     }
 
-# === [TERPSICHORA-ORPHAN-GRACE-SHIELD-V1] ===
+
 def debe_adoptar_en_lugar_de_liquidar_huerfana(
     symbol: str,
     locks_pre_fill: dict,
@@ -76,14 +74,21 @@ def debe_adoptar_en_lugar_de_liquidar_huerfana(
 ) -> bool:
     """
     Impide que el reconciliador liquide a mercado como ESCAPE_HUERFANA_BOOT
-    una posicion que acaba de ser abierta por el Sniper (en vuelo o dentro
-    de los primeros 5.0 segundos de registro en RAM).
+    una posicion que acaba de ser abierta por el Sniper:
+    - Si lock_ts > 0: orden en vuelo (expira en lock_ts) o recien expirada.
+    - Si lock_ts < 0: lock liberado en abs(lock_ts); protege durante grace_seg (5.0s).
     """
     if symbol in posiciones_activas:
         return True
     lock_ts = locks_pre_fill.get(symbol)
-    if isinstance(lock_ts, (int, float)) and (now_ts - float(lock_ts)) <= grace_seg:
-        return True
     if lock_ts is True:
         return True
+    if isinstance(lock_ts, (int, float)):
+        val = float(lock_ts)
+        if val > 0.0:
+            if now_ts <= (val + grace_seg) or abs(now_ts - val) <= grace_seg:
+                return True
+        elif val < 0.0:
+            if (now_ts - abs(val)) <= grace_seg:
+                return True
     return False
