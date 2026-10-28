@@ -118,7 +118,7 @@ class EjecutorSniperBybit:
         if cfg.es_modo_test() or exchange is None or not hasattr(exchange, "fetch_order_book"):
             return
         try:
-            ob = await exchange.fetch_order_book(symbol, limit=50)
+            ob = await exchange.fetch_order_book(symbol, limit=10)
             rad.RADAR_GLOBAL.procesar_instantanea_libro(symbol, ob, time.time())
         except Exception:
             pass
@@ -327,6 +327,11 @@ class EjecutorSniperBybit:
                             try:
                                 if not fue_cancelada_postonly:
                                     await exchange.cancel_order(orden_id, symbol)
+                                    if not cfg.es_modo_test():
+                                        est_pre_repeg = await consultar_orden_segura(exchange, orden_id, symbol, precio_orden)
+                                        if float(est_pre_repeg.get("filled", 0.0) or 0.0) > 0.0:
+                                            estado_orden = est_pre_repeg
+                                            break
                                 nueva_orden = await exchange.create_order(
                                     symbol,
                                     "limit",
