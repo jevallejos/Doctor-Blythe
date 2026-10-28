@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Ofensivo #9: Motor [DIAMOND] Phase 2 Maker Shield PostOnly
-con Proyeccion en Cresta para Impulsos Fuertes (Lambda >= 2.80) y Cosecha en
-Desaceleracion (Remediacion Trades #3, #6 y #7).
+Micro-Modulo Ofensivo #9: Motor [DIAMOND] Phase 2 Maker Shield PostOnly con
+Proyeccion en Cresta para Impulsos Fuertes (Lambda >= 2.80), Expansion en Vacio
+de Liquidez L2 (orderbook.50) y Front-Running Quirurgico de Muros Institucionales.
 """
 from typing import Tuple
 import config_parametros as cfg
@@ -20,41 +20,57 @@ def evaluar_activacion_escudo_diamante_fase2(
     lambda_wald: float,
     tick_size: float,
     fase2_ya_ejecutada: bool = False,
+    muro_opuesto_px: float = 0.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> Tuple[bool, float]:
     """
     Gobierna el [DIAMOND] Phase 2 Maker Shield PostOnly:
-    1. Si el impulso Wald sigue acelerando con fuerza (lambda_wald >= 2.80) y
-       pnl_pct < +0.175%, NO ahoga el trade en best_ask (+0.14%): proyecta la
-       orden PostOnly en la cresta (+0.185% desde entrada o >= 2 ticks a favor).
-    2. Cuando el trade ya alcanzo >= +0.140% tras >= 20s y el impulso empieza
-       a moderarse (0.60 <= lambda_wald < 2.80) o ya supero +0.175%, cotiza en
-       la punta Maker para cobrar en la cresta antes del retroceso.
+    1. Si existe un Vacio de Liquidez L2 (vacio_l2_ratio >= 1.45) con impulso positivo
+       (lambda_wald >= 1.40) o si lambda_wald >= 2.80, proyecta la orden PostOnly en
+       la cresta (+0.185% a +0.215%) para no cortar runners como ZEREBRO Trades #6/#7.
+    2. Si el escaner L2 detecta un Muro Institucional (muro_opuesto_px > 0) dentro de
+       la zona de ganancia, coloca la orden PostOnly exactamente 1 tick delante del muro.
     """
     if fase2_ya_ejecutada or edad_seg < 18.0 or precio_entrada <= 0.0:
         return False, 0.0
-
     if pnl_pct < 0.00135 or lambda_wald < 0.60:
         return False, 0.0
 
     t_sz = max(1e-8, float(tick_size))
     es_long = str(direccion).upper() in ("BUY", "LONG")
-    impulso_fuerte_en_curso = (lambda_wald >= 2.80) and (pnl_pct < 0.00175) and (edad_seg < 38.0)
+    vacio_runner = (float(vacio_l2_ratio) >= 1.45) and (lambda_wald >= 1.40) and (edad_seg < 38.0)
+    impulso_fuerte_en_curso = ((lambda_wald >= 2.80) or vacio_runner) and (pnl_pct < 0.00195) and (edad_seg < 38.0)
+    target_cresta_pct = 0.00210 if vacio_runner else 0.00185
 
     if es_long:
         if impulso_fuerte_en_curso:
-            px_cresta = precio_entrada * (1.0 + 0.00185)
+            px_cresta = precio_entrada * (1.0 + target_cresta_pct)
             px_obj = mcs.cuantizar_tick(max(best_ask + t_sz, precio_actual + (2.0 * t_sz), px_cresta), t_sz, modo="ceil")
         else:
             px_obj = mcs.cuantizar_tick(max(best_ask, precio_actual + t_sz), t_sz, modo="ceil")
+
+        if muro_opuesto_px > 0.0:
+            px_front_wall = mcs.cuantizar_tick(muro_opuesto_px - t_sz, t_sz, modo="floor")
+            piso_min_wall = precio_entrada * (1.0 + max(0.00115, float(cfg.TRINQUETE_BE_OFFSET_PCT) + 0.0004))
+            if px_front_wall >= max(best_ask, piso_min_wall):
+                px_obj = min(px_obj, px_front_wall) if px_obj > px_front_wall else px_obj
+
         if px_obj <= precio_entrada:
             return False, 0.0
         return True, px_obj
     else:
         if impulso_fuerte_en_curso:
-            px_cresta = precio_entrada * (1.0 - 0.00185)
+            px_cresta = precio_entrada * (1.0 - target_cresta_pct)
             px_obj = mcs.cuantizar_tick(min(best_bid - t_sz, precio_actual - (2.0 * t_sz), px_cresta), t_sz, modo="floor")
         else:
             px_obj = mcs.cuantizar_tick(min(best_bid, precio_actual - t_sz), t_sz, modo="floor")
+
+        if muro_opuesto_px > 0.0:
+            px_front_wall = mcs.cuantizar_tick(muro_opuesto_px + t_sz, t_sz, modo="ceil")
+            techo_max_wall = precio_entrada * (1.0 - max(0.00115, float(cfg.TRINQUETE_BE_OFFSET_PCT) + 0.0004))
+            if px_front_wall <= min(best_bid, techo_max_wall):
+                px_obj = max(px_obj, px_front_wall) if px_obj < px_front_wall else px_obj
+
         if px_obj >= precio_entrada:
             return False, 0.0
         return True, px_obj
@@ -66,7 +82,7 @@ def calcular_intervalo_repeg_salida_maker(motivo: str) -> float:
         return float(cfg.COSECHA_REPEG_INTERVALO_SEG)
     return 1.80
 
-# === [TERPSICHORA-BE-RATCHET-ENFORCER-V1] ===
+
 def verificar_disparo_fisico_trinquete_be(
     side: str,
     trinquete_be_armado: bool,
@@ -75,12 +91,6 @@ def verificar_disparo_fisico_trinquete_be(
     current_price: float,
     be_offset_pct: float = 0.00065,
 ) -> tuple[bool, float]:
-    """
-    Garantiza fisicamente que una vez armado el Early Break-Even Ratchet
-    (ej. SL 0.03442 en Trade #5 WAL SHORT), si el precio regresa y toca
-    el nivel ratcheteado, se dispare la evacuacion inmediata cancelando
-    cualquier orden Phase 2 Maker Shield colgada.
-    """
     if not trinquete_be_armado or current_price <= 0.0 or entry_price <= 0.0:
         return False, float(sl_actual)
     side_u = str(side).upper()

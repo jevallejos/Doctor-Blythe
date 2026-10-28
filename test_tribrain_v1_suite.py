@@ -111,6 +111,25 @@ class MockExchangeBybitUTA:
                 return dict(o)
         return {"id": order_id, "symbol": symbol, "status": "canceled", "filled": 0.0}
 
+    async def edit_order(
+        self,
+        order_id: str,
+        symbol: str,
+        order_type: str,
+        side: str,
+        amount: float,
+        price: Optional[float] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        for o in reversed(self.ordenes_creadas):
+            if o["id"] == order_id and o["status"] == "open":
+                if price is not None and price > 0.0:
+                    o["price"] = float(price)
+                    o["average"] = float(price)
+                o["amount"] = float(amount)
+                return dict(o)
+        return await self.create_order(symbol, order_type, side, amount, price, params)
+
     async def cancel_order(self, order_id: str, symbol: str) -> Dict[str, Any]:
         self.ordenes_canceladas.append(order_id)
         for o in self.ordenes_creadas:
@@ -349,6 +368,12 @@ async def ejecutar_suite_certificacion_v1() -> int:
         ex_fill, "ZEREBRO/USDT:USDT", "LONG", sig_l, tick_size=0.00001, step_size=0.1, ttl_override=0.2
     )
     assert pos_open is not None and len(ex_fill.stops_servidor) == 1
+    m_ask_w, m_bid_w, v_long_r, _ = rad.mcl.calcular_perfil_muros_vacio_l2(
+        [(0.03000 - i * 0.00001, 1500.0) for i in range(12)],
+        [(0.03001 + i * 0.00001, 9000.0 if i == 5 else 200.0) for i in range(15)],
+        0.030005,
+    )
+    assert m_ask_w == 0.03006 and v_long_r > 1.20
     ram.ESTADO_GLOBAL.posiciones_activas.clear()
     ram.log_operativo(" [13/18] Penny-Jump Quoting (0.0499->0.0500 Long | 0.0502->0.0501 Short) and MarkPrice SL Geometry validated.")
 

@@ -144,8 +144,10 @@ class RadarVolatilidadHFT:
         if not bids_raw or not asks_raw:
             return False, "EMPTY_ORDERBOOK", None
 
-        bids: List[Tuple[float, float]] = [(float(b[0]), float(b[1])) for b in bids_raw[:5]]
-        asks: List[Tuple[float, float]] = [(float(a[0]), float(a[1])) for a in asks_raw[:5]]
+        bids_25: List[Tuple[float, float]] = [(float(b[0]), float(b[1])) for b in bids_raw[:25]]
+        asks_25: List[Tuple[float, float]] = [(float(a[0]), float(a[1])) for a in asks_raw[:25]]
+        bids: List[Tuple[float, float]] = bids_25[:5]
+        asks: List[Tuple[float, float]] = asks_25[:5]
         best_bid, best_bid_qty = bids[0]
         best_ask, best_ask_qty = asks[0]
         if best_bid <= 0.0 or best_ask <= 0.0 or best_ask < best_bid:
@@ -268,6 +270,10 @@ class RadarVolatilidadHFT:
         metrica.percentil_24h = percentil_24h
         metrica.ultimo_shock_lyapunov_ts = est.ultimo_shock_lyapunov_ts
         metrica.ultimo_pulso_toxico_hawkes_ts = est.ultimo_pulso_toxico_ts
+        muro_ask_l2, muro_bid_l2, vacio_l_l2, vacio_s_l2 = mcl.calcular_perfil_muros_vacio_l2(bids_25, asks_25, mid)
+        metrica.muro_ask_px = muro_ask_l2
+        metrica.muro_bid_px = muro_bid_l2
+        metrica.vacio_l2_ratio = vacio_l_l2 if z_score <= 0.0 else vacio_s_l2
 
         if symbol == cfg.PAR_LIDER_MACRO:
             self._verificar_veto_macro_btc("LONG", ahora)

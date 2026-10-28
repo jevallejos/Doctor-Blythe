@@ -141,6 +141,9 @@ class MetricaTick:
     phase_latch_dir: str = ""
     phase_latch_z_peak: float = 0.0
     phase_latch_ema_dist: float = 0.0
+    muro_ask_px: float = 0.0
+    muro_bid_px: float = 0.0
+    vacio_l2_ratio: float = 1.0
 
 
 @dataclasses.dataclass(slots=True)

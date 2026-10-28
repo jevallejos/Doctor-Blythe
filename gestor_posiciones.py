@@ -489,16 +489,23 @@ class GestorPosicionesChronosTriz:
                 and pos.motivo_salida_pendiente != "TRINQUETE_BE_MAKER"
             )
             if (urgencia_be or (ahora - pos.ultimo_repeg_salida_ts) >= intervalo_repeg) and px_target != pos.precio_orden_salida:
-                await exchange.cancel_order(pos.orden_salida_id, pos.symbol)
-                nueva = await exchange.create_order(
+                params_exit_po = {"timeInForce": "PostOnly", "postOnly": True, "reduceOnly": True}
+                accion_ex, nid_ex, ord_ex = await eje.enmendar_o_reemplazar_orden_maker(
+                    exchange,
+                    pos.orden_salida_id,
                     pos.symbol,
-                    "limit",
                     side_close,
                     pos.contratos,
                     px_target,
-                    {"timeInForce": "PostOnly", "postOnly": True, "reduceOnly": True},
+                    params_exit_po,
+                    precio_anterior=pos.precio_orden_salida,
                 )
-                pos.orden_salida_id = str(nueva.get("id", pos.orden_salida_id))
+                if accion_ex == "FILLED_IN_TRANSIT":
+                    px_fill_tr = float(ord_ex.get("average") or ord_ex.get("price") or pos.precio_orden_salida)
+                    return await self._finalizar_cierre_posicion(
+                        pos, px_fill_tr, pos.motivo_salida_pendiente or motivo, es_maker=True
+                    )
+                pos.orden_salida_id = nid_ex
                 pos.precio_orden_salida = px_target
                 pos.ultimo_repeg_salida_ts = ahora
                 pos.repeg_salida_count += 1
@@ -667,10 +674,17 @@ class GestorPosicionesChronosTriz:
                     exchange, pos, best_bid, best_ask, tick_size, "TRAILING_RATCHET_MAKER", ts_now, ofi_5s=ofi_5s
                 )
 
-        # 3. Phase 2 Stall Harvest & [DIAMOND] Phase 2 Maker Shield PostOnly (16s+)
+        # 3. Phase 2 Stall Harvest & [DIAMOND] Phase 2 Maker Shield PostOnly (16s+) with L2 Wall/Vacuum Intelligence
+        muro_op_l2 = (
+            (m_live.muro_ask_px if pos.direccion == "LONG" else m_live.muro_bid_px)
+            if m_live is not None
+            else 0.0
+        )
+        vacio_rat_l2 = m_live.vacio_l2_ratio if m_live is not None else 1.0
         diamante_ok, px_diamante = medf.evaluar_activacion_escudo_diamante_fase2(
             pos.direccion, pos.precio_entrada, precio_actual, best_bid, best_ask,
             edad, pnl_pct, lambda_w, tick_size, fase2_ya_ejecutada=pos.cosecha_activa,
+            muro_opuesto_px=muro_op_l2, vacio_l2_ratio=vacio_rat_l2,
         )
         if (
             (
@@ -683,7 +697,7 @@ class GestorPosicionesChronosTriz:
                 )
                 or (edad >= 16.0 and pnl_pct >= umbral_stall and (lambda_w <= 0.15 or ((ofi_5s if pos.direccion == 'LONG' else -ofi_5s) <= 0.08)))
             )
-            and (not mmw.debe_inhibir_maker_unwind_en_rally(pos.direccion, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.symbol))
+            and (not mmw.debe_inhibir_maker_unwind_en_rally(pos.direccion, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.symbol, vacio_l2_ratio=vacio_rat_l2))
         ):
             if not pos.trinquete_be_activo and pnl_pct >= (float(cfg.TRINQUETE_BE_OFFSET_PCT) + 0.00025):
                 piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)

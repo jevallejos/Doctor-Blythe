@@ -76,6 +76,66 @@ async def consultar_orden_segura(
         return {"id": orden_id, "status": "open", "filled": 0.0, "price": precio_fallback}
 
 
+async def enmendar_o_reemplazar_orden_maker(
+    exchange: Any,
+    orden_id: str,
+    symbol: str,
+    side_ccxt: str,
+    contratos: float,
+    nuevo_px: float,
+    params_post_only: Dict[str, Any],
+    precio_anterior: float = 0.0,
+) -> Tuple[str, str, Dict[str, Any]]:
+    """
+    Ejecuta enmienda atomica Bybit UTA V5 (/v5/order/amend via exchange.edit_order)
+    en 1 solo RTT conservando prioridad y reserva de margen.
+    Si el exchange o mock no soporta edit_order o la orden requiere reemplazo,
+    ejecuta fallback seguro con verificacion de fill en transito.
+    Retorna (estado_accion, nuevo_orden_id, dict_orden).
+    """
+    if hasattr(exchange, "edit_order"):
+        try:
+            editada = await exchange.edit_order(
+                orden_id,
+                symbol,
+                "limit",
+                side_ccxt,
+                contratos,
+                nuevo_px,
+                params_post_only,
+            )
+            nuevo_id = str(editada.get("id") or orden_id)
+            return "AMENDED", nuevo_id, editada
+        except Exception as exc_ed:
+            txt_e = str(exc_ed).lower()
+            if any(k in txt_e for k in ("110001", "170213", "110017", "filled", "closed", "not exists", "too late")):
+                if not cfg.es_modo_test():
+                    est_chk = await consultar_orden_segura(exchange, orden_id, symbol, precio_anterior or nuevo_px)
+                    st_c = str(est_chk.get("status", "")).lower()
+                    if st_c in ("closed", "filled") or float(est_chk.get("filled", 0.0) or 0.0) > 0.0:
+                        return "FILLED_IN_TRANSIT", orden_id, est_chk
+
+    try:
+        await exchange.cancel_order(orden_id, symbol)
+    except Exception:
+        pass
+    if not cfg.es_modo_test():
+        est_pre = await consultar_orden_segura(exchange, orden_id, symbol, precio_anterior or nuevo_px)
+        if float(est_pre.get("filled", 0.0) or 0.0) > 0.0 or str(est_pre.get("status", "")).lower() in ("closed", "filled"):
+            return "FILLED_IN_TRANSIT", orden_id, est_pre
+
+    nueva_orden = await exchange.create_order(
+        symbol,
+        "limit",
+        side_ccxt,
+        contratos,
+        nuevo_px,
+        params_post_only,
+    )
+    nuevo_id = str(nueva_orden.get("id") or orden_id)
+    return "REPLACED", nuevo_id, nueva_orden
+
+
 class EjecutorSniperBybit:
     """
     Moallemi-Stoikov Zero-Adverse-Selection PostOnly Execution Engine.

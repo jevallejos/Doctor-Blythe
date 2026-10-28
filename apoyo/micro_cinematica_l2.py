@@ -324,3 +324,69 @@ def calcular_irreversibilidad_temporal_lob(
     acople_ofi = 0.15 * abs(float(ofi_actual)) if (signos[-1] * ofi_actual) > 0.0 else 0.0
     entropia = max(0.0, min(1.0, kl_cruce + kl_racha + kl_energia + acople_ofi))
     return round(entropia, 4)
+
+
+def calcular_perfil_muros_vacio_l2(
+    bids_full: List[Tuple[float, float]],
+    asks_full: List[Tuple[float, float]],
+    mid: float,
+) -> Tuple[float, float, float, float]:
+    """
+    Escanea hasta los primeros 25 niveles del stream Bybit orderbook.50 en O(1):
+    1. Detecta el primer Muro de Liquidez (Liquidity Wall >= 2.8x profundidad media
+       y >= 28% del volumen Top-5) dentro del corredor de cosecha [0.10%, 0.45%].
+    2. Calcula la Razon de Vacio Profundo (Vacuum Ratio) entre el soporte L1..L10
+       y la resistencia L2..L15 opuesta para dejar correr runners sin resistencia.
+    Retorna (muro_ask_px, muro_bid_px, vacio_long_ratio, vacio_short_ratio).
+    """
+    if mid <= 0.0 or (len(bids_full) <= 2 and len(asks_full) <= 2):
+        return 0.0, 0.0, 1.0, 1.0
+
+    b_slice = bids_full[:25]
+    a_slice = asks_full[:25]
+    top5_bid_v = sum(q for _, q in b_slice[:5])
+    top5_ask_v = sum(q for _, q in a_slice[:5])
+    mean_bid_v = (sum(q for _, q in b_slice) / len(b_slice)) if b_slice else 0.0
+    mean_ask_v = (sum(q for _, q in a_slice) / len(a_slice)) if a_slice else 0.0
+
+    umbral_muro_ask = max(mean_ask_v * 2.8, top5_ask_v * 0.28, 1e-9)
+    umbral_muro_bid = max(mean_bid_v * 2.8, top5_bid_v * 0.28, 1e-9)
+
+    muro_ask_px = 0.0
+    for px_a, qty_a in a_slice[1:22]:
+        dist_a = (px_a - mid) / mid
+        if dist_a < 0.00095:
+            continue
+        if dist_a > 0.0045:
+            break
+        if qty_a >= umbral_muro_ask:
+            muro_ask_px = float(px_a)
+            break
+
+    muro_bid_px = 0.0
+    for px_b, qty_b in b_slice[1:22]:
+        dist_b = (mid - px_b) / mid
+        if dist_b < 0.00095:
+            continue
+        if dist_b > 0.0045:
+            break
+        if qty_b >= umbral_muro_bid:
+            muro_bid_px = float(px_b)
+            break
+
+    soporte_bid_10 = sum(q for _, q in b_slice[:10])
+    resistencia_ask_2_15 = sum(q for _, q in a_slice[1:15])
+    soporte_ask_10 = sum(q for _, q in a_slice[:10])
+    resistencia_bid_2_15 = sum(q for _, q in b_slice[1:15])
+
+    vacio_long = (
+        round(max(0.20, min(3.00, soporte_bid_10 / max(1e-9, resistencia_ask_2_15))), 4)
+        if resistencia_ask_2_15 > 0.0
+        else 1.0
+    )
+    vacio_short = (
+        round(max(0.20, min(3.00, soporte_ask_10 / max(1e-9, resistencia_bid_2_15))), 4)
+        if resistencia_bid_2_15 > 0.0
+        else 1.0
+    )
+    return muro_ask_px, muro_bid_px, vacio_long, vacio_short
