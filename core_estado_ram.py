@@ -48,6 +48,11 @@ def _obtener_stream_log(ruta: pathlib.Path) -> Any:
 
 
 def cerrar_descriptores_log() -> None:
+    try:
+        if "ESTADO_GLOBAL" in globals() and not cfg.es_modo_test():
+            ESTADO_GLOBAL.procesar_cola_forense_15s(time.time(), forzar_flush=True)
+    except Exception:
+        pass
     for key, fh in list(_DESCRIPTORES_LOG.items()):
         try:
             if fh and not fh.closed:
@@ -255,6 +260,8 @@ class EventoForensePendiente:
     motivo: str
     precio_ref: float
     vector_mercado: Dict[str, Any]
+    min_px_ventana: float = 0.0
+    max_px_ventana: float = 0.0
 
 
 @dataclasses.dataclass(slots=True)
@@ -271,6 +278,8 @@ class EventoPostCierrePendiente:
     map_usdt: float
     px_15s: float = 0.0
     px_30s: float = 0.0
+    min_px_ventana: float = 0.0
+    max_px_ventana: float = 0.0
 
 
 
@@ -475,25 +484,47 @@ class EstadoGlobalRAM:
             )
         )
 
-    def procesar_cola_forense_15s(self, ahora: Optional[float] = None) -> int:
+    def procesar_cola_forense_15s(self, ahora: Optional[float] = None, forzar_flush: bool = False) -> int:
         ts_now = ahora if ahora is not None else time.time()
         procesados = 0
-        while self.cola_forense_15s and (ts_now - self.cola_forense_15s[0].timestamp) >= 15.0:
+        for ev_w in list(self.cola_forense_15s):
+            m_w = self.metricas_ticks.get(ev_w.symbol)
+            px_w = m_w.mid if (m_w and m_w.mid > 0.0) else ev_w.precio_ref
+            if px_w > 0.0:
+                if ev_w.min_px_ventana <= 0.0 or px_w < ev_w.min_px_ventana:
+                    ev_w.min_px_ventana = px_w
+                if ev_w.max_px_ventana <= 0.0 or px_w > ev_w.max_px_ventana:
+                    ev_w.max_px_ventana = px_w
+
+        umbral_edad_15 = 2.0 if forzar_flush else 15.0
+        nocional_est = max(
+            float(cfg.ORDEN_MINIMA_BYBIT_USDT),
+            self.capital_total_uta * float(cfg.KELLY_FRACCION_BASE) * float(cfg.APALANCAMIENTO_OPERATIVO),
+        )
+        while self.cola_forense_15s and (ts_now - self.cola_forense_15s[0].timestamp) >= umbral_edad_15:
             ev = self.cola_forense_15s.popleft()
             m = self.metricas_ticks.get(ev.symbol)
             precio_15s = m.mid if (m and m.mid > 0.0) else ev.precio_ref
-            if ev.direccion.upper() in ("BUY", "LONG"):
+            min_px = min(ev.min_px_ventana or precio_15s, precio_15s, ev.precio_ref)
+            max_px = max(ev.max_px_ventana or precio_15s, precio_15s, ev.precio_ref)
+            es_long = ev.direccion.upper() in ("BUY", "LONG")
+            if es_long:
                 excursion_pct = (precio_15s - ev.precio_ref) / ev.precio_ref
+                peor_exc_pct = (min_px - ev.precio_ref) / ev.precio_ref
+                mejor_exc_pct = (max_px - ev.precio_ref) / ev.precio_ref
             else:
                 excursion_pct = (ev.precio_ref - precio_15s) / ev.precio_ref
+                peor_exc_pct = (ev.precio_ref - max_px) / ev.precio_ref
+                mejor_exc_pct = (ev.precio_ref - min_px) / ev.precio_ref
 
-            if excursion_pct <= -0.0018:
+            exc_eval_save = min(excursion_pct, peor_exc_pct)
+            exc_eval_miss = max(excursion_pct, mejor_exc_pct)
+            if exc_eval_save <= -0.0018:
                 veredicto = "CAPITAL_SAVED_TRUE_SHIELD"
-            elif excursion_pct >= 0.0024:
+            elif exc_eval_miss >= 0.0024 and exc_eval_save > -0.0012:
                 veredicto = "FALSE_REJECTION_OPPORTUNITY_LOST"
             else:
                 veredicto = "NEUTRAL_CHOP_FILTERED"
-
             registro = {
                 "tipo_evento": "AUDITORIA_ESCUDO_15S",
                 "timestamp": round(ev.timestamp, 3),
@@ -505,13 +536,15 @@ class EstadoGlobalRAM:
                 "precio_bloqueo": ev.precio_ref,
                 "precio_15s": precio_15s,
                 "excursion_15s_pct": round(excursion_pct * 100.0, 4),
-                "ahorro_estimado_usdt": round(max(0.0, -excursion_pct) * max(float(cfg.ORDEN_MINIMA_BYBIT_USDT), self.capital_total_uta * float(cfg.KELLY_FRACCION_BASE) * float(cfg.APALANCAMIENTO_OPERATIVO)), 4),
+                "peor_excursion_15s_pct": round(peor_exc_pct * 100.0, 4),
+                "mejor_excursion_15s_pct": round(mejor_exc_pct * 100.0, 4),
+                "ahorro_estimado_usdt": round(max(0.0, -exc_eval_save) * nocional_est, 4),
                 "veredicto_oraculo_15s": veredicto,
                 "vector_entrada": ev.vector_mercado,
             }
             guardar_registro_baul_forense(registro)
             procesados += 1
-        procesados += self.procesar_cola_post_cierre_60s(ts_now)
+        procesados += self.procesar_cola_post_cierre_60s(ts_now, forzar_flush=forzar_flush)
         return procesados
 
     def encolar_auditoria_post_cierre(self, registro_trade: Dict[str, Any]) -> None:
@@ -536,19 +569,25 @@ class EstadoGlobalRAM:
         except Exception:
             pass
 
-    def procesar_cola_post_cierre_60s(self, ahora: Optional[float] = None) -> int:
+    def procesar_cola_post_cierre_60s(self, ahora: Optional[float] = None, forzar_flush: bool = False) -> int:
         ts_now = ahora if ahora is not None else time.time()
         completados = 0
         for ev in list(self.cola_post_cierre_60s):
             edad = ts_now - ev.timestamp_cierre
             m = self.metricas_ticks.get(ev.symbol)
             px_now = m.mid if (m and m.mid > 0.0) else ev.precio_salida
+            if px_now > 0.0:
+                if ev.min_px_ventana <= 0.0 or px_now < ev.min_px_ventana:
+                    ev.min_px_ventana = px_now
+                if ev.max_px_ventana <= 0.0 or px_now > ev.max_px_ventana:
+                    ev.max_px_ventana = px_now
             if edad >= 15.0 and ev.px_15s <= 0.0:
                 ev.px_15s = px_now
             if edad >= 30.0 and ev.px_30s <= 0.0:
                 ev.px_30s = px_now
 
-        while self.cola_post_cierre_60s and (ts_now - self.cola_post_cierre_60s[0].timestamp_cierre) >= 60.0:
+        umbral_edad_60 = 3.0 if forzar_flush else 60.0
+        while self.cola_post_cierre_60s and (ts_now - self.cola_post_cierre_60s[0].timestamp_cierre) >= umbral_edad_60:
             ev = self.cola_post_cierre_60s.popleft()
             m = self.metricas_ticks.get(ev.symbol)
             px_60s = m.mid if (m and m.mid > 0.0) else ev.precio_salida

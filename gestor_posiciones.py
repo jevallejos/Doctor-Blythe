@@ -228,6 +228,12 @@ class GestorPosicionesChronosTriz:
             f"{pos.precio_entrada} -> {precio_salida} | {pnl_neto_pct * 100:+.2f} % "
             f"({pnl_neto_usdt:+.4f} USDT) in {int(duracion)}s"
         )
+        m_close = ram.ESTADO_GLOBAL.metricas_ticks.get(pos.symbol)
+        mfe_cap_ratio = (
+            round(pnl_bruto_pct / pos.max_pnl_pct_alcanzado, 4)
+            if pos.max_pnl_pct_alcanzado > 0.0002
+            else 0.0
+        )
         vector_in = {
             "z_entry": pos.z_entrada,
             "dp_pct": round(pos.dp_entrada_pct * 100.0, 4),
@@ -238,6 +244,10 @@ class GestorPosicionesChronosTriz:
             "lyapunov_entry": pos.lyapunov_entrada,
             "volatilidad_bv": pos.volatilidad_bv_entrada,
             "percentil_24h": pos.percentil_entrada,
+            "lambda_wald_exit": pos.lambda_wald,
+            "repeg_salida_count": pos.repeg_salida_count,
+            "mfe_capture_ratio": mfe_cap_ratio,
+            "vacio_l2_ratio": round(m_close.vacio_l2_ratio, 3) if m_close is not None else 1.0,
         }
         reg = st.registrar_operacion_cerrada(
             symbol=pos.symbol,
@@ -507,6 +517,7 @@ class GestorPosicionesChronosTriz:
                     )
                 pos.orden_salida_id = nid_ex
                 pos.precio_orden_salida = px_target
+                pos.motivo_salida_pendiente = motivo
                 pos.ultimo_repeg_salida_ts = ahora
                 pos.repeg_salida_count += 1
         except Exception as exc:
