@@ -1,0 +1,45 @@
+{
+  "estrategia": "HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0",
+  "codigo": "DOCTOR-BLYTHE-TERPSICHORA-V1.0",
+  "timestamp_utc": "2026-10-27 23:55:00 UTC",
+  "metricas_72h": {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "scratches": 0,
+    "effective_wr_pct": 0.0,
+    "pnl_neto_usdt": 0.0,
+    "profit_factor": 1.0,
+    "lambda_bayes": 0.0,
+    "ahorro_scratch_usdt": 0.0,
+    "cosechas_triz": 0,
+    "cvar_10pct_usdt": 0.0
+  },
+  "parametros_calibrados": {
+    "KELLY_FRACCION_BASE": 0.55,
+    "Z_SCORE_UMBRAL_HIGH_BETA": -2.5,
+    "Z_SCORE_UMBRAL_TIER1": -2.15,
+    "OFI_MIN_ENTRADA": 0.05,
+    "MAKER_SCRATCH_TIEMPO_SEG": 18.0,
+    "COSECHA_TRIZ_ACTIVACION_PCT": 0.0014,
+    "SL_INTERNO_PCT": 0.0045,
+    "TIEMPO_MAX_HOLD_SEG": 90.0
+  },
+  "controlador_autonomo": {
+    "w1_ofi_long": 0.05,
+    "w2_btc_beta": 0.32,
+    "w3_tp_maker_pct": 0.0014,
+    "w4_unwind_seg": 42.0,
+    "w4_sl_decay_pct": 0.0032,
+    "w5_kelly_short": 0.6,
+    "w5_kelly_long": 0.48,
+    "hurst_cap_short_mod": 0.485,
+    "mfe_stall_harvest_pct": 0.0011,
+    "sesgo_escudo_long": 0.0,
+    "sesgo_escudo_short": 0.0,
+    "sens_ofi_abort_cola": -0.35,
+    "sens_q_l1_hold_ratio": 0.25,
+    "sens_scratch_edad_rebote_seg": 32.0,
+    "sens_climax_hurst_override": 0.0
+  }
+}

@@ -59,6 +59,7 @@ def calcular_lambda_wald_sprt(
     lambda_prev: float = 0.0,
     vol_bv: float = cfg.VOLATILIDAD_BV_PISO_MIN,
     hurst: float = 0.42,
+    direccion: str = "LONG",
 ) -> float:
     return mcw.calcular_lambda_wald_sprt(
         pnl_pct=pnl_pct,
@@ -68,6 +69,7 @@ def calcular_lambda_wald_sprt(
         lambda_prev=lambda_prev,
         vol_bv=vol_bv,
         hurst=hurst,
+        direccion=direccion,
     )
 
 
@@ -205,6 +207,8 @@ class GestorPosicionesChronosTriz:
 
         if pnl_neto_usdt > 0.0:
             etiqueta = "[WIN]"
+            cd_win = float(cfg.obtener_aux("COOLDOWN_POST_CIERRE_GANADOR_SEG", 25.0))
+            ram.ESTADO_GLOBAL.activar_cooldown_par(pos.symbol, cd_win, motivo="WIN_COOLDOWN")
         elif "SCRATCH" in motivo.upper():
             etiqueta = "[SCRATCH]"
             cd_seg = float(cfg.obtener_aux("COOLDOWN_MAKER_SCRATCH_18S", 75.0))
@@ -528,6 +532,7 @@ class GestorPosicionesChronosTriz:
             lambda_prev=pos.lambda_wald,
             vol_bv=pos.volatilidad_bv_entrada,
             hurst=h_live,
+            direccion=pos.direccion,
         )
         lambda_w = pos.lambda_wald
 
@@ -642,7 +647,7 @@ class GestorPosicionesChronosTriz:
             if pos.max_pnl_pct_alcanzado >= 0.0042 and pnl_pct >= 0.0042:
                 ram.log_operativo(f"[SNIPER] {pos.symbol} Trailing Stop activated (PnL {pnl_pct * 100:+.2f}%)")
             flujo_agotado_cresta = mcw.evaluar_agotamiento_cresta_wald(
-                pos.max_pnl_pct_alcanzado, pnl_pct, ofi_5s, edad, lambda_w, kappa
+                pos.max_pnl_pct_alcanzado, pnl_pct, ofi_5s, edad, lambda_w, kappa, pos.direccion
             )
             if flujo_agotado_cresta:
                 pos.cosecha_activa = True
@@ -658,7 +663,7 @@ class GestorPosicionesChronosTriz:
                 )
 
         # 3. Phase 2 Stall Harvest & [DIAMOND] Phase 2 Maker Shield PostOnly (16s+)
-        diamante_ok, _ = medf.evaluar_activacion_escudo_diamante_fase2(
+        diamante_ok, px_diamante = medf.evaluar_activacion_escudo_diamante_fase2(
             pos.direccion, pos.precio_entrada, precio_actual, best_bid, best_ask,
             edad, pnl_pct, lambda_w, tick_size, fase2_ya_ejecutada=pos.cosecha_activa,
         )
@@ -671,7 +676,7 @@ class GestorPosicionesChronosTriz:
                 or mdup.evaluar_desarme_maker_unwind_42s(
                     pos.direccion, edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.cosecha_activa
                 )
-                or (edad >= 16.0 and pnl_pct >= umbral_stall and (lambda_w <= 0.15 or ofi_5s <= 0.08))
+                or (edad >= 16.0 and pnl_pct >= umbral_stall and (lambda_w <= 0.15 or ((ofi_5s if pos.direccion == 'LONG' else -ofi_5s) <= 0.08)))
             )
             and (not mmw.debe_inhibir_maker_unwind_en_rally(pos.direccion, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.symbol))
         ):

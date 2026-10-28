@@ -183,7 +183,7 @@ _limites_shadow_gate: Dict[str, Tuple[float, float]] = {
     "Z_SCORE_UMBRAL_TIER1": (-2.90, -1.95),
     "OFI_MIN_ENTRADA": (0.05, 0.25),
     "MAKER_SCRATCH_TIEMPO_SEG": (18.0, 45.0),
-    "COSECHA_TRIZ_ACTIVACION_PCT": (0.0016, 0.0045),
+    "COSECHA_TRIZ_ACTIVACION_PCT": (0.0012, 0.0045),
     "SL_INTERNO_PCT": (0.0030, 0.0055),
     "TIEMPO_MAX_HOLD_SEG": (60.0, 120.0),
 }
@@ -314,6 +314,17 @@ def recargar_calibracion_oos_si_cambio(ruta_json: str | pathlib.Path | None = No
             SL_INTERNO_PCT = aplicados["SL_INTERNO_PCT"]
         if "TIEMPO_MAX_HOLD_SEG" in aplicados:
             TIEMPO_MAX_HOLD_SEG = aplicados["TIEMPO_MAX_HOLD_SEG"]
+        try:
+            import core_estado_ram as _ram_mod
+            ctrl_json = raw_data.get("controlador_autonomo")
+            if isinstance(ctrl_json, dict):
+                for k_c, v_c in ctrl_json.items():
+                    if k_c in _ram_mod.ESTADO_GLOBAL.controlador_autonomo:
+                        _ram_mod.ESTADO_GLOBAL.controlador_autonomo[k_c] = float(v_c)
+            _ram_mod.ESTADO_GLOBAL.controlador_autonomo["w1_ofi_long"] = float(OFI_MIN_ENTRADA)
+            _ram_mod.ESTADO_GLOBAL.controlador_autonomo["w3_tp_maker_pct"] = float(COSECHA_TRIZ_ACTIVACION_PCT)
+        except Exception:
+            pass
 
         _ultimo_mtime_oos = st_mtime
         elapsed_ms = (time.perf_counter() - t0) * 1000.0

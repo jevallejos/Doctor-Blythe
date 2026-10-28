@@ -342,7 +342,8 @@ class RadarVolatilidadHFT:
                 hawkes_min_req=cfg.HAWKES_INTENSIDAD_MIN_LONG,
                 imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
             )
-            if not ok_abs_l and "WAIT_BID_ABSORPTION" in mot_abs_l:
+            vertice_ok_l = confirmar_disparo_vertice_armado(z_score, hurst, acel_lyap, ofi_inst, est.ofi_ema_5s, latch_long_vigente, "LONG", ofi_min_long)
+            if (not ok_abs_l and not vertice_ok_l) and "WAIT_BID_ABSORPTION" in mot_abs_l:
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
                     est.ultimo_log_warn_ts = ahora
                     ram.log_operativo(
@@ -353,15 +354,27 @@ class RadarVolatilidadHFT:
 
             if ahora < ram.ESTADO_GLOBAL.btc_veto_long_hasta:
                 m_b = ram.ESTADO_GLOBAL.metricas_ticks.get(cfg.PAR_LIDER_MACRO)
-                if m_b is not None and mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(
-                    "LONG",
-                    ram.ESTADO_GLOBAL.btc_veto_long_hasta - ahora,
-                    m_b.z_score,
-                    m_b.ofi_profundo,
-                    ofi_inst,
-                    hurst,
-                    acel_lyap,
-                    cfg.BTC_VETO_COOLDOWN_SEG,
+                if m_b is not None and (
+                    mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(
+                        "LONG",
+                        ram.ESTADO_GLOBAL.btc_veto_long_hasta - ahora,
+                        m_b.z_score,
+                        m_b.ofi_profundo,
+                        ofi_inst,
+                        hurst,
+                        acel_lyap,
+                        cfg.BTC_VETO_COOLDOWN_SEG,
+                    )
+                    or evaluar_desbloqueo_dinamico_flujo_btc(
+                        m_b.z_score,
+                        m_b.ofi_profundo,
+                        m_b.dp_pct,
+                        ofi_inst,
+                        hurst,
+                        acel_lyap,
+                        cfg.BTC_VETO_COOLDOWN_SEG - (ram.ESTADO_GLOBAL.btc_veto_long_hasta - ahora),
+                        "LONG",
+                    )
                 ):
                     ram.ESTADO_GLOBAL.btc_veto_long_hasta = 0.0
             ok_btc, motivo_btc = self._verificar_veto_macro_btc("LONG", ahora)

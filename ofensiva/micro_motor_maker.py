@@ -85,6 +85,9 @@ def evaluar_aborto_cola_moallemi(
         or (h_actual > 0.495 and not flujo_a_favor and ratio_cola < 0.85)
     )
 
+    ofi_dir = ofi_actual if direccion == 'LONG' else -ofi_actual
+    if not carrera_primer_paso_adversa and debe_proteger_orden_en_cola_por_flujo_favorable(ratio_cola, ofi_dir, h_actual, min_q_floor=hold_ratio_dyn):
+        return False, False
     if cola_erosionada or ofi_adverso or hurst_toxico:
         return True, bool(cola_erosionada)
     return False, False

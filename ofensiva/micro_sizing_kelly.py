@@ -16,10 +16,8 @@ def resolver_capital_base_uta(balance_libre_crudo: float) -> float:
     if est is None:
         return round(libre, 4)
     free_ram = float(getattr(est, "free_usdt", 0.0) or 0.0)
-    total_ram = float(getattr(est, "total_usdt", 0.0) or 0.0)
-    pos_activas = getattr(est, "posiciones_activas", {}) or {}
-    if len(pos_activas) == 0 and total_ram > 0.0 and 0.0 < free_ram < (total_ram * 0.85):
-        return round(max(free_ram, total_ram * 0.98), 4)
+    if libre > 0.0 and abs(libre - float(cfg.CAPITAL_BASE_HISTORICO_USDT)) > 1e-4:
+        return round(libre, 4)
     if free_ram > 0.0:
         return round(free_ram, 4)
     return round(libre, 4)
@@ -39,7 +37,6 @@ def calcular_dimension_kelly_uta(
         sig = inspect.signature(fn)
         bound = sig.bind(*args, **kwargs)
         bound.apply_defaults()
-
         balance_usado = 0.0
         for nombre_param, valor in list(bound.arguments.items()):
             if any(k in nombre_param.lower() for k in ("balance", "capital", "usdt", "libre", "equity")):
@@ -47,20 +44,19 @@ def calcular_dimension_kelly_uta(
                     balance_usado = sanear_balance_libre_slot_vacio(float(valor))
                     bound.arguments[nombre_param] = balance_usado
                     break
-
         kelly_f, margen_u, nocional_u = fn(*bound.args, **bound.kwargs)
-
         if balance_usado > 0.0 and not bool(getattr(cfg, "MODO_PAPER_TRADING", False)):
             est = getattr(ram, "ESTADO_GLOBAL", None)
             free_real = float(getattr(est, "free_usdt", balance_usado) or balance_usado)
-            base_cap = free_real if free_real >= ( float(getattr(cfg, "ORDEN_MINIMA_BYBIT_USDT", 5.5)) / 2.25 ) else balance_usado
             lev = float(getattr(cfg, "APALANCAMIENTO_OPERATIVO", 3))
-            max_nocional_seguro = round(base_cap * 0.75 * lev, 4)
             min_ord = float(getattr(cfg, "ORDEN_MINIMA_BYBIT_USDT", 5.5))
+            base_cap = free_real if free_real > 0.0 else balance_usado
+            max_nocional_seguro = round(base_cap * 0.78 * lev, 4)
             if max_nocional_seguro >= min_ord:
                 nocional_u = min(float(nocional_u), max_nocional_seguro)
-                margen_u = round(nocional_u / lev, 4)
-
+            else:
+                nocional_u = min(float(nocional_u), round(base_cap * 0.92 * lev, 4))
+            margen_u = round(nocional_u / lev, 4)
         return float(kelly_f), float(margen_u), float(nocional_u)
     except Exception:
         return fn(*args, **kwargs)
