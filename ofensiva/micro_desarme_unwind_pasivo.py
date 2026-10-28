@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Ofensivo #11: Gobernador de Cosecha por Estancamiento (MFE Stall)
-y Desarme Pasivo en Ganancia a los 42.0s ([MAKER_UNWIND]).
+y Desarme Pasivo en Ganancia a los 42.0s ([MAKER_UNWIND]) con Piso Neto.
 """
 import config_parametros as cfg
 import core_estado_ram as ram
@@ -23,13 +23,11 @@ def evaluar_cosecha_estancamiento_mfe(
     """
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
     umbral_stall = float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT))
-    if edad_seg < 16.0 or mfe_pct < umbral_stall or pnl_pct < piso_ganancia_neta_pct:
+    piso_efectivo = max(float(cfg.TRINQUETE_BE_OFFSET_PCT), float(piso_ganancia_neta_pct))
+    if edad_seg < 16.0 or mfe_pct < umbral_stall or pnl_pct < piso_efectivo:
         return False
-
-    flujo_agotado = (
-        (direccion == "LONG" and ofi_5s <= 0.05)
-        or (direccion == "SHORT" and ofi_5s >= -0.05)
-    )
+    es_long = str(direccion).upper() in ("BUY", "LONG")
+    flujo_agotado = (ofi_5s <= 0.05) if es_long else (ofi_5s >= -0.05)
     return bool(flujo_agotado)
 
 
@@ -43,17 +41,16 @@ def evaluar_desarme_maker_unwind_42s(
 ) -> bool:
     """
     Gobierna la activacion de [MAKER_UNWIND] al cumplirse w4_unwind_seg (42.0s),
-    inhibiendo el cierre si la posicion va acelerando en rally cerca de su MFE.
+    exigiendo cubrir al menos TRINQUETE_BE_OFFSET_PCT e inhibiendo el cierre
+    si la posicion va acelerando en rally cerca de su MFE.
     """
-    if cosecha_activa or pnl_pct <= 0.00050:
+    piso_min = max(0.00055, float(cfg.TRINQUETE_BE_OFFSET_PCT))
+    if cosecha_activa or pnl_pct < piso_min:
         return False
-
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
     unwind_seg = float(ctrl.get("w4_unwind_seg", 42.0))
     if edad_seg < unwind_seg:
         return False
-
     if mmw.debe_inhibir_maker_unwind_en_rally(direccion, pnl_pct, mfe_pct, ofi_5s):
         return False
-
     return True

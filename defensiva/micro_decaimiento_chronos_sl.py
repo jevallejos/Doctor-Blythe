@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Defensivo #7: Compresion Temporal Estocastica del Stop-Loss Interno
-(CHRONOS Time-Decay SL) para Posiciones Estancadas.
+(CHRONOS Time-Decay SL) para Posiciones Estancadas sin Zona Muerta con Early BE.
 """
 import config_parametros as cfg
 import core_estado_ram as ram
@@ -19,22 +19,21 @@ def calcular_sl_interno_chronos(
 ) -> float:
     """
     Si una posicion supera w4_unwind_seg (42s) sin haber activado el trinquete
-    Break-Even y con MFE < +0.10%, comprime el Stop-Loss interno desde -0.45%
-    hacia -w4_sl_decay_pct (-0.32%), cuantizado al tick_size.
+    Break-Even y con MFE < mfe_stall_harvest_pct (+0.11%), comprime el Stop-Loss
+    interno desde -0.45% hacia -w4_sl_decay_pct (-0.32%) de forma convexa.
     """
     if trinquete_be_activo or precio_entrada <= 0.0:
         return sl_actual
-
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
     unwind_seg = float(ctrl.get("w4_unwind_seg", 42.0))
-    if edad_seg < unwind_seg or mfe_pct >= 0.0010:
+    umbral_stall = float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT))
+    if edad_seg < unwind_seg or mfe_pct >= umbral_stall:
         return sl_actual
-
     sl_decay_pct = float(ctrl.get("w4_sl_decay_pct", 0.0032))
     sl_base_pct = float(cfg.SL_INTERNO_PCT)
-    progreso = min(1.0, max(0.0, (edad_seg - unwind_seg) / 30.0))
-    dist_pct = sl_base_pct - progreso * max(0.0, sl_base_pct - sl_decay_pct)
-
+    progreso_lin = min(1.0, max(0.0, (edad_seg - unwind_seg) / 30.0))
+    progreso_convexo = progreso_lin ** 0.85
+    dist_pct = sl_base_pct - (progreso_convexo * max(0.0, sl_base_pct - sl_decay_pct))
     t_sz = max(1e-8, float(tick_size))
     if str(direccion).upper() in ("BUY", "LONG"):
         candidato = mcs.cuantizar_tick(precio_entrada * (1.0 - dist_pct), t_sz, modo="floor")

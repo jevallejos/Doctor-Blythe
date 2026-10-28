@@ -383,6 +383,7 @@ class GestorPosicionesChronosTriz:
         motivo: str,
         ahora: float,
         ofi_5s: float = 0.0,
+        precio_objetivo_custom: float = 0.0,
     ) -> Optional[Dict[str, Any]]:
         if pos.cerrada:
             return None
@@ -394,6 +395,10 @@ class GestorPosicionesChronosTriz:
                 pos.direccion, pos.precio_entrada, best_bid, best_ask, tick_size, ofi_dir
             )
             px_target = eje.cuantizar_tick(px_target, tick_size)
+        elif precio_objetivo_custom > 0.0:
+            px_punta = best_ask if pos.direccion == "LONG" else best_bid
+            px_raw = max(px_punta, precio_objetivo_custom) if pos.direccion == "LONG" else min(px_punta, precio_objetivo_custom)
+            px_target = eje.cuantizar_tick(px_raw, tick_size)
         else:
             px_target = best_ask if pos.direccion == "LONG" else best_bid
             px_target = eje.cuantizar_tick(px_target, tick_size)
@@ -680,21 +685,23 @@ class GestorPosicionesChronosTriz:
             )
             and (not mmw.debe_inhibir_maker_unwind_en_rally(pos.direccion, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.symbol))
         ):
-            if not pos.trinquete_be_activo:
+            if not pos.trinquete_be_activo and pnl_pct >= (float(cfg.TRINQUETE_BE_OFFSET_PCT) + 0.00025):
                 piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
                 pos.sl_interno = piso_be
                 pos.trinquete_be_activo = True
                 await self._actualizar_sl_bybit(exchange, pos, piso_be, tick_size=tick_size)
             pos.cosecha_activa = True
             pos.motivo_salida_pendiente = "MAKER_UNWIND"
+            px_cot_f2 = px_diamante if (diamante_ok and px_diamante > 0.0) else (best_ask if pos.direccion == "LONG" else best_bid)
             if not pos.en_proceso_cierre:
                 ram.log_operativo(
                     f"[SNIPER] [DIAMOND] {pos.symbol} Phase 2 Maker Shield PostOnly executed @ "
-                    f"{best_ask if pos.direccion == 'LONG' else best_bid} "
+                    f"{px_cot_f2} "
                     f"(PnL {pnl_pct * 100:+.2f}%, Lambda={lambda_w:+.2f}, age {int(edad)}s)"
                 )
             return await self._iniciar_o_actualizar_salida_maker(
-                exchange, pos, best_bid, best_ask, tick_size, "MAKER_UNWIND", ts_now, ofi_5s=ofi_5s
+                exchange, pos, best_bid, best_ask, tick_size, "MAKER_UNWIND", ts_now,
+                ofi_5s=ofi_5s, precio_objetivo_custom=(px_diamante if diamante_ok else 0.0)
             )
 
         # === [KEEP-ALIVE-ACTIVE-MAKER-EXIT] ===
