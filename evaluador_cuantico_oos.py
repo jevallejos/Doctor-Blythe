@@ -101,7 +101,7 @@ def ejecutar_calibracion_walk_forward_oos(
         obs_kelly = 0.3500
         obs_z_hb = -2.6200
         obs_z_t1 = -2.2500
-        obs_scratch = 18.0
+        obs_scratch = 24.0 if (m72["total_trades"] >= 6 and m72["scratches"] > m72["losses"]) else 18.0
     else:
         obs_kelly = prior_kelly
         obs_z_hb = prior_z_hb
@@ -131,7 +131,11 @@ def ejecutar_calibracion_walk_forward_oos(
         "timestamp_utc": datetime.datetime.now(_TZ_UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "metricas_72h": m72,
         "parametros_calibrados": parametros_limpios,
-        "controlador_autonomo": dict(ram.ESTADO_GLOBAL.controlador_autonomo),
+        "controlador_autonomo": {
+            **dict(ram.ESTADO_GLOBAL.controlador_autonomo),
+            "w1_ofi_long": float(parametros_limpios.get("OFI_MIN_ENTRADA", cfg.OFI_MIN_ENTRADA)),
+            "w3_tp_maker_pct": float(parametros_limpios.get("COSECHA_TRIZ_ACTIVACION_PCT", cfg.COSECHA_TRIZ_ACTIVACION_PCT)),
+        },
     }
 
     ram.log_operativo("=" * 66)

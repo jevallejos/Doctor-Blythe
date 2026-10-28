@@ -213,26 +213,37 @@ class GestorEstadisticasHFT:
 
     def obtener_resumen(self) -> Dict[str, Any]:
         total = len(self.operaciones)
-        wins = sum(1 for op in self.operaciones if float(op.get("pnl_usdt", 0.0)) > 0.0)
-        scratches = sum(
-            1 for op in self.operaciones
-            if float(op.get("pnl_usdt", 0.0)) <= 0.0
-            and (op.get("es_scratch") or "SCRATCH" in str(op.get("motivo_salida", "")).upper())
-        )
+        wins = 0
+        scratches = 0
+        pnl_sum = 0.0
+        best_pnl = 0.0
+        worst_pnl = 0.0
+        map_sum = 0.0
+        lvr_sum = 0.0
+        lvr_cnt = 0
+        for idx, op in enumerate(self.operaciones):
+            pnl_op = float(op.get("pnl_usdt", 0.0))
+            pnl_sum += pnl_op
+            if idx == 0 or pnl_op > best_pnl:
+                best_pnl = pnl_op
+            if idx == 0 or pnl_op < worst_pnl:
+                worst_pnl = pnl_op
+            if pnl_op > 0.0:
+                wins += 1
+            elif op.get("es_scratch") or "SCRATCH" in str(op.get("motivo_salida", "")).upper():
+                scratches += 1
+            map_sum += float(op.get("map_usdt", 0.0))
+            lvr_op = float(op.get("lvr_bps", 0.0))
+            if lvr_op > 0.0:
+                lvr_sum += lvr_op
+                lvr_cnt += 1
         losses = max(0, total - wins - scratches)
-        pnl_total = round(sum(float(op.get("pnl_usdt", 0.0)) for op in self.operaciones), 4)
+        pnl_total = round(pnl_sum, 4)
         denom_wr = wins + losses
         win_rate = round((wins / denom_wr) * 100.0, 1) if denom_wr > 0 else 0.0
-        best_pnl = max((float(op.get("pnl_usdt", 0.0)) for op in self.operaciones), default=0.0)
-        worst_pnl = min((float(op.get("pnl_usdt", 0.0)) for op in self.operaciones), default=0.0)
-        map_prom = (
-            round(sum(float(op.get("map_usdt", 0.0)) for op in self.operaciones) / total, 2)
-            if total > 0
-            else 0.0
-        )
+        map_prom = round(map_sum / total, 2) if total > 0 else 0.0
         pnl_over_map = round(pnl_total / map_prom, 4) if map_prom > 0.0 else 0.0
-        lvr_vals = [float(op.get("lvr_bps", 0.0)) for op in self.operaciones if float(op.get("lvr_bps", 0.0)) > 0.0]
-        lvr_prom = round(sum(lvr_vals) / len(lvr_vals), 4) if lvr_vals else 0.0
+        lvr_prom = round(lvr_sum / lvr_cnt, 4) if lvr_cnt > 0 else 0.0
         balance_contable = round(self.base_balance_usdt + pnl_total + self.ajuste_paridad_usdt, 4)
         real_uta = round(
             self.real_uta_balance_usdt if self.real_uta_balance_usdt > 0.0 else balance_contable,
