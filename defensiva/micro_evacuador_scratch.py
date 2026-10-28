@@ -156,11 +156,12 @@ def debe_escalar_scratch_colgado_a_taker(
 ) -> bool:
     if "SCRATCH" not in str(motivo_pendiente).upper():
         return False
-    if pnl_pct <= -0.0020 and edad_orden_salida_seg >= 2.5:
-        return True
     dir_norm = "LONG" if str(direccion).upper() in ("BUY", "LONG") else "SHORT"
     ofi_dir = float(ofi_5s) if dir_norm == "LONG" else -float(ofi_5s)
-    if edad_orden_salida_seg >= 5.0 and pnl_pct <= -0.0014 and ofi_dir <= -0.30:
+    # Solo escala a Market Taker si hay riesgo real de SL (pnl <= -0.30%) o colapso sostenido tras 14s
+    if pnl_pct <= -0.0030 and edad_orden_salida_seg >= 4.5 and ofi_dir <= -0.25:
+        return True
+    if edad_orden_salida_seg >= 14.0 and pnl_pct <= -0.0022 and ofi_dir <= -0.42:
         return True
     return False
 
@@ -175,19 +176,20 @@ def calcular_precio_scratch_acotado_un_tick(
 ) -> float:
     t_size = max(float(tick_size or 0.00001), 1e-8)
     side_u = str(side).upper()
-    flujo_neutral = abs(float(ofi_5s_dir)) < 0.35
+    flujo_neutral = float(ofi_5s_dir) > -0.22
     if side_u in ("LONG", "BUY"):
         piso_1tick = round(float(entry_price) - t_size, 8)
         cotizacion_libro = float(best_ask) if best_ask > 0 else float(entry_price)
         if flujo_neutral:
             return max(piso_1tick, cotizacion_libro)
-        return max(round(float(entry_price) - 2.0 * t_size, 8), cotizacion_libro)
+        # Si el flujo es adverso (-0.22 a -0.45), permite cotizar en best_ask hasta -3 ticks para llenar Maker sin pagar Taker
+        return max(round(float(entry_price) - 3.0 * t_size, 8), cotizacion_libro)
     else:
         techo_1tick = round(float(entry_price) + t_size, 8)
         cotizacion_libro = float(best_bid) if best_bid > 0 else float(entry_price)
         if flujo_neutral:
             return min(techo_1tick, cotizacion_libro)
-        return min(round(float(entry_price) + 2.0 * t_size, 8), cotizacion_libro)
+        return min(round(float(entry_price) + 3.0 * t_size, 8), cotizacion_libro)
 
 
 def evaluar_ventana_elastica_scratch_28s(

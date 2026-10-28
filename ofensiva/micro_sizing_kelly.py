@@ -2,9 +2,10 @@
 """
 Micro-Modulo Ofensivo #3: Dimensionamiento Kelly 3x y Proteccion Anti-110007 UTA.
 Acota el margen requerido por orden al 75% del balance libre real en Bybit UTA,
-garantizando cumplimiento de nocional minimo (5.50 USDT) sin agotar el margen disponible.
+compensando el lag de liberacion post-cancelacion (<3.0s) cuando Slots == 0/1.
 """
 import inspect
+import time
 from typing import Any, Tuple
 import config_parametros as cfg
 import core_estado_ram as ram
@@ -16,8 +17,17 @@ def resolver_capital_base_uta(balance_libre_crudo: float) -> float:
     if est is None:
         return round(libre, 4)
     free_ram = float(getattr(est, "free_usdt", 0.0) or 0.0)
-    if libre > 0.0 and abs(libre - float(cfg.CAPITAL_BASE_HISTORICO_USDT)) > 1e-4:
+    total_ram = float(getattr(est, "total_usdt", 0.0) or 0.0)
+    pos_activas = getattr(est, "posiciones_activas", {}) or {}
+    locks = getattr(est, "locks_pre_fill", {}) or {}
+    if libre > 0.0 and abs(libre - float(cfg.CAPITAL_BASE_HISTORICO_USDT)) > 1e-4 and libre != free_ram:
         return round(libre, 4)
+    # Si Slots == 0/1 y hubo una cancelacion reciente (< 4.0s), Bybit UTA puede tardar ~400ms en liberar free_usdt
+    if len(pos_activas) == 0 and total_ram > 0.0 and 0.0 < free_ram < (total_ram * 0.75):
+        ahora = time.time()
+        cancel_reciente = any(isinstance(v, (int, float)) and v < 0.0 and (ahora - abs(float(v))) <= 4.0 for v in locks.values())
+        if cancel_reciente:
+            return round(total_ram * 0.95, 4)
     if free_ram > 0.0:
         return round(free_ram, 4)
     return round(libre, 4)
@@ -46,16 +56,13 @@ def calcular_dimension_kelly_uta(
                     break
         kelly_f, margen_u, nocional_u = fn(*bound.args, **bound.kwargs)
         if balance_usado > 0.0 and not bool(getattr(cfg, "MODO_PAPER_TRADING", False)):
-            est = getattr(ram, "ESTADO_GLOBAL", None)
-            free_real = float(getattr(est, "free_usdt", balance_usado) or balance_usado)
             lev = float(getattr(cfg, "APALANCAMIENTO_OPERATIVO", 3))
             min_ord = float(getattr(cfg, "ORDEN_MINIMA_BYBIT_USDT", 5.5))
-            base_cap = free_real if free_real > 0.0 else balance_usado
-            max_nocional_seguro = round(base_cap * 0.78 * lev, 4)
+            max_nocional_seguro = round(balance_usado * 0.75 * lev, 4)
             if max_nocional_seguro >= min_ord:
                 nocional_u = min(float(nocional_u), max_nocional_seguro)
             else:
-                nocional_u = min(float(nocional_u), round(base_cap * 0.92 * lev, 4))
+                nocional_u = min(float(nocional_u), round(balance_usado * 0.90 * lev, 4))
             margen_u = round(nocional_u / lev, 4)
         return float(kelly_f), float(margen_u), float(nocional_u)
     except Exception:
