@@ -1,21 +1,37 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Ofensivo #6: Motor de Conviccion Asimetrica Kelly, Acelerador
-Compuesto House-Money, Penalizacion Termodinamica por Entropia/Cancelacion L1
-y Expansion Convexa de Outliers para HFT Doctor Blythe Terpsichora V7.0.
+Compuesto House-Money Inmune a Depositos Externos (PARITY_SYNC), Penalizacion
+Termodinamica por Entropia/Cancelacion L1 y Expansion Convexa de Outliers.
 """
 import math
+import sys
 from typing import Tuple
 import config_parametros as cfg
 import core_estado_ram as ram
 
 
 def calcular_bono_house_money() -> float:
+    """
+    Calcula el bono de interes compuesto House-Money exclusivamente sobre ganancias
+    organicas de trading, descontando automaticamente cualquier inyeccion o retiro
+    de capital registrado por PARITY_SYNC en stats_tracker.GESTOR_ESTADISTICAS.
+    """
     total = float(getattr(ram.ESTADO_GLOBAL, "capital_total_uta", 0.0) or 0.0)
-    base = float(cfg.CAPITAL_BASE_HISTORICO_USDT)
-    if total <= base or base <= 0.0:
+    base_depositada = float(cfg.CAPITAL_BASE_HISTORICO_USDT)
+    if not cfg.es_modo_test():
+        try:
+            st_mod = sys.modules.get("stats_tracker")
+            if st_mod is not None and hasattr(st_mod, "GESTOR_ESTADISTICAS"):
+                gestor = getattr(st_mod, "GESTOR_ESTADISTICAS")
+                base_st = float(getattr(gestor, "base_balance_usdt", base_depositada) or base_depositada)
+                ajuste_paridad = float(getattr(gestor, "ajuste_paridad_usdt", 0.0) or 0.0)
+                base_depositada = max(0.01, base_st + ajuste_paridad)
+        except Exception:
+            pass
+    if total <= base_depositada or base_depositada <= 0.0:
         return 0.0
-    ganancia_pct = (total - base) / base
+    ganancia_pct = (total - base_depositada) / base_depositada
     return round(min(0.06, ganancia_pct * 0.45), 4)
 
 

@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Ofensivo #3: Dimensionamiento Kelly 3x, Conviccion Bayesiana por Par
-(con KELLY_FRACCION_MAX canonico) y Proteccion Anti-110007 UTA (75% Margen Libre +
-Compensacion de Lag Post-Cancelacion) para HFT Doctor Blythe Terpsichora V7.0.
+Micro-Modulo Ofensivo #3: Dimensionamiento Kelly 3x, Conviccion Bayesiana por Par,
+Regulacion Concava Automatica de Huella de Liquidez L1 en High-Beta y Proteccion
+Anti-110007 UTA (75% Margen Libre + Compensacion de Lag Post-Cancelacion).
 """
 import inspect
+import math
 import time
 from typing import Any, Tuple
 import config_parametros as cfg
@@ -63,20 +64,38 @@ def calcular_dimension_kelly_uta(
 
         kelly_f, margen_u, nocional_u = fn(*bound.args, **bound.kwargs)
 
+        tope_kelly_max = float(getattr(cfg, "KELLY_FRACCION_MAX", 0.62))
+        piso_kelly_min = float(getattr(cfg, "KELLY_FRACCION_MIN", 0.35))
+        lev = float(getattr(cfg, "APALANCAMIENTO_OPERATIVO", 3))
+        min_ord = float(getattr(cfg, "ORDEN_MINIMA_BYBIT_USDT", 5.5))
+
         if symbol_usado and not cfg.es_modo_test() and hasattr(mck, "obtener_multiplicador_kelly_par"):
             w_par = float(mck.obtener_multiplicador_kelly_par(symbol_usado))
             if abs(w_par - 1.0) > 1e-4:
-                lev = float(getattr(cfg, "APALANCAMIENTO_OPERATIVO", 3))
-                min_ord = float(getattr(cfg, "ORDEN_MINIMA_BYBIT_USDT", 5.5))
-                tope_k = float(getattr(cfg, "KELLY_FRACCION_MAX", 0.62))
-                piso_k = float(getattr(cfg, "KELLY_FRACCION_MIN", 0.35))
-                kelly_f = round(min(tope_k, max(piso_k, float(kelly_f) * w_par)), 4)
+                kelly_f = round(min(tope_kelly_max, max(piso_kelly_min, float(kelly_f) * w_par)), 4)
                 nocional_u = round(max(min_ord, float(nocional_u) * w_par), 4)
                 margen_u = round(nocional_u / lev, 4)
 
+        # Amortiguacion concava de huella L1 para CLASE_HIGH_BETA cuando el capital crece
+        if (
+            symbol_usado
+            and not cfg.es_modo_test()
+            and cfg.obtener_clase_activo(symbol_usado) == cfg.CLASE_HIGH_BETA
+            and float(nocional_u) > 30.0
+        ):
+            vacio_r = 1.0
+            m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol_usado)
+            if m_live is not None:
+                vacio_r = float(getattr(m_live, "vacio_l2_ratio", 1.0) or 1.0)
+            techo_hb = 55.0 if vacio_r >= 1.10 else (42.0 if vacio_r < 0.85 else 48.0)
+            nocional_amortiguado = min(
+                techo_hb,
+                30.0 + (4.5 * math.sqrt(max(0.0, float(nocional_u) - 30.0))),
+            )
+            nocional_u = round(max(min_ord, min(float(nocional_u), nocional_amortiguado)), 4)
+            margen_u = round(nocional_u / lev, 4)
+
         if balance_usado > 0.0 and not bool(getattr(cfg, "MODO_PAPER_TRADING", False)):
-            lev = float(getattr(cfg, "APALANCAMIENTO_OPERATIVO", 3))
-            min_ord = float(getattr(cfg, "ORDEN_MINIMA_BYBIT_USDT", 5.5))
             max_nocional_seguro = round(balance_usado * 0.75 * lev, 4)
             if max_nocional_seguro >= min_ord:
                 nocional_u = min(float(nocional_u), max_nocional_seguro)
