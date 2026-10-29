@@ -1,10 +1,23 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Ofensivo #7: Puppeteer Phase-Latched Envelope (4.50s) para Captura
-de Suelos en V (LONG), Agotamiento/Rollover de Techos (SHORT-SNIPER) y Disparo en Vertice.
+de Suelos en V (LONG), Agotamiento/Rollover de Techos (SHORT-SNIPER), Disparo
+en Vertice y Modulacion Elastica de Profundidad por Edge Bayesiano del Par.
 """
 from typing import Any, Tuple
 import config_parametros as cfg
+import core_estado_ram as ram
+
+
+def _obtener_multiplicador_dislocacion_par(metrica: Any) -> float:
+    if cfg.es_modo_test():
+        return 1.0
+    sym = str(getattr(metrica, "symbol", "") or "")
+    if not sym:
+        return 1.0
+    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+    alpha = float(ctrl.get(f"alpha_disloc_{sym}", 1.0) or 1.0)
+    return max(1.0, min(1.40, alpha))
 
 
 def evaluar_dislocacion_y_latch_long(
@@ -15,12 +28,17 @@ def evaluar_dislocacion_y_latch_long(
     ahora: float,
     metrica: Any,
 ) -> Tuple[bool, bool]:
-    z_umbral_long = cfg.Z_SCORE_UMBRAL_HIGH_BETA if es_hb else cfg.Z_SCORE_UMBRAL_TIER1
-    dp_min_long = cfg.DP_MIN_EXCURSION_LONG_HB if es_hb else cfg.DP_MIN_EXCURSION_LONG_T1
-    recorrido_req = -0.0018 if es_hb else -0.0011
-    piso_anti_ruido = -0.0011 if es_hb else -0.00075
+    alpha_par = _obtener_multiplicador_dislocacion_par(metrica)
+    z_base = cfg.Z_SCORE_UMBRAL_HIGH_BETA if es_hb else cfg.Z_SCORE_UMBRAL_TIER1
+    dp_base = cfg.DP_MIN_EXCURSION_LONG_HB if es_hb else cfg.DP_MIN_EXCURSION_LONG_T1
+    rec_base = -0.0018 if es_hb else -0.0011
+    piso_base = -0.0011 if es_hb else -0.00075
 
-    # Purgar latch previo si expiro la ventana de 4.50s o si era de direccion opuesta
+    z_umbral_long = z_base * alpha_par
+    dp_min_long = dp_base * alpha_par
+    recorrido_req = rec_base * alpha_par
+    piso_anti_ruido = piso_base * alpha_par
+
     if (
         not metrica.phase_latched
         or metrica.phase_latch_dir != "LONG"
@@ -33,7 +51,10 @@ def evaluar_dislocacion_y_latch_long(
 
     excursion_dual_ok = (
         min(dp_pct, ema900_dist_pct) <= recorrido_req
-        and (max(dp_pct, ema900_dist_pct) <= piso_anti_ruido or (z_score <= -2.70 and dp_pct <= -0.0019))
+        and (
+            max(dp_pct, ema900_dist_pct) <= piso_anti_ruido
+            or (z_score <= (-2.70 * alpha_par) and dp_pct <= (-0.0019 * alpha_par))
+        )
     )
     dislocacion_long_activa = (
         z_score <= z_umbral_long
@@ -72,10 +93,13 @@ def evaluar_sobreextension_y_rollover_short(
     metrica: Any,
     est: Any,
 ) -> Tuple[bool, bool, bool]:
-    ema_min_short = cfg.EMA900_SOBREEXTENSION_SHORT_HB if es_hb else cfg.EMA900_SOBREEXTENSION_SHORT_T1
-    dp_min_short = cfg.DP_MIN_EXCURSION_SHORT_HB if es_hb else cfg.DP_MIN_EXCURSION_SHORT_T1
+    alpha_par = _obtener_multiplicador_dislocacion_par(metrica)
+    ema_base = cfg.EMA900_SOBREEXTENSION_SHORT_HB if es_hb else cfg.EMA900_SOBREEXTENSION_SHORT_T1
+    dp_base = cfg.DP_MIN_EXCURSION_SHORT_HB if es_hb else cfg.DP_MIN_EXCURSION_SHORT_T1
+    ema_min_short = ema_base * alpha_par
+    dp_min_short = dp_base * alpha_par
+    z_short_req = cfg.Z_SCORE_SHORT_UMBRAL * alpha_par
 
-    # Purgar memoria de vigilancia SHORT si expiro la ventana de 15.0s
     if ahora > est.vigilancia_short_hasta_ts:
         est.max_z_pump_short = 0.0
         est.max_ema_pump_short = 0.0
@@ -91,7 +115,7 @@ def evaluar_sobreextension_y_rollover_short(
 
     sobreextension_short = (
         ema900_dist_pct >= ema_min_short
-        and z_score >= cfg.Z_SCORE_SHORT_UMBRAL
+        and z_score >= z_short_req
         and dp_pct >= dp_min_short
     )
     if sobreextension_short:
@@ -117,7 +141,7 @@ def evaluar_sobreextension_y_rollover_short(
     )
     rollover_techo_vigente = (
         ahora <= est.vigilancia_short_hasta_ts
-        and est.max_z_pump_short >= cfg.Z_SCORE_SHORT_UMBRAL
+        and est.max_z_pump_short >= z_short_req
         and ema900_dist_pct >= (ema_min_short * 0.88)
         and dp_pct >= -0.0005
         and est.px_pico_pump_short > 0.0
@@ -137,10 +161,6 @@ def confirmar_disparo_vertice_armado(
     side: str = "LONG",
     ofi_min_umbral: float = 0.06,
 ) -> bool:
-    """
-    Permite disparar PostOnly en el vertice de la mecha dentro de la envolvente
-    Arm-and-Fire (1200ms-4500ms) en cuanto Lyapunov desacelera y el H-OFI gira.
-    """
     if hurst > 0.485 or not latched_activo:
         return False
     delta_ofi = float(ofi_actual) - float(ofi_previo)

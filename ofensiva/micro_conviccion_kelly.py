@@ -79,3 +79,17 @@ def calcular_dimension_kelly(
         margen_usdt = min(margen_usdt, round(cap_utilizable, 4))
     nocional_usdt = round(margen_usdt * float(cfg.APALANCAMIENTO_OPERATIVO), 4)
     return frac, margen_usdt, nocional_usdt
+
+
+def obtener_multiplicador_kelly_par(symbol: str) -> float:
+    """
+    Retorna el multiplicador Bayesiano auto-aprendiz de conviccion Kelly por par
+    (w_kelly_{symbol} in [0.72, 1.12]) calculado cada 30s desde tribrain_stats_v1.jsonl.
+    """
+    import config_parametros as _cfg
+    import core_estado_ram as _ram
+    if _cfg.es_modo_test() or not symbol:
+        return 1.0
+    ctrl = getattr(_ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+    w = float(ctrl.get(f"w_kelly_{symbol}", 1.0) or 1.0)
+    return max(0.72, min(1.12, w))

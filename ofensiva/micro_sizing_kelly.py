@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Ofensivo #3: Dimensionamiento Kelly 3x y Proteccion Anti-110007 UTA.
-Acota el margen requerido por orden al 75% del balance libre real en Bybit UTA,
-compensando el lag de liberacion post-cancelacion (<3.0s) cuando Slots == 0/1.
+Micro-Modulo Ofensivo #3: Dimensionamiento Kelly 3x, Conviccion Bayesiana por Par
+y Proteccion Anti-110007 UTA (75% Margen Libre + Compensacion de Lag Post-Cancelacion).
 """
 import inspect
 import time
 from typing import Any, Tuple
 import config_parametros as cfg
 import core_estado_ram as ram
+from ofensiva import micro_conviccion_kelly as mck
 
 
 def resolver_capital_base_uta(balance_libre_crudo: float) -> float:
@@ -22,7 +22,6 @@ def resolver_capital_base_uta(balance_libre_crudo: float) -> float:
     locks = getattr(est, "locks_pre_fill", {}) or {}
     if libre > 0.0 and abs(libre - float(cfg.CAPITAL_BASE_HISTORICO_USDT)) > 1e-4 and libre != free_ram:
         return round(libre, 4)
-    # Si Slots == 0/1 y hubo una cancelacion reciente (< 4.0s), Bybit UTA puede tardar ~400ms en liberar free_usdt
     if len(pos_activas) == 0 and total_ram > 0.0 and 0.0 < free_ram < (total_ram * 0.75):
         ahora = time.time()
         cancel_reciente = any(isinstance(v, (int, float)) and v < 0.0 and (ahora - abs(float(v))) <= 4.0 for v in locks.values())
@@ -48,13 +47,27 @@ def calcular_dimension_kelly_uta(
         bound = sig.bind(*args, **kwargs)
         bound.apply_defaults()
         balance_usado = 0.0
+        symbol_usado = ""
         for nombre_param, valor in list(bound.arguments.items()):
-            if any(k in nombre_param.lower() for k in ("balance", "capital", "usdt", "libre", "equity")):
+            nl = nombre_param.lower()
+            if any(k in nl for k in ("balance", "capital", "usdt", "libre", "equity")):
                 if isinstance(valor, (int, float)):
                     balance_usado = sanear_balance_libre_slot_vacio(float(valor))
                     bound.arguments[nombre_param] = balance_usado
-                    break
+            elif any(k in nl for k in ("symbol", "par", "asset")) and isinstance(valor, str):
+                symbol_usado = valor
+
         kelly_f, margen_u, nocional_u = fn(*bound.args, **bound.kwargs)
+
+        if symbol_usado and not cfg.es_modo_test() and hasattr(mck, "obtener_multiplicador_kelly_par"):
+            w_par = float(mck.obtener_multiplicador_kelly_par(symbol_usado))
+            if abs(w_par - 1.0) > 1e-4:
+                lev = float(getattr(cfg, "APALANCAMIENTO_OPERATIVO", 3))
+                min_ord = float(getattr(cfg, "ORDEN_MINIMA_BYBIT_USDT", 5.5))
+                kelly_f = round(min(float(cfg.KELLY_TOPE_MAXIMO), max(0.35, float(kelly_f) * w_par)), 4)
+                nocional_u = round(max(min_ord, float(nocional_u) * w_par), 4)
+                margen_u = round(nocional_u / lev, 4)
+
         if balance_usado > 0.0 and not bool(getattr(cfg, "MODO_PAPER_TRADING", False)):
             lev = float(getattr(cfg, "APALANCAMIENTO_OPERATIVO", 3))
             min_ord = float(getattr(cfg, "ORDEN_MINIMA_BYBIT_USDT", 5.5))

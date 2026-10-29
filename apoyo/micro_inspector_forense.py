@@ -170,6 +170,13 @@ def imprimir_auditoria_forense_cli() -> None:
     gross_tot = round(mk_s["gross"] + tk_s["gross"], 4)
     fees_tot = round(mk_s["fees"] + tk_s["fees"], 4)
 
+    pesos_pares = []
+    for p_sym in ("ZEREBRO/USDT:USDT", "WAL/USDT:USDT", "ARB/USDT:USDT"):
+        c_sym = p_sym.split("/")[0]
+        a_d = float(ctrl.get(f"alpha_disloc_{p_sym}", 1.0))
+        w_k = float(ctrl.get(f"w_kelly_{p_sym}", 1.0))
+        pesos_pares.append(f"{c_sym}(Disloc={a_d:.2f}x,Kelly={w_k:.2f}x)")
+    print(f"   -> {_C_MAGENTA}[BAYESIAN PAIR MEMORY]{_C_RESET} " + " | ".join(pesos_pares))
     print(f"{_C_CYAN}{'=' * 92}{_C_RESET}")
     print(f"{_C_WHITE} [FORENSIC ANATOMY INSPECTOR - verbot -a] {cfg.NOMBRE_ESTRATEGIA}{_C_RESET}")
     print(f"{_C_CYAN}{'=' * 92}{_C_RESET}")
@@ -278,6 +285,12 @@ def imprimir_auditoria_forense_cli() -> None:
 
     print(f"{_C_CYAN}{'-' * 92}{_C_RESET}")
     print(f"{_C_WHITE} 5. AI FORENSIC PRESCRIPTIVE DIAGNOSTIC & AUTONOMOUS WEIGHTS{_C_RESET}")
+    try:
+        cfg.recargar_calibracion_oos_si_cambio()
+        from apoyo import micro_sensibilidad_autonoma as _msa
+        _msa.auto_calibrar_sensibilidades_en_vivo(ram.ESTADO_GLOBAL, None)
+    except Exception:
+        pass
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
     print(
         f"   -> Active Autonomous Weights: TP={ctrl.get('w3_tp_maker_pct', 0.0014)*100:.2f}% | "
