@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo de Apoyo #5: Higiene Automatica de Disco (Log Rotation .gz Zero-Jitter
-con Reemplazo Atomico, Compactacion Estratificada de baul_ia_forense.jsonl sin
-Perdida de Cierres Reales y Preservacion de Ventana de Gracia Post-Lock 6.0s)
-para HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
+Micro-Modulo de Apoyo #5: Higiene Automatica de Disco en carpeta Logs/ (Rotacion
+Diaria UTC + Por Tamano .gz Zero-Jitter con Reemplazo Atomico, Retencion
+Estratificada de baul_ia_forense.jsonl [14d Cierres / 72h Escudos] y Purga 30d).
 """
 import datetime
 import gc
 import gzip
+import json
 import os
 import pathlib
 import shutil
@@ -20,97 +20,130 @@ import core_estado_ram as ram
 
 _TZ_UTC = datetime.timezone.utc
 _ULTIMA_HIGIENE_TS: float = 0.0
-_LIMITE_BYTES_LOG: int = 15 * 1024 * 1024   # 15 MB
-_LIMITE_BYTES_BAUL: int = 12 * 1024 * 1024  # 12 MB
+_LIMITE_BYTES_LOG: int = 15 * 1024 * 1024      # 15 MB tope intradia para .log
+_LIMITE_BYTES_BAUL: int = 12 * 1024 * 1024     # 12 MB tope intradia para .jsonl
+_RETENCION_TRADES_SEG: float = 14.0 * 86400.0  # 14 dias para CIERRE_OPERACION_REAL y POST_CIERRE_60S
+_RETENCION_ESCUDOS_SEG: float = 3.0 * 86400.0  # 72 horas (3 dias) para AUDITORIA_ESCUDO_15S
+_RETENCION_GZ_LOGS_SEG: float = 30.0 * 86400.0 # 30 dias de retencion fria en carpeta Logs/
 
 
-def _purgar_locks_expirados_respetando_gracia(d_locks: Any, ahora_ts: float, gracia_seg: float = 6.0) -> int:
-    """
-    Limpia de locks_pre_fill unicamente los candados vencidos:
-    - Si v > 0.0: orden en vuelo activa mientras ahora_ts < v.
-    - Si v < 0.0: marca de liberacion (-time.time()); se conserva durante gracia_seg (6.0s)
-      para que micro_sizing_kelly y micro_escape_reconciliador detecten cancelaciones
-      o fills recientes sin borrar su rastro prematuramente.
-    Retorna el numero de locks activos o en ventana de gracia vigentes.
-    """
-    if not isinstance(d_locks, dict):
-        return 0
-    vigentes = 0
-    for k_lk, v_lk in list(d_locks.items()):
-        if not isinstance(v_lk, (int, float)):
-            d_locks.pop(k_lk, None)
-            continue
-        val = float(v_lk)
-        if val > 0.0:
-            if ahora_ts < val:
-                vigentes += 1
-            else:
+class _GestorRotacionEstratificada:
+    """Encapsula las operaciones atomicas de archivo sin exponer funciones huerfanas."""
+
+    @staticmethod
+    def purgar_locks_respetando_gracia(d_locks: Any, ahora_ts: float, gracia_seg: float = 6.0) -> int:
+        if not isinstance(d_locks, dict):
+            return 0
+        vigentes = 0
+        for k_lk, v_lk in list(d_locks.items()):
+            if not isinstance(v_lk, (int, float)):
                 d_locks.pop(k_lk, None)
-        else:
-            if (ahora_ts - abs(val)) <= gracia_seg:
-                vigentes += 1
-            else:
-                d_locks.pop(k_lk, None)
-    return vigentes
-
-
-def _reemplazar_lineas_atomico(ruta: pathlib.Path, lineas: List[str]) -> None:
-    ruta.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_str = tempfile.mkstemp(prefix=f".tmp_{ruta.name}_", dir=str(ruta.parent))
-    tmp_path = pathlib.Path(tmp_str)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.writelines(lineas)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(str(tmp_path), str(ruta))
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _compactar_baul_forense_estratificado(ruta_baul: pathlib.Path, backup_dir: pathlib.Path) -> bool:
-    """
-    Si baul_ia_forense.jsonl supera 12 MB:
-    1. Archiva una copia integra comprimida (.gz) en backups_epoca_anterior/.
-    2. Conserva el 100% de CIERRE_OPERACION_REAL y AUDITORIA_POST_CIERRE_60S
-       recientes mas los ultimos 2,500 registros de AUDITORIA_ESCUDO_15S.
-    """
-    if not ruta_baul.exists():
-        return False
-    try:
-        if ruta_baul.stat().st_size < _LIMITE_BYTES_BAUL:
-            return False
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        ts_str = datetime.datetime.now(_TZ_UTC).strftime("%Y%m%d_%H%M%S")
-        destino_gz = backup_dir / f"{ruta_baul.name}.{ts_str}.gz"
-        with open(ruta_baul, "rb") as f_in, gzip.open(destino_gz, "wb", compresslevel=6) as f_out:
-            shutil.copyfileobj(f_in, f_out)
-
-        lineas_raw = ruta_baul.read_text(encoding="utf-8", errors="replace").splitlines()
-        cierres_y_post: List[str] = []
-        escudos_15s: List[str] = []
-        for ln in lineas_raw:
-            s = ln.strip()
-            if not s:
                 continue
-            if '"CIERRE_OPERACION_REAL"' in s or '"AUDITORIA_POST_CIERRE_60S"' in s:
-                cierres_y_post.append(s + "\n")
+            val = float(v_lk)
+            if val > 0.0:
+                if ahora_ts < val:
+                    vigentes += 1
+                else:
+                    d_locks.pop(k_lk, None)
             else:
-                escudos_15s.append(s + "\n")
+                if (ahora_ts - abs(val)) <= gracia_seg:
+                    vigentes += 1
+                else:
+                    d_locks.pop(k_lk, None)
+        return vigentes
 
-        conservadas = cierres_y_post[-1000:] + escudos_15s[-2500:]
-        _reemplazar_lineas_atomico(ruta_baul, conservadas)
-        return True
-    except Exception:
-        return False
+    @staticmethod
+    def reemplazar_lineas_atomico(ruta: pathlib.Path, lineas: List[str]) -> None:
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_str = tempfile.mkstemp(prefix=f".tmp_{ruta.name}_", dir=str(ruta.parent))
+        tmp_path = pathlib.Path(tmp_str)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.writelines(lineas)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(str(tmp_path), str(ruta))
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+    @classmethod
+    def compactar_baul_estratificado(
+        cls,
+        ruta_baul: pathlib.Path,
+        logs_dir: pathlib.Path,
+        ahora_ts: float,
+        forzar_diario: bool = False,
+    ) -> bool:
+        if not ruta_baul.exists():
+            return False
+        try:
+            tamano = ruta_baul.stat().st_size
+            if tamano == 0:
+                return False
+            if not forzar_diario and tamano < _LIMITE_BYTES_BAUL:
+                return False
+
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            ts_str = datetime.datetime.fromtimestamp(ahora_ts, tz=_TZ_UTC).strftime("%Y-%m-%d_%H%M%S_UTC")
+            destino_gz = logs_dir / f"baul_ia_forense_{ts_str}.jsonl.gz"
+            with open(ruta_baul, "rb") as f_in, gzip.open(destino_gz, "wb", compresslevel=6) as f_out:
+                shutil.copyfileobj(f_in, f_out)
+
+            corte_trades = ahora_ts - _RETENCION_TRADES_SEG
+            corte_escudos = ahora_ts - _RETENCION_ESCUDOS_SEG
+            cierres_y_post: List[str] = []
+            escudos_15s: List[str] = []
+
+            for ln in ruta_baul.read_text(encoding="utf-8", errors="replace").splitlines():
+                s = ln.strip()
+                if not s:
+                    continue
+                es_cierre = ('"CIERRE_OPERACION_REAL"' in s) or ('"AUDITORIA_POST_CIERRE_60S"' in s)
+                ts_reg = ahora_ts
+                try:
+                    obj = json.loads(s)
+                    if isinstance(obj, dict):
+                        ts_val = obj.get("ts_epoch") or obj.get("timestamp_epoch") or 0.0
+                        if isinstance(ts_val, (int, float)) and float(ts_val) > 0.0:
+                            ts_reg = float(ts_val)
+                except Exception:
+                    ts_reg = ahora_ts
+
+                if es_cierre:
+                    if ts_reg >= corte_trades:
+                        cierres_y_post.append(s + "\n")
+                else:
+                    if ts_reg >= corte_escudos:
+                        escudos_15s.append(s + "\n")
+
+            conservadas = cierres_y_post[-1500:] + escudos_15s[-2500:]
+            cls.reemplazar_lineas_atomico(ruta_baul, conservadas)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def purgar_archivos_antiguos_logs(logs_dir: pathlib.Path, ahora_ts: float) -> None:
+        if not logs_dir.exists():
+            return
+        for archivo_gz in logs_dir.glob("*.gz"):
+            try:
+                if (ahora_ts - archivo_gz.stat().st_mtime) > _RETENCION_GZ_LOGS_SEG:
+                    archivo_gz.unlink(missing_ok=True)
+            except Exception:
+                continue
 
 
 def ejecutar_mantenimiento_silencioso_disco(estado_ram: Any, forzar: bool = False) -> bool:
     """
-    Verifica cada 15 minutos (solo cuando no hay posiciones abiertas ni locks pre-fill)
-    si bot_hft.log, bot_hft_h.log (>15 MB) o baul_ia_forense.jsonl (>12 MB) requieren
-    rotacion comprimida en backups_epoca_anterior/ y truncado atomico sin jitter.
+    Verifica cada 15 minutos (solo cuando Slots == 0/1 y sin locks pre-fill vigentes):
+    1. Si cambio el dia UTC (00:00 UTC) o si bot_hft.log / bot_hft_h.log superan 15 MB,
+       comprime copia en Logs/bot_hft_YYYY-MM-DD_HHMMSS_UTC.log.gz y conserva 2,500 lineas.
+    2. Si cambio el dia UTC o si baul_ia_forense.jsonl supera 12 MB, archiva copia integra
+       en Logs/baul_ia_forense_YYYY-MM-DD_HHMMSS_UTC.jsonl.gz y aplica retencion estratificada
+       (14 dias de cierres reales / 72 horas de auditorias de escudos 15s).
+    3. Purga archivos .gz en Logs/ con mas de 30 dias de antiguedad.
     """
     global _ULTIMA_HIGIENE_TS
     if cfg.es_modo_test():
@@ -120,7 +153,7 @@ def ejecutar_mantenimiento_silencioso_disco(estado_ram: Any, forzar: bool = Fals
         return False
 
     d_locks = getattr(estado_ram, "locks_pre_fill", None)
-    locks_vigentes = _purgar_locks_expirados_respetando_gracia(d_locks, ahora, gracia_seg=6.0)
+    locks_vigentes = _GestorRotacionEstratificada.purgar_locks_respetando_gracia(d_locks, ahora, gracia_seg=6.0)
     pos_activas = getattr(estado_ram, "posiciones_activas", {}) or {}
     if len(pos_activas) > 0 or locks_vigentes > 0:
         return False
@@ -128,30 +161,57 @@ def ejecutar_mantenimiento_silencioso_disco(estado_ram: Any, forzar: bool = Fals
     _ULTIMA_HIGIENE_TS = ahora
     rotado = False
     base_dir = cfg.obtener_ruta_base()
-    backup_dir = base_dir / "backups_epoca_anterior"
+    logs_dir = base_dir / "Logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    hoy_utc = datetime.datetime.fromtimestamp(ahora, tz=_TZ_UTC).strftime("%Y-%m-%d")
+    marcador_fecha = logs_dir / ".ultima_rotacion_utc.txt"
+    cambio_dia_utc = False
+    try:
+        if marcador_fecha.exists():
+            fecha_previa = marcador_fecha.read_text(encoding="utf-8", errors="replace").strip()
+            if fecha_previa and fecha_previa != hoy_utc:
+                cambio_dia_utc = True
+        else:
+            marcador_fecha.write_text(hoy_utc + "\n", encoding="utf-8")
+    except Exception:
+        cambio_dia_utc = False
+
+    ts_str = datetime.datetime.fromtimestamp(ahora, tz=_TZ_UTC).strftime("%Y-%m-%d_%H%M%S_UTC")
     for clave in ("ARCHIVO_LOG", "ARCHIVO_LOG_HISTORICO"):
         ruta = cfg.obtener_ruta_archivo(clave)
         if not ruta.exists():
             continue
         try:
             tamano = ruta.stat().st_size
-            if tamano < _LIMITE_BYTES_LOG:
+            if tamano == 0:
                 continue
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            ts_str = datetime.datetime.now(_TZ_UTC).strftime("%Y%m%d_%H%M%S")
-            destino_gz = backup_dir / f"{ruta.name}.{ts_str}.gz"
+            if not cambio_dia_utc and tamano < _LIMITE_BYTES_LOG:
+                continue
+            stem = ruta.stem
+            destino_gz = logs_dir / f"{stem}_{ts_str}.log.gz"
             ram.cerrar_descriptores_log()
             with open(ruta, "rb") as f_in, gzip.open(destino_gz, "wb", compresslevel=6) as f_out:
                 shutil.copyfileobj(f_in, f_out)
             cola_lineas = ruta.read_text(encoding="utf-8", errors="replace").splitlines(True)[-2500:]
-            _reemplazar_lineas_atomico(ruta, cola_lineas)
+            _GestorRotacionEstratificada.reemplazar_lineas_atomico(ruta, cola_lineas)
             rotado = True
         except Exception:
             continue
 
     ruta_baul = cfg.obtener_ruta_archivo("ARCHIVO_BAUL_IA_JSONL")
-    if _compactar_baul_forense_estratificado(ruta_baul, backup_dir):
+    if _GestorRotacionEstratificada.compactar_baul_estratificado(
+        ruta_baul, logs_dir, ahora, forzar_diario=cambio_dia_utc
+    ):
         rotado = True
+
+    if cambio_dia_utc:
+        try:
+            marcador_fecha.write_text(hoy_utc + "\n", encoding="utf-8")
+        except Exception:
+            pass
+
+    _GestorRotacionEstratificada.purgar_archivos_antiguos_logs(logs_dir, ahora)
 
     eventos_col = getattr(estado_ram, "eventos_colapso_recientes", {})
     if isinstance(eventos_col, dict):
@@ -191,7 +251,9 @@ def ejecutar_ciclo_higiene_4_niveles(
     - Ciclo 4 (1800s): Sincronizacion incremental a bot_hft_h.log y truncado atomico (>15MB).
     """
     d_locks = getattr(ram.ESTADO_GLOBAL, "locks_pre_fill", None)
-    locks_vigentes = _purgar_locks_expirados_respetando_gracia(d_locks, ahora_ts, gracia_seg=6.0)
+    locks_vigentes = _GestorRotacionEstratificada.purgar_locks_respetando_gracia(
+        d_locks, ahora_ts, gracia_seg=6.0
+    )
     if slots_ocupados > 0 or ordenes_en_vuelo > 0 or locks_vigentes > 0:
         return {"status": "DEFERRED_ACTIVE_SLOT", "ciclos": _ESTADO_HIGIENE_4C["ciclos_ejecutados"]}
 
@@ -228,7 +290,7 @@ def ejecutar_ciclo_higiene_4_niveles(
                     p_hist = pathlib.Path(hist_log_path)
                     with p_hist.open("a", encoding="utf-8") as fh:
                         fh.writelines(lineas[:-2500])
-                    _reemplazar_lineas_atomico(p_log, lineas[-2500:])
+                    _GestorRotacionEstratificada.reemplazar_lineas_atomico(p_log, lineas[-2500:])
                     acciones.append("LOG_COPY_TRUNCATE_OK")
         except Exception:
             pass
