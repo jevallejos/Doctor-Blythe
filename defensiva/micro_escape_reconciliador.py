@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Defensivo #5: Gobernador de [ESCAPE_TEMPORAL] (90s),
-Pre-Escape Pasivo Maker (72s) y Reconciliador [ESCAPE_HUERFANA_BOOT] con Gracia Post-Lock.
+Micro-Modulo Defensivo #5: Gobernador de [ESCAPE_TEMPORAL] (90s), Pre-Escape
+Elastico Pasivo Maker (54s-72s Acoplado a Wald SPRT y Vacio L2) y Reconciliador
+[ESCAPE_HUERFANA_BOOT] con Gracia Post-Lock para HFT Doctor Blythe Terpsichora V7.0.
 """
 from typing import Any, Dict, Tuple
 import config_parametros as cfg
@@ -15,21 +16,32 @@ def evaluar_escape_temporal_posicion(
     direccion: str,
     en_proceso_cierre: bool = False,
     max_hold_seg: float = 0.0,
+    lambda_wald: float = 0.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> Tuple[bool, bool, str]:
     """
-    Retorna (forzar_escape_mercado_90s, activar_pre_escape_maker_72s, motivo).
-    - A los 72.0s (PRE_ESCAPE_MAKER_SEG): si la posicion no va en rally Runner,
-      inicia evacuacion pasiva PostOnly para ahorrar comision Taker.
-    - A los 90.0s (TIEMPO_MAX_HOLD_SEG): dispara cierre de seguridad ESCAPE_TEMPORAL.
+    Retorna (forzar_escape_mercado_90s, activar_pre_escape_maker_72s, motivo):
+    - Adelanta elasticamente el Pre-Escape Pasivo Maker desde 72.0s hasta 54.0s-64.0s
+      cuando la posicion muestra agotamiento estructural (lambda_wald <= -2.0,
+      vacio_l2_ratio < 0.65 o inercia muerta), otorgando hasta 36s de margen para
+      salir como Maker PostOnly antes del corte Taker de 90.0s (ESCAPE_TEMPORAL).
     """
     tope_hold = float(max_hold_seg if max_hold_seg > 0.0 else cfg.TIEMPO_MAX_HOLD_SEG)
-    pre_escape_seg = float(cfg.obtener_aux("PRE_ESCAPE_MAKER_SEG", max(60.0, tope_hold - 18.0)))
+    pre_escape_base = float(cfg.obtener_aux("PRE_ESCAPE_MAKER_SEG", max(60.0, tope_hold - 18.0)))
     if edad_seg >= tope_hold:
         return True, False, "ESCAPE_TEMPORAL"
+
+    lam_w = float(lambda_wald or 0.0)
+    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
+    adelanto_wald = 8.0 if lam_w <= -2.00 else (4.0 if lam_w <= -1.00 else 0.0)
+    adelanto_vacio = 6.0 if v_l2 < 0.65 else 0.0
+    adelanto_inerte = 4.0 if (mfe_pct < 0.0005 and pnl_pct <= -0.0008) else 0.0
+    pre_escape_seg = max(54.0, pre_escape_base - (adelanto_wald + adelanto_vacio + adelanto_inerte))
+
     es_long = str(direccion).upper() in ("BUY", "LONG")
     flujo_runner_fuerte = (
-        (es_long and ofi_5s >= 0.25 and pnl_pct >= 0.0015)
-        or ((not es_long) and ofi_5s <= -0.25 and pnl_pct >= 0.0015)
+        (es_long and ofi_5s >= 0.25 and pnl_pct >= 0.0015 and lam_w >= 0.50)
+        or ((not es_long) and ofi_5s <= -0.25 and pnl_pct >= 0.0015 and lam_w >= 0.50)
     )
     if edad_seg >= pre_escape_seg and (not en_proceso_cierre) and (not flujo_runner_fuerte):
         return False, True, "PRE_ESCAPE_MAKER_72S"

@@ -1,7 +1,8 @@
 """
 Level 1 DAG: O(1) In-Memory State Machine, Persistent Line-Buffered Log I/O,
-and +15.0s Counterfactual Forensic AI Vault for HFT Doctor Blythe Engine -
-Production Baseline Terpsichora V1.0.
+8 Higher-Order Microstructural Telemetry Containers, and +15.0s / +60.0s
+Counterfactual Forensic AI Vault for HFT Doctor Blythe Engine -
+Production Baseline Terpsichora V7.0.
 """
 from __future__ import annotations
 
@@ -149,6 +150,12 @@ class MetricaTick:
     muro_ask_px: float = 0.0
     muro_bid_px: float = 0.0
     vacio_l2_ratio: float = 1.0
+    volatilidad_bv_raw: float = cfg.VOLATILIDAD_BV_PISO_MIN
+    etiqueta_percentil: str = "P50_ELASTICO"
+    multiplicador_elastico: float = 1.0
+    imb_l1: float = 0.0
+    cancel_net_l1: float = 0.0
+    irrev_lob: float = 0.0
 
 
 @dataclasses.dataclass(slots=True)
@@ -196,6 +203,15 @@ class PosicionActiva:
     latencia_rtt_ms: float = 0.0
     lambda_wald: float = 0.0
     trayectoria_pnl: Dict[str, float] = dataclasses.field(default_factory=dict)
+    volatilidad_bv_raw_entrada: float = cfg.VOLATILIDAD_BV_PISO_MIN
+    irrev_lob_entrada: float = 0.0
+    imb_l1_entrada: float = 0.0
+    cancel_net_l1_entrada: float = 0.0
+    vacio_l2_entrada: float = 1.0
+    q_l1_ratio_entrada: float = 1.0
+    fpt_race_ratio: float = 0.0
+    pendiente_delise: float = 0.0
+    mfe_capture_ratio: float = 0.0
 
     def __post_init__(self) -> None:
         if self.max_precio_favorable <= 0.0:
@@ -225,6 +241,24 @@ class PosicionActiva:
             return (precio_actual - self.precio_entrada) / self.precio_entrada
         return (self.precio_entrada - precio_actual) / self.precio_entrada
 
+    def calcular_mfe_capture_regularizado(self, precio_actual: float) -> float:
+        """
+        Indice Regularizado de Eficiencia de Excursion eta_MFE in [-1.50, +1.50]:
+        Elimina la singularidad numerica cuando MFE -> 0+ y mide la fraccion
+        de retencion de ganancia (si MFE >= 8 bps o PnL >= 0) o la contencion
+        relativa frente al MAE (si fue un fill muerto MFE < 8 bps).
+        """
+        pnl_b = self.calcular_pnl_bruto_pct(precio_actual)
+        mfe_b = max(0.0, float(self.max_pnl_pct_alcanzado))
+        mae_b = abs(float(self.min_pnl_pct_alcanzado))
+        if pnl_b >= 0.0 or mfe_b >= 0.0008:
+            denom = max(mfe_b, 0.0008)
+            ratio = pnl_b / denom
+            return round(max(-1.50, min(1.50, ratio)), 4)
+        denom_mae = max(mae_b, 0.0010)
+        ratio_loss = -abs(pnl_b) / denom_mae
+        return round(max(-1.50, min(0.0, ratio_loss)), 4)
+
     def actualizar_excursion(self, precio_actual: float, ahora: Optional[float] = None) -> float:
         pnl_pct = self.calcular_pnl_bruto_pct(precio_actual)
         if self.direccion == "LONG":
@@ -242,6 +276,8 @@ class PosicionActiva:
             self.max_pnl_pct_alcanzado = pnl_pct
         if pnl_pct < self.min_pnl_pct_alcanzado:
             self.min_pnl_pct_alcanzado = pnl_pct
+
+        self.mfe_capture_ratio = self.calcular_mfe_capture_regularizado(precio_actual)
 
         ts_now = ahora if ahora is not None else time.time()
         edad = ts_now - self.timestamp_apertura
@@ -282,10 +318,9 @@ class EventoPostCierrePendiente:
     max_px_ventana: float = 0.0
 
 
-
 class EstadoGlobalRAM:
     """
-    Deterministic O(1) in-memory state store for Doctor Blythe Terpsichora V1.0.
+    Deterministic O(1) in-memory state store for Doctor Blythe Terpsichora V7.0.
     Guarantees sub-microsecond permission lookup and lock-free L2 telemetry access.
     """
 
@@ -469,18 +504,31 @@ class EstadoGlobalRAM:
     ) -> None:
         if precio_ref <= 0.0:
             return
+        ahora_ev = time.time()
+        ventana_dedup = 4.0 if str(escudo).startswith("OPSR_") else 6.0
         for ev in self.cola_forense_15s:
-            if ev.symbol == symbol and ev.escudo == escudo and (time.time() - ev.timestamp) < 4.0:
+            if ev.symbol == symbol and ev.escudo == escudo and (ahora_ev - ev.timestamp) < ventana_dedup:
                 return
+        vec_completo = dict(vector_mercado or {})
+        m_live = self.metricas_ticks.get(symbol)
+        if m_live is not None:
+            vec_completo.setdefault("volatilidad_bv", m_live.volatilidad_bv)
+            vec_completo.setdefault("percentil_24h", m_live.etiqueta_percentil or m_live.percentil_24h)
+            vec_completo.setdefault("vacio_l2_ratio", round(m_live.vacio_l2_ratio, 3))
+            vec_completo.setdefault("imb_l1", m_live.imb_l1)
+            vec_completo.setdefault("cancel_net_l1", m_live.cancel_net_l1)
+            vec_completo.setdefault("irrev_lob", m_live.irrev_lob)
         self.cola_forense_15s.append(
             EventoForensePendiente(
-                timestamp=time.time(),
+                timestamp=ahora_ev,
                 symbol=symbol,
                 direccion=direccion,
                 escudo=escudo,
                 motivo=motivo,
                 precio_ref=precio_ref,
-                vector_mercado=dict(vector_mercado or {}),
+                vector_mercado=vec_completo,
+                min_px_ventana=precio_ref,
+                max_px_ventana=precio_ref,
             )
         )
 
@@ -519,12 +567,23 @@ class EstadoGlobalRAM:
 
             exc_eval_save = min(excursion_pct, peor_exc_pct)
             exc_eval_miss = max(excursion_pct, mejor_exc_pct)
-            if exc_eval_save <= -0.0018:
+            es_opsr = str(ev.escudo).startswith("OPSR_")
+            umbral_save = -0.0012 if es_opsr else -0.0018
+            umbral_miss = 0.0014 if es_opsr else 0.0024
+            piso_miss = -0.0008 if es_opsr else -0.0012
+
+            if exc_eval_save <= umbral_save:
                 veredicto = "CAPITAL_SAVED_TRUE_SHIELD"
-            elif exc_eval_miss >= 0.0024 and exc_eval_save > -0.0012:
+            elif exc_eval_miss >= umbral_miss and exc_eval_save > piso_miss:
                 veredicto = "FALSE_REJECTION_OPPORTUNITY_LOST"
             else:
                 veredicto = "NEUTRAL_CHOP_FILTERED"
+
+            ahorro_usdt = (
+                round(max(0.0, -exc_eval_save) * nocional_est, 4)
+                if veredicto == "CAPITAL_SAVED_TRUE_SHIELD"
+                else 0.0
+            )
             registro = {
                 "tipo_evento": "AUDITORIA_ESCUDO_15S",
                 "timestamp": round(ev.timestamp, 3),
@@ -538,7 +597,7 @@ class EstadoGlobalRAM:
                 "excursion_15s_pct": round(excursion_pct * 100.0, 4),
                 "peor_excursion_15s_pct": round(peor_exc_pct * 100.0, 4),
                 "mejor_excursion_15s_pct": round(mejor_exc_pct * 100.0, 4),
-                "ahorro_estimado_usdt": round(max(0.0, -exc_eval_save) * nocional_est, 4),
+                "ahorro_estimado_usdt": ahorro_usdt,
                 "veredicto_oraculo_15s": veredicto,
                 "vector_entrada": ev.vector_mercado,
             }
@@ -564,6 +623,8 @@ class EstadoGlobalRAM:
                     pnl_usdt=float(registro_trade.get("pnl_usdt", 0.0)),
                     pnl_pct=float(registro_trade.get("pnl_pct", 0.0)),
                     map_usdt=float(registro_trade.get("map_usdt", 15.5) or 15.5),
+                    min_px_ventana=px_out,
+                    max_px_ventana=px_out,
                 )
             )
         except Exception:
@@ -593,24 +654,42 @@ class EstadoGlobalRAM:
             px_60s = m.mid if (m and m.mid > 0.0) else ev.precio_salida
             px_15 = ev.px_15s if ev.px_15s > 0.0 else px_60s
             px_30 = ev.px_30s if ev.px_30s > 0.0 else px_60s
+            min_px_60 = min(ev.min_px_ventana or px_60s, px_60s, ev.precio_salida)
+            max_px_60 = max(ev.max_px_ventana or px_60s, px_60s, ev.precio_salida)
             es_long = ev.side.upper() in ("BUY", "LONG")
             signo = 1.0 if es_long else -1.0
 
             cont_15 = signo * ((px_15 - ev.precio_salida) / ev.precio_salida) * 100.0
             cont_30 = signo * ((px_30 - ev.precio_salida) / ev.precio_salida) * 100.0
             cont_60 = signo * ((px_60s - ev.precio_salida) / ev.precio_salida) * 100.0
+            if es_long:
+                peor_exc_60 = ((min_px_60 - ev.precio_salida) / ev.precio_salida) * 100.0
+                mejor_exc_60 = ((max_px_60 - ev.precio_salida) / ev.precio_salida) * 100.0
+            else:
+                peor_exc_60 = ((ev.precio_salida - max_px_60) / ev.precio_salida) * 100.0
+                mejor_exc_60 = ((ev.precio_salida - min_px_60) / ev.precio_salida) * 100.0
+
+            peor_eval_60 = min(cont_60, peor_exc_60)
+            mejor_eval_60 = max(cont_60, mejor_exc_60)
 
             es_sc = "SCRATCH" in ev.motivo_salida.upper()
-            ahorro_sc = 0.0
-            if es_sc and cont_60 < 0.0:
-                ahorro_sc = round(abs(cont_60 / 100.0) * ev.map_usdt, 4)
-
             if es_sc:
-                veredicto = "SCRATCH_SAVED_DUMP" if cont_60 <= -0.08 else ("SCRATCH_EARLY_REBOUND" if cont_60 >= 0.18 else "SCRATCH_NEUTRAL")
+                if peor_eval_60 <= -0.08:
+                    veredicto = "SCRATCH_SAVED_DUMP"
+                elif mejor_eval_60 >= 0.18 and peor_eval_60 > -0.06:
+                    veredicto = "SCRATCH_EARLY_REBOUND"
+                else:
+                    veredicto = "SCRATCH_NEUTRAL"
             elif ev.pnl_usdt > 0.0:
-                veredicto = "WALD_CREST_OPTIMAL" if cont_30 <= 0.05 else "WALD_RUNNER_CONTINUED"
+                veredicto = "WALD_CREST_OPTIMAL" if max(cont_30, cont_60) <= 0.05 else "WALD_RUNNER_CONTINUED"
             else:
                 veredicto = "LOSS_CONTAINED"
+
+            ahorro_sc = (
+                round(abs(peor_eval_60 / 100.0) * ev.map_usdt, 4)
+                if (es_sc and veredicto == "SCRATCH_SAVED_DUMP")
+                else 0.0
+            )
 
             guardar_registro_baul_forense(
                 {
@@ -627,6 +706,8 @@ class EstadoGlobalRAM:
                     "continuation_15s_pct": round(cont_15, 4),
                     "continuation_30s_pct": round(cont_30, 4),
                     "continuation_60s_pct": round(cont_60, 4),
+                    "peor_excursion_60s_pct": round(peor_exc_60, 4),
+                    "mejor_excursion_60s_pct": round(mejor_exc_60, 4),
                     "ahorro_post_scratch_usdt": ahorro_sc,
                     "veredicto_post_cierre": veredicto,
                 }

@@ -1,8 +1,8 @@
 """
-Level 5 DAG: 25.0 Hz L2 Microstructural Radar, Bipower Variation Z-Score Engine,
-24-Hour Elastic Seasonality Curve, Immutable SCAR_BASE (SCAR-LOCK-00..18),
-4.50s Puppeteer Phase-Latched Envelope, and Top-Rollover SHORT-SNIPER Capture
-for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+Level 5 DAG: 25.0 Hz L2 Microstructural Radar, Unclamped Bipower Variation Z-Score
+Engine, 5-Pole Gaussian 24-Hour Elastic Seasonality Curve, Immutable SCAR_BASE
+(SCAR-LOCK-00..18), 4.50s Puppeteer Phase-Latched Envelope, and Top-Rollover
+SHORT-SNIPER Capture for HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 from __future__ import annotations
 from defensiva.micro_veto_macro_btc import evaluar_desbloqueo_dinamico_flujo_btc
@@ -54,8 +54,18 @@ VentanaZ = mcl.VentanaZ
 def calcular_percentil_intradia_24h(
     volatilidad_bv: float,
     timestamp_utc: Optional[float] = None,
+    symbol: str = "",
+    volatilidad_bv_raw: float = 0.0,
 ) -> Tuple[float, str]:
-    return mcl.calcular_percentil_intradia_24h(volatilidad_bv, timestamp_utc)
+    try:
+        return mcl.calcular_percentil_intradia_24h(
+            volatilidad_bv,
+            timestamp_utc,
+            symbol=symbol,
+            volatilidad_bv_raw=volatilidad_bv_raw,
+        )
+    except TypeError:
+        return mcl.calcular_percentil_intradia_24h(volatilidad_bv, timestamp_utc)
 
 
 def calcular_ofi_profundo(
@@ -103,9 +113,9 @@ class EstadoRadarPar:
 
 class RadarVolatilidadHFT:
     """
-    Terpsichora V1.0 L2 Microstructural Radar with 4.50s Puppeteer Phase-Latched
+    Terpsichora V7.0 L2 Microstructural Radar with 4.50s Puppeteer Phase-Latched
     Envelope, Top-Rollover SHORT-SNIPER Capture, Strict Sign Coherence (RF-06),
-    and 12s Macro BTC-Veto Cooldown.
+    Higher-Order Physical Tensor Propagation, and 12s Macro BTC-Veto Cooldown.
     """
 
     def __init__(self) -> None:
@@ -167,6 +177,7 @@ class RadarVolatilidadHFT:
         est.ultimo_ts = ahora
 
         z_score, dp_pct, vol_bv = est.ventana_z.actualizar(micro_price, ahora)
+        vol_bv_raw = float(getattr(est.ventana_z, "volatilidad_bv_raw", vol_bv) or vol_bv)
         if not est.precios_activos or abs(micro_price - est.precios_activos[-1]) > 1e-12:
             est.precios_activos.append(micro_price)
 
@@ -194,14 +205,11 @@ class RadarVolatilidadHFT:
                 est.ofi_ticks_neg += 1
                 est.ofi_ticks_pos = 0
             elif (est.ofi_ticks_pos > 0 and ofi_inst >= -0.03) or (est.ofi_ticks_neg > 0 and ofi_inst <= 0.03):
-                # Micro-pause on same direction does not erase accumulated tick persistence
                 pass
             else:
                 est.ofi_ticks_pos = max(0, est.ofi_ticks_pos - 1)
                 est.ofi_ticks_neg = max(0, est.ofi_ticks_neg - 1)
         else:
-            # Deep levels (6..50) changed, but Top-5 quotes/sizes are identical:
-            # preserve the last genuine Top-5 OFI instead of overwriting with negative 5s EMA
             ofi_inst = round(est.ultimo_ofi_top5 * math.exp(-dt / 1.50), 4)
 
         alpha_5s = min(1.0, dt / 1.8)
@@ -231,19 +239,30 @@ class RadarVolatilidadHFT:
             + (0.25 if abs(acel_lyap) > 0.0025 else 0.04),
         )
         est.vpin_ema = round((0.08 * tox_inst) + (0.92 * est.vpin_ema), 4)
-        if not mef.evaluar_freno_lyapunov('LONG', acel_lyap, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO)[0]:
+        try:
+            freno_ok_l = mef.evaluar_freno_lyapunov(
+                "LONG", acel_lyap, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO, irrev_lob=irrev_lob
+            )[0]
+        except TypeError:
+            freno_ok_l = mef.evaluar_freno_lyapunov("LONG", acel_lyap, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO)[0]
+        if not freno_ok_l:
             est.ultimo_shock_lyapunov_ts = ahora
 
         ema_macro = est.ventana_z.ema_macro if est.ventana_z.ema_macro > 0.0 else mid
         ema_prev = est.ventana_z.ema_macro_prev if est.ventana_z.ema_macro_prev > 0.0 else ema_macro
         ema900_dist_pct = (mid - ema_macro) / ema_macro if ema_macro > 0.0 else 0.0
         ema900_slope_pct = ((ema_macro - ema_prev) / ema_prev) * 100.0 if ema_prev > 0.0 else 0.0
-        percentil_24h, etiqueta_p = calcular_percentil_intradia_24h(vol_bv, ahora)
+        percentil_24h, etiqueta_p = calcular_percentil_intradia_24h(
+            vol_bv, ahora, symbol=symbol, volatilidad_bv_raw=vol_bv_raw
+        )
 
         metrica = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
         if metrica is None:
             metrica = ram.MetricaTick(symbol=symbol)
             ram.ESTADO_GLOBAL.metricas_ticks[symbol] = metrica
+
+        muro_ask_l2, muro_bid_l2, vacio_l_l2, vacio_s_l2 = mcl.calcular_perfil_muros_vacio_l2(bids_25, asks_25, mid)
+        vacio_dir_l2 = vacio_l_l2 if z_score <= 0.0 else vacio_s_l2
 
         metrica.timestamp = ahora
         metrica.bid = best_bid
@@ -270,10 +289,19 @@ class RadarVolatilidadHFT:
         metrica.percentil_24h = percentil_24h
         metrica.ultimo_shock_lyapunov_ts = est.ultimo_shock_lyapunov_ts
         metrica.ultimo_pulso_toxico_hawkes_ts = est.ultimo_pulso_toxico_ts
-        muro_ask_l2, muro_bid_l2, vacio_l_l2, vacio_s_l2 = mcl.calcular_perfil_muros_vacio_l2(bids_25, asks_25, mid)
         metrica.muro_ask_px = muro_ask_l2
         metrica.muro_bid_px = muro_bid_l2
-        metrica.vacio_l2_ratio = vacio_l_l2 if z_score <= 0.0 else vacio_s_l2
+        metrica.vacio_l2_ratio = vacio_dir_l2
+        if hasattr(metrica, "volatilidad_bv_raw"):
+            metrica.volatilidad_bv_raw = vol_bv_raw
+        if hasattr(metrica, "etiqueta_percentil"):
+            metrica.etiqueta_percentil = etiqueta_p
+        if hasattr(metrica, "imb_l1"):
+            metrica.imb_l1 = imb_l1
+        if hasattr(metrica, "cancel_net_l1"):
+            metrica.cancel_net_l1 = cancel_net_l1
+        if hasattr(metrica, "irrev_lob"):
+            metrica.irrev_lob = irrev_lob
 
         if symbol == cfg.PAR_LIDER_MACRO:
             self._verificar_veto_macro_btc("LONG", ahora)
@@ -309,7 +337,7 @@ class RadarVolatilidadHFT:
         ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
 
         # ======================================================================
-        # PATH A: TERPSICHORA V1.0 PHASE-LATCHED LONG V-BOTTOM ENGINE (4.50s)
+        # PATH A: TERPSICHORA V7.0 PHASE-LATCHED LONG V-BOTTOM ENGINE (4.50s)
         # ======================================================================
         h_cap_long = cfg.HURST_MAX_ENTRADA_LONG if es_hb else cfg.HURST_MAX_ENTRADA_LONG_T1
         ofi_min_long = max(cfg.OFI_MIN_ENTRADA, min(0.16, float(ctrl.get("w1_ofi_long", cfg.OFI_MIN_ENTRADA))))
@@ -331,10 +359,16 @@ class RadarVolatilidadHFT:
                 "hawkes_entry": est.intensidad_hawkes,
                 "lyapunov_entry": acel_lyap,
                 "volatilidad_bv": vol_bv,
+                "volatilidad_bv_raw": vol_bv_raw,
                 "percentil_24h": etiqueta_p,
+                "vacio_l2_ratio": round(vacio_l_l2, 3),
+                "imb_l1": imb_l1,
+                "cancel_net_l1": cancel_net_l1,
+                "irrev_lob": irrev_lob,
+                "multiplicador_elastico": float(getattr(metrica, "multiplicador_elastico", 1.0) or 1.0),
             }
 
-            if acel_lyap < cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO:
+            if not freno_ok_l:
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
                     est.ultimo_log_warn_ts = ahora
                     ram.log_operativo(
@@ -346,23 +380,42 @@ class RadarVolatilidadHFT:
                 )
                 return False, "LYAPUNOV_ACCELERATING_DROP", None
 
-            ok_abs_l, mot_abs_l = mef.evaluar_absorcion_ofi_hawkes(
-                "LONG", ofi_inst, est.ofi_ticks_pos, est.intensidad_hawkes,
-                ofi_min_req=ofi_min_long, ticks_min_req=cfg.OFI_TICKS_PERSISTENCIA_MIN,
-                hawkes_min_req=cfg.HAWKES_INTENSIDAD_MIN_LONG,
-                imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
-            )
+            try:
+                ok_abs_l, mot_abs_l = mef.evaluar_absorcion_ofi_hawkes(
+                    "LONG", ofi_inst, est.ofi_ticks_pos, est.intensidad_hawkes,
+                    ofi_min_req=ofi_min_long, ticks_min_req=cfg.OFI_TICKS_PERSISTENCIA_MIN,
+                    hawkes_min_req=cfg.HAWKES_INTENSIDAD_MIN_LONG,
+                    imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
+                    irrev_lob=irrev_lob, vacio_l2_ratio=vacio_l_l2,
+                )
+            except TypeError:
+                ok_abs_l, mot_abs_l = mef.evaluar_absorcion_ofi_hawkes(
+                    "LONG", ofi_inst, est.ofi_ticks_pos, est.intensidad_hawkes,
+                    ofi_min_req=ofi_min_long, ticks_min_req=cfg.OFI_TICKS_PERSISTENCIA_MIN,
+                    hawkes_min_req=cfg.HAWKES_INTENSIDAD_MIN_LONG,
+                    imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
+                )
             if not ok_abs_l and "L1_SPOOF" in mot_abs_l:
                 ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
                     symbol, "LONG", "L1_SPOOF_SHIELD", mot_abs_l, mid, vector_snap
                 )
                 return False, "L1_SPOOF_DETECTED", None
-            ok_ct_l, mot_ct_l = mef.evaluar_conviccion_contratendencia_ema900(
-                "LONG", ema900_dist_pct, ofi_inst, hurst, z_score
-            )
+
+            try:
+                ok_ct_l, mot_ct_l = mef.evaluar_conviccion_contratendencia_ema900(
+                    "LONG", ema900_dist_pct, ofi_inst, hurst, z_score,
+                    irrev_lob=irrev_lob, vacio_l2_ratio=vacio_l_l2,
+                )
+            except TypeError:
+                ok_ct_l, mot_ct_l = mef.evaluar_conviccion_contratendencia_ema900(
+                    "LONG", ema900_dist_pct, ofi_inst, hurst, z_score
+                )
             if not ok_ct_l:
                 return False, mot_ct_l, None
-            vertice_ok_l = confirmar_disparo_vertice_armado(z_score, hurst, acel_lyap, ofi_inst, est.ofi_ema_5s, latch_long_vigente, "LONG", ofi_min_long)
+
+            vertice_ok_l = confirmar_disparo_vertice_armado(
+                z_score, hurst, acel_lyap, ofi_inst, est.ofi_ema_5s, latch_long_vigente, "LONG", ofi_min_long
+            )
             if (not ok_abs_l and not vertice_ok_l) and "WAIT_BID_ABSORPTION" in mot_abs_l:
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
                     est.ultimo_log_warn_ts = ahora
@@ -374,29 +427,52 @@ class RadarVolatilidadHFT:
 
             if ahora < ram.ESTADO_GLOBAL.btc_veto_long_hasta:
                 m_b = ram.ESTADO_GLOBAL.metricas_ticks.get(cfg.PAR_LIDER_MACRO)
-                if m_b is not None and (
-                    mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(
-                        "LONG",
-                        ram.ESTADO_GLOBAL.btc_veto_long_hasta - ahora,
-                        m_b.z_score,
-                        m_b.ofi_profundo,
-                        ofi_inst,
-                        hurst,
-                        acel_lyap,
-                        cfg.BTC_VETO_COOLDOWN_SEG,
-                    )
-                    or evaluar_desbloqueo_dinamico_flujo_btc(
-                        m_b.z_score,
-                        m_b.ofi_profundo,
-                        m_b.dp_pct,
-                        ofi_inst,
-                        hurst,
-                        acel_lyap,
-                        cfg.BTC_VETO_COOLDOWN_SEG - (ram.ESTADO_GLOBAL.btc_veto_long_hasta - ahora),
-                        "LONG",
-                    )
-                ):
-                    ram.ESTADO_GLOBAL.btc_veto_long_hasta = 0.0
+                if m_b is not None:
+                    try:
+                        lib_sync_l = mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(
+                            "LONG",
+                            ram.ESTADO_GLOBAL.btc_veto_long_hasta - ahora,
+                            m_b.z_score,
+                            m_b.ofi_profundo,
+                            ofi_inst,
+                            hurst,
+                            acel_lyap,
+                            cfg.BTC_VETO_COOLDOWN_SEG,
+                            vacio_l2_alt=vacio_l_l2,
+                        ) or evaluar_desbloqueo_dinamico_flujo_btc(
+                            m_b.z_score,
+                            m_b.ofi_profundo,
+                            m_b.dp_pct,
+                            ofi_inst,
+                            hurst,
+                            acel_lyap,
+                            cfg.BTC_VETO_COOLDOWN_SEG - (ram.ESTADO_GLOBAL.btc_veto_long_hasta - ahora),
+                            "LONG",
+                            vacio_l2_alt=vacio_l_l2,
+                        )
+                    except TypeError:
+                        lib_sync_l = mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(
+                            "LONG",
+                            ram.ESTADO_GLOBAL.btc_veto_long_hasta - ahora,
+                            m_b.z_score,
+                            m_b.ofi_profundo,
+                            ofi_inst,
+                            hurst,
+                            acel_lyap,
+                            cfg.BTC_VETO_COOLDOWN_SEG,
+                        ) or evaluar_desbloqueo_dinamico_flujo_btc(
+                            m_b.z_score,
+                            m_b.ofi_profundo,
+                            m_b.dp_pct,
+                            ofi_inst,
+                            hurst,
+                            acel_lyap,
+                            cfg.BTC_VETO_COOLDOWN_SEG - (ram.ESTADO_GLOBAL.btc_veto_long_hasta - ahora),
+                            "LONG",
+                        )
+                    if lib_sync_l:
+                        ram.ESTADO_GLOBAL.btc_veto_long_hasta = 0.0
+
             ok_btc, motivo_btc = self._verificar_veto_macro_btc("LONG", ahora)
             if not ok_btc:
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
@@ -408,8 +484,10 @@ class RadarVolatilidadHFT:
                 return False, motivo_btc, None
 
             if (
-                not mef.evaluar_filtro_hurst_direccional('LONG', hurst, h_cap_long, h_cap_long)[0]
-                and not mir.evaluar_override_climax_hurst('LONG', z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst)
+                not mef.evaluar_filtro_hurst_direccional("LONG", hurst, h_cap_long, h_cap_long)[0]
+                and not mir.evaluar_override_climax_hurst(
+                    "LONG", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst, irreversibilidad_lob=irrev_lob
+                )
             ):
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
                     est.ultimo_log_warn_ts = ahora
@@ -466,12 +544,20 @@ class RadarVolatilidadHFT:
                 "hawkes": est.intensidad_hawkes,
                 "lyapunov": acel_lyap,
                 "volatilidad_bv": vol_bv,
+                "volatilidad_bv_raw": vol_bv_raw,
                 "percentil_24h": percentil_24h,
                 "etiqueta_percentil": etiqueta_p,
+                "vacio_l2_ratio": vacio_l_l2,
+                "muro_ask_px": muro_ask_l2,
+                "muro_bid_px": muro_bid_l2,
+                "imb_l1": imb_l1,
+                "cancel_net_l1": cancel_net_l1,
+                "irrev_lob": irrev_lob,
+                "multiplicador_elastico": float(getattr(metrica, "multiplicador_elastico", 1.0) or 1.0),
             }
 
         # ======================================================================
-        # PATH B: TERPSICHORA V1.0 EXHAUSTED-TOP & ROLLOVER SHORT-SNIPER ENGINE
+        # PATH B: TERPSICHORA V7.0 EXHAUSTED-TOP & ROLLOVER SHORT-SNIPER ENGINE
         # ======================================================================
         h_cap_short = min(
             cfg.HURST_TECHO_DURO_ABSOLUTO,
@@ -494,40 +580,85 @@ class RadarVolatilidadHFT:
                 "hawkes_entry": est.intensidad_hawkes,
                 "lyapunov_entry": acel_lyap,
                 "volatilidad_bv": vol_bv,
+                "volatilidad_bv_raw": vol_bv_raw,
                 "percentil_24h": etiqueta_p,
+                "vacio_l2_ratio": round(vacio_s_l2, 3),
+                "imb_l1": imb_l1,
+                "cancel_net_l1": cancel_net_l1,
+                "irrev_lob": irrev_lob,
+                "multiplicador_elastico": float(getattr(metrica, "multiplicador_elastico", 1.0) or 1.0),
             }
 
-            if not mef.evaluar_freno_lyapunov("SHORT", acel_lyap, umbral_agotamiento_short=cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO)[0]:
+            try:
+                freno_s_ok = mef.evaluar_freno_lyapunov(
+                    "SHORT", acel_lyap, umbral_agotamiento_short=cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO, irrev_lob=irrev_lob
+                )[0]
+            except TypeError:
+                freno_s_ok = mef.evaluar_freno_lyapunov(
+                    "SHORT", acel_lyap, umbral_agotamiento_short=cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO
+                )[0]
+            if not freno_s_ok:
                 return False, "SHORT_NO_LYAPUNOV_EXHAUSTION", None
 
-            ok_abs_s, _ = mef.evaluar_absorcion_ofi_hawkes(
-                "SHORT", ofi_inst, est.ofi_ticks_neg, est.intensidad_hawkes,
-                ofi_min_req=abs(cfg.OFI_MAX_ENTRADA_SHORT), ticks_min_req=cfg.OFI_TICKS_PERSISTENCIA_MIN,
-                hawkes_min_req=abs(cfg.HAWKES_INTENSIDAD_MAX_SHORT),
-                imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
-            )
+            try:
+                ok_abs_s, _ = mef.evaluar_absorcion_ofi_hawkes(
+                    "SHORT", ofi_inst, est.ofi_ticks_neg, est.intensidad_hawkes,
+                    ofi_min_req=abs(cfg.OFI_MAX_ENTRADA_SHORT), ticks_min_req=cfg.OFI_TICKS_PERSISTENCIA_MIN,
+                    hawkes_min_req=abs(cfg.HAWKES_INTENSIDAD_MAX_SHORT),
+                    imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
+                    irrev_lob=irrev_lob, vacio_l2_ratio=vacio_s_l2,
+                )
+            except TypeError:
+                ok_abs_s, _ = mef.evaluar_absorcion_ofi_hawkes(
+                    "SHORT", ofi_inst, est.ofi_ticks_neg, est.intensidad_hawkes,
+                    ofi_min_req=abs(cfg.OFI_MAX_ENTRADA_SHORT), ticks_min_req=cfg.OFI_TICKS_PERSISTENCIA_MIN,
+                    hawkes_min_req=abs(cfg.HAWKES_INTENSIDAD_MAX_SHORT),
+                    imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
+                )
             if not ok_abs_s:
                 return False, "SHORT_OFI_INSUFFICIENT", None
 
-            ok_ct_s, mot_ct_s = mef.evaluar_conviccion_contratendencia_ema900(
-                "SHORT", ema900_dist_pct, ofi_inst, hurst, z_score
-            )
+            try:
+                ok_ct_s, mot_ct_s = mef.evaluar_conviccion_contratendencia_ema900(
+                    "SHORT", ema900_dist_pct, ofi_inst, hurst, z_score,
+                    irrev_lob=irrev_lob, vacio_l2_ratio=vacio_s_l2,
+                )
+            except TypeError:
+                ok_ct_s, mot_ct_s = mef.evaluar_conviccion_contratendencia_ema900(
+                    "SHORT", ema900_dist_pct, ofi_inst, hurst, z_score
+                )
             if not ok_ct_s:
                 return False, mot_ct_s, None
 
             if ahora < ram.ESTADO_GLOBAL.btc_veto_short_hasta:
                 m_b = ram.ESTADO_GLOBAL.metricas_ticks.get(cfg.PAR_LIDER_MACRO)
-                if m_b is not None and mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(
-                    "SHORT",
-                    ram.ESTADO_GLOBAL.btc_veto_short_hasta - ahora,
-                    m_b.z_score,
-                    m_b.ofi_profundo,
-                    ofi_inst,
-                    hurst,
-                    acel_lyap,
-                    cfg.BTC_VETO_COOLDOWN_SEG,
-                ):
-                    ram.ESTADO_GLOBAL.btc_veto_short_hasta = 0.0
+                if m_b is not None:
+                    try:
+                        lib_sync_s = mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(
+                            "SHORT",
+                            ram.ESTADO_GLOBAL.btc_veto_short_hasta - ahora,
+                            m_b.z_score,
+                            m_b.ofi_profundo,
+                            ofi_inst,
+                            hurst,
+                            acel_lyap,
+                            cfg.BTC_VETO_COOLDOWN_SEG,
+                            vacio_l2_alt=vacio_s_l2,
+                        )
+                    except TypeError:
+                        lib_sync_s = mvb.puede_liberar_cooldown_btc_en_giro_sincronizado(
+                            "SHORT",
+                            ram.ESTADO_GLOBAL.btc_veto_short_hasta - ahora,
+                            m_b.z_score,
+                            m_b.ofi_profundo,
+                            ofi_inst,
+                            hurst,
+                            acel_lyap,
+                            cfg.BTC_VETO_COOLDOWN_SEG,
+                        )
+                    if lib_sync_s:
+                        ram.ESTADO_GLOBAL.btc_veto_short_hasta = 0.0
+
             ok_btc_s, motivo_btc_s = self._verificar_veto_macro_btc("SHORT", ahora)
             if not ok_btc_s:
                 ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
@@ -542,7 +673,9 @@ class RadarVolatilidadHFT:
 
             if (
                 not mef.evaluar_filtro_hurst_direccional("SHORT", hurst, h_cap_short, h_cap_short)[0]
-                and not mir.evaluar_override_climax_hurst("SHORT", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst, irreversibilidad_lob=irrev_lob)
+                and not mir.evaluar_override_climax_hurst(
+                    "SHORT", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst, irreversibilidad_lob=irrev_lob
+                )
             ):
                 est.ultimo_hurst_alto_short_ts = ahora
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
@@ -556,7 +689,15 @@ class RadarVolatilidadHFT:
                 )
                 return False, "SHORT_HURST_EXCEEDED", None
 
-            if not mcch.verificar_enfriamiento_post_hurst_short(ahora, est.ultimo_hurst_alto_short_ts, 15.0)[0]:
+            try:
+                cd_h_ok = mcch.verificar_enfriamiento_post_hurst_short(
+                    ahora, est.ultimo_hurst_alto_short_ts, 15.0, hurst_actual=hurst, irreversibilidad_lob=irrev_lob
+                )[0]
+            except TypeError:
+                cd_h_ok = mcch.verificar_enfriamiento_post_hurst_short(
+                    ahora, est.ultimo_hurst_alto_short_ts, 15.0
+                )[0]
+            if not cd_h_ok:
                 return False, "SHORT_POST_HURST_COOLDOWN", None
 
             if est.intensidad_hawkes > cfg.HAWKES_INTENSIDAD_MAX_SHORT:
@@ -598,8 +739,16 @@ class RadarVolatilidadHFT:
                 "hawkes": est.intensidad_hawkes,
                 "lyapunov": acel_lyap,
                 "volatilidad_bv": vol_bv,
+                "volatilidad_bv_raw": vol_bv_raw,
                 "percentil_24h": percentil_24h,
                 "etiqueta_percentil": etiqueta_p,
+                "vacio_l2_ratio": vacio_s_l2,
+                "muro_ask_px": muro_ask_l2,
+                "muro_bid_px": muro_bid_l2,
+                "imb_l1": imb_l1,
+                "cancel_net_l1": cancel_net_l1,
+                "irrev_lob": irrev_lob,
+                "multiplicador_elastico": float(getattr(metrica, "multiplicador_elastico", 1.0) or 1.0),
             }
 
         return False, "NO_SIGNAL", None

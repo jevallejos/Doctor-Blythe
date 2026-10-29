@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo de Apoyo #1: Motores Matematicos L2 de Variacion Bipower (VentanaZ),
+Micro-Modulo de Apoyo #1: Motores Matematicos L2 de Variacion Bipower (VentanaZ)
+Desacoplada por Par, Curva Estacional Elastica 24h UTC de 5 Polos Gaussianos,
 OFI Profundo de 5 Niveles, Exponente de Hurst con Correccion de Muestra Finita,
-Cinematica de Lyapunov, Desequilibrio de Cancelacion L1 y Entropia Temporal LOB.
+Cinematica de Lyapunov, Desequilibrio de Cancelacion L1 y Entropia Temporal LOB
+para HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 import collections
 import datetime
@@ -22,15 +24,58 @@ _CURVA_ESTACIONAL_24H_UTC: Tuple[float, ...] = (
 )
 
 
+def calcular_curva_estacional_continua_utc(timestamp_utc: Optional[float] = None) -> float:
+    """
+    Evalua la intensidad estacional continua S_UTC(t) in [0.44, 0.96] combinando
+    la interpolacion horaria discreta con los 5 polos Gaussianos de liquidez
+    intradia (00:00 Asia Open, 04:50 Asia Mid, 08:00 London Open, 13:45 NY Open,
+    16:00 London Close).
+    """
+    ts = float(timestamp_utc) if timestamp_utc is not None else time.time()
+    dt_utc = datetime.datetime.fromtimestamp(ts, _TZ_UTC)
+    h_cont = dt_utc.hour + (dt_utc.minute / 60.0) + (dt_utc.second / 3600.0)
+    base_h = _CURVA_ESTACIONAL_24H_UTC[dt_utc.hour % 24]
+
+    polos = (
+        (0.00, 0.14, 1.35),
+        (4.83, 0.08, 1.20),
+        (8.00, 0.16, 1.40),
+        (13.75, 0.24, 1.55),
+        (16.00, 0.18, 1.45),
+    )
+    pulso_gauss = 0.0
+    for mu_h, amp, width in polos:
+        diff = min(abs(h_cont - mu_h), 24.0 - abs(h_cont - mu_h))
+        pulso_gauss += amp * math.exp(-0.5 * ((diff / width) ** 2))
+
+    s_cont = (0.72 * base_h) + (0.28 * min(0.98, 0.46 + pulso_gauss))
+    return round(max(0.44, min(0.96, s_cont)), 4)
+
+
 def calcular_percentil_intradia_24h(
     volatilidad_bv: float,
     timestamp_utc: Optional[float] = None,
+    symbol: str = "",
+    volatilidad_bv_raw: float = 0.0,
 ) -> Tuple[float, str]:
-    ts = timestamp_utc if timestamp_utc is not None else time.time()
-    hora_utc = datetime.datetime.fromtimestamp(ts, _TZ_UTC).hour
-    base_estacional = _CURVA_ESTACIONAL_24H_UTC[hora_utc % 24]
-    sigma_ref = max(float(volatilidad_bv), cfg.VOLATILIDAD_BV_PISO_MIN)
-    ratio_vol = min(1.45, max(0.65, sigma_ref / 0.00075))
+    """
+    Calcula el percentil intradia elastico P_24h in [0.05, 0.99] desacoplando
+    la escala natural de cada par (High-Beta vs Tier-1) del piso del Z-Score.
+    Si se provee symbol y/o volatilidad_bv_raw, normaliza respecto al perfil
+    intrinseco (sigma_floor, sigma_ref, sigma_ceil) del par para erradicar el
+    congelamiento en 0.00055 de ARB, AVAX, TAO, XRP y WAL.
+    """
+    base_estacional = calcular_curva_estacional_continua_utc(timestamp_utc)
+    if symbol and hasattr(cfg, "obtener_perfil_elasticidad_bv"):
+        s_floor, s_ref, s_ceil = cfg.obtener_perfil_elasticidad_bv(symbol)
+        sigma_eval = float(volatilidad_bv_raw) if volatilidad_bv_raw > 0.0 else float(volatilidad_bv)
+        sigma_acotada = max(s_floor, min(s_ceil, sigma_eval))
+        ratio_vol = min(1.55, max(0.52, sigma_acotada / max(1e-6, s_ref)))
+    else:
+        sigma_eval = float(volatilidad_bv_raw) if volatilidad_bv_raw > 0.0 else float(volatilidad_bv)
+        sigma_ref = max(sigma_eval, cfg.VOLATILIDAD_BV_PISO_MIN)
+        ratio_vol = min(1.45, max(0.65, sigma_ref / 0.00075))
+
     percentil = max(
         cfg.PERCENTIL_DIA_MIN,
         min(cfg.PERCENTIL_DIA_MAX, base_estacional * ratio_vol),
@@ -39,10 +84,33 @@ def calcular_percentil_intradia_24h(
     return round(percentil, 4), etiqueta
 
 
+def calcular_multiplicador_elastico_par(
+    percentil_24h: float,
+    alpha_disloc_par: float = 1.0,
+    es_high_beta: bool = True,
+) -> float:
+    """
+    Operador Elastico Homogeneo E_t(sym) = alpha_disloc(sym) * phi(P_24h):
+    - Preserva estrictamente la no-regresion sobre los pisos SCAR-LOCK cuando
+      alpha_disloc_par >= 1.00.
+    - En regimenes de calma intradia (P_24h < 0.45) en pares Tier-1, permite
+      capturar reversiones limpias sin ruido; en regimenes de tormenta (P_24h > 0.80),
+      expande la exigencia de excursion para evitar cuchillos cayendo.
+    """
+    p_clamped = max(cfg.PERCENTIL_DIA_MIN, min(cfg.PERCENTIL_DIA_MAX, float(percentil_24h)))
+    alpha_safe = max(1.00, min(1.40, float(alpha_disloc_par or 1.0)))
+    if es_high_beta:
+        phi_p = 0.94 + (0.18 * (p_clamped - 0.50))
+        return round(max(0.95, min(1.48, alpha_safe * phi_p)), 4)
+    phi_t1 = 0.92 + (0.20 * (p_clamped - 0.50))
+    return round(max(0.90, min(1.45, alpha_safe * phi_t1)), 4)
+
+
 class VentanaZ:
     """
     Jump-Robust Bipower Variation Z-Score & Horizon-Synchronized Excursion Engine
-    with O(1) Bipower Product Ring Buffer and Boxcar-EMA Sign Coherence.
+    with O(1) Bipower Product Ring Buffer, Unclamped Raw Bipower Tracking
+    (volatilidad_bv_raw), and Boxcar-EMA Sign Coherence.
     """
 
     def __init__(
@@ -59,6 +127,8 @@ class VentanaZ:
         self.ema_macro: float = 0.0
         self.ema_macro_prev: float = 0.0
         self.volatilidad_bv: float = self.piso_volatilidad
+        self.volatilidad_bv_raw: float = self.piso_volatilidad
+        self.sigma_ema_par: float = 0.0
         self.z_score: float = 0.0
         self.dp_pct: float = 0.0
 
@@ -75,7 +145,6 @@ class VentanaZ:
                 if self.retornos:
                     self.pares_bv.append(abs_ret * abs(self.retornos[-1]))
                 self.retornos.append(ret)
-
         self.precios.append(p)
 
         alpha_fast = 2.0 / (cfg.EMA_RAPIDA_TICKS + 1.0)
@@ -101,13 +170,18 @@ class VentanaZ:
             sigma_tick = math.sqrt(max(0.0, media_bv))
             n_rets = len(self.retornos)
             sigma_horizonte = sigma_tick * math.sqrt(min(12.0, float(n_rets)))
+            self.volatilidad_bv_raw = round(max(0.00008, min(0.00250, sigma_horizonte)), 6)
+            if self.sigma_ema_par <= 0.0:
+                self.sigma_ema_par = self.volatilidad_bv_raw
+            else:
+                self.sigma_ema_par = round((0.02 * self.volatilidad_bv_raw) + (0.98 * self.sigma_ema_par), 6)
             self.volatilidad_bv = max(self.piso_volatilidad, min(0.00110, sigma_horizonte))
         else:
+            self.volatilidad_bv_raw = max(0.00025, self.volatilidad_bv_raw)
             self.volatilidad_bv = max(self.piso_volatilidad, cfg.VOLATILIDAD_BV_PISO_MIN)
 
         dp_ema = (p - self.ema_rapida) / self.ema_rapida if self.ema_rapida > 0.0 else self.dp_pct
         if (self.dp_pct * dp_ema) < 0.0:
-            # Amortigua eco de borde (boxcar drop-off) cuando contradice a la EMA rapida
             desviacion_compuesta = (0.45 * self.dp_pct) + (0.55 * dp_ema)
         else:
             desviacion_compuesta = (0.72 * self.dp_pct) + (0.28 * dp_ema)
@@ -192,21 +266,18 @@ def calcular_exponente_hurst(precios_activos: List[float], z_score_actual: float
     n_loc = len(tramo_local)
     media_local = sum(tramo_local) / n_loc
     frenado_activo = (r_clip[-1] * media_local) <= 0.0 or abs(r_clip[-1]) < abs(media_local) * 0.65
-    serie_eval = [r - media_local for r in tramo_local] if frenado_activo else [r - (0.35 * media_local) for r in r_clip]
 
+    serie_eval = [r - media_local for r in tramo_local] if frenado_activo else [r - (0.35 * media_local) for r in r_clip]
     denom = sum(r * r for r in serie_eval)
     if denom <= 1e-15:
         return 0.38
 
     num = sum(serie_eval[i] * serie_eval[i - 1] for i in range(1, len(serie_eval)))
     rho1_raw = max(-0.45, min(0.75, num / denom))
-
-    # Correccion suave de sesgo de muestra finita (Marriott-Pope) cuando no hay giro confirmado
     if not frenado_activo and n_loc >= 6:
         rho1 = min(0.75, rho1_raw + (1.0 - (rho1_raw * rho1_raw)) / (2.0 * n_loc))
     else:
         rho1 = rho1_raw
-
     h_raw = 0.50 + (0.50 * (math.log(max(0.25, 1.0 + rho1)) / math.log(2.0)))
 
     if len(rets) >= 5 and (all(r > 0.0 for r in rets[-5:]) or all(r < 0.0 for r in rets[-5:])):
@@ -219,6 +290,7 @@ def calcular_exponente_hurst(precios_activos: List[float], z_score_actual: float
 
     if z_score_actual >= cfg.Z_SCORE_IGNICION_SHORT_VETO and ventana[-1] >= max(ventana[:-1]):
         h_raw = max(h_raw, 0.58)
+
     return round(max(0.20, min(0.80, h_raw)), 4)
 
 
@@ -232,8 +304,8 @@ def calcular_aceleracion_lyapunov(precios: List[float], spread_pct: float = 0.0)
     v1 = (p_mid - p0) / p0
     v2 = (p_end - p_mid) / p_mid
     acel = v2 - v1
+
     umbral_tick = max(spread_pct * 1.25, 0.00042)
-    # Solo amortigua ruido de micro-tick si la caida NO se esta acelerando (v2 >= v1 o v2 >= 0)
     if acel < 0.0 and (v2 >= 0.0 or (abs(v2) <= umbral_tick and abs(v2) <= abs(v1))):
         if v1 > umbral_tick and v2 <= 0.0:
             return round(acel, 6)
@@ -311,17 +383,16 @@ def calcular_irreversibilidad_temporal_lob(
             n_pm += 1.0
         else:
             n_mp += 1.0
-
     tot = n_pp + n_mm + n_pm + n_mp
     p_pp, p_mm, p_pm, p_mp = n_pp / tot, n_mm / tot, n_pm / tot, n_mp / tot
+
     kl_cruce = (p_pm - p_mp) * math.log(p_pm / p_mp)
     kl_racha = 0.38 * (p_pp - p_mm) * math.log(p_pp / p_mm)
-
     e_tot = energia_pos + energia_neg
     q_pos, q_neg = energia_pos / e_tot, energia_neg / e_tot
     kl_energia = 0.22 * (q_pos - q_neg) * math.log(q_pos / q_neg)
-
     acople_ofi = 0.15 * abs(float(ofi_actual)) if (signos[-1] * ofi_actual) > 0.0 else 0.0
+
     entropia = max(0.0, min(1.0, kl_cruce + kl_racha + kl_energia + acople_ofi))
     return round(entropia, 4)
 
@@ -353,7 +424,7 @@ def calcular_perfil_muros_vacio_l2(
     umbral_muro_bid = max(mean_bid_v * 2.8, top5_bid_v * 0.28, 1e-9)
 
     muro_ask_px = 0.0
-    for px_a, qty_a in a_slice[1:22]:
+    for px_a, qty_a in a_slice:
         dist_a = (px_a - mid) / mid
         if dist_a < 0.00095:
             continue
@@ -364,7 +435,7 @@ def calcular_perfil_muros_vacio_l2(
             break
 
     muro_bid_px = 0.0
-    for px_b, qty_b in b_slice[1:22]:
+    for px_b, qty_b in b_slice:
         dist_b = (mid - px_b) / mid
         if dist_b < 0.00095:
             continue
@@ -375,9 +446,9 @@ def calcular_perfil_muros_vacio_l2(
             break
 
     soporte_bid_10 = sum(q for _, q in b_slice[:10])
-    resistencia_ask_2_15 = sum(q for _, q in a_slice[1:15])
+    resistencia_ask_2_15 = sum(q for _, q in a_slice)
     soporte_ask_10 = sum(q for _, q in a_slice[:10])
-    resistencia_bid_2_15 = sum(q for _, q in b_slice[1:15])
+    resistencia_bid_2_15 = sum(q for _, q in b_slice)
 
     vacio_long = (
         round(max(0.20, min(3.00, soporte_bid_10 / max(1e-9, resistencia_ask_2_15))), 4)

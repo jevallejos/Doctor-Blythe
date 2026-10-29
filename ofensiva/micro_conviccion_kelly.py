@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Ofensivo #6: Motor de Conviccion Asimetrica Kelly, Acelerador
-Compuesto House-Money y Expansion Convexa de Outliers (|Z| >= 6.0 -> gamma <= 1.15).
+Compuesto House-Money, Penalizacion Termodinamica por Entropia/Cancelacion L1
+y Expansion Convexa de Outliers para HFT Doctor Blythe Terpsichora V7.0.
 """
 import math
 from typing import Tuple
@@ -24,6 +25,9 @@ def calcular_fraccion_kelly_antifragil(
     hurst: float = 0.42,
     side: str = "LONG",
     symbol: str = "",
+    irrev_lob: float = 0.0,
+    cancel_net_l1: float = 0.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> float:
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
     dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
@@ -38,6 +42,16 @@ def calcular_fraccion_kelly_antifragil(
         base_k = float(cfg.KELLY_FRACCION_BASE)
         z_ref = abs(float(cfg.Z_SCORE_UMBRAL_HIGH_BETA))
 
+    if symbol and not cfg.es_modo_test():
+        m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
+        if m_live is not None:
+            if irrev_lob == 0.0:
+                irrev_lob = float(getattr(m_live, "irrev_lob", 0.0) or 0.0)
+            if cancel_net_l1 == 0.0:
+                cancel_net_l1 = float(getattr(m_live, "cancel_net_l1", 0.0) or 0.0)
+            if vacio_l2_ratio == 1.0:
+                vacio_l2_ratio = float(getattr(m_live, "vacio_l2_ratio", 1.0) or 1.0)
+
     z_abs = abs(float(z_score))
     ofi_abs = abs(float(ofi))
     h_val = max(0.15, min(0.80, float(hurst)))
@@ -45,11 +59,21 @@ def calcular_fraccion_kelly_antifragil(
     bono_conviccion = min(0.12, exceso_z * 0.028 + max(0.0, ofi_abs - 0.18) * 0.08)
     bono_hm = calcular_bono_house_money()
     penalizacion_hurst = max(0.0, (h_val - 0.44) * 0.35)
+
+    signo_dir = 1.0 if dir_norm == "LONG" else -1.0
+    cancel_dir = signo_dir * float(cancel_net_l1)
+    penal_entropia = 0.16 * max(0.0, float(irrev_lob) - 0.72)
+    penal_cancel = 0.08 * max(0.0, -cancel_dir - 0.45) if cancel_dir < -0.45 else 0.0
+    bono_vacio = min(0.025, 0.04 * max(0.0, float(vacio_l2_ratio) - 1.25))
+
     mult_ia = max(
         cfg.MULTIPLICADOR_IA_MIN,
         min(cfg.MULTIPLICADOR_IA_MAX, float(ram.ESTADO_GLOBAL.multiplicador_kelly_ia)),
     )
-    kelly_bruto = (base_k + bono_conviccion + bono_hm - penalizacion_hurst) * mult_ia
+    kelly_bruto = (
+        base_k + bono_conviccion + bono_hm + bono_vacio
+        - penalizacion_hurst - penal_entropia - penal_cancel
+    ) * mult_ia
     return round(max(cfg.KELLY_FRACCION_MIN, min(cfg.KELLY_FRACCION_MAX, kelly_bruto)), 4)
 
 
@@ -60,6 +84,9 @@ def calcular_dimension_kelly(
     hurst: float = 0.42,
     side: str = "LONG",
     symbol: str = "",
+    irrev_lob: float = 0.0,
+    cancel_net_l1: float = 0.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> Tuple[float, float, float]:
     frac = calcular_fraccion_kelly_antifragil(
         z_score=z_score,
@@ -67,6 +94,9 @@ def calcular_dimension_kelly(
         hurst=hurst,
         side=side,
         symbol=symbol,
+        irrev_lob=irrev_lob,
+        cancel_net_l1=cancel_net_l1,
+        vacio_l2_ratio=vacio_l2_ratio,
     )
     z_abs = abs(float(z_score))
     ofi_abs = abs(float(ofi))

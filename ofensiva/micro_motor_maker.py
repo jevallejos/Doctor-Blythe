@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Ofensivo #1: Supervivencia en Cola L1 Moallemi & Yuan (2017),
-Carrera Normalizada de Tiempos de Primer Paso (arXiv:2403.02572v2) y Salto Pasivo Penny-Jump.
+Carrera Normalizada de Tiempos de Primer Paso (arXiv:2403.02572v2), Pulso de
+Cancelacion Agresiva L1 (arXiv:2502.17417) y Salto Pasivo Penny-Jump
+para HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 from typing import Tuple
 import config_parametros as cfg
@@ -13,13 +15,15 @@ def debe_proteger_orden_en_cola_por_flujo_favorable(
     ofi_dir: float,
     hurst: float,
     min_q_floor: float = 0.22,
+    vacio_l2_ratio: float = 1.0,
 ) -> bool:
     """
     Inhibe Early Queue Abort cuando el OFI direccional es fuertemente favorable
-    (>= +0.10) y el Hurst se mantiene anti-persistente (<= 0.490), evitando
-    cancelar tiros ganadores en < 2.5s por oscilaciones normales de L1.
+    (>= +0.10), el Hurst se mantiene anti-persistente (<= 0.495) y el soporte
+    profundo L2 no ha colapsado (vacio_l2_ratio >= 0.50), evitando cancelar
+    tiros ganadores en < 2.5s por oscilaciones normales de L1.
     """
-    if hurst > 0.495:
+    if hurst > 0.495 or float(vacio_l2_ratio or 1.0) < 0.50:
         return False
     if ofi_dir >= 0.10 and q_ratio >= max(0.28, min_q_floor):
         return True
@@ -36,11 +40,16 @@ def evaluar_aborto_cola_moallemi(
     veto_btc_activo: bool = False,
     q_opp_inicial: float = 0.0,
     q_opp_actual: float = 0.0,
+    cancel_net_l1: float = 0.0,
+    imb_l1: float = 0.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> Tuple[bool, bool]:
     """
     Evalua si una orden PostOnly descansando en L1 sufre seleccion adversa real.
-    Integra la carrera normalizada de tiempos de primer paso (arXiv:2403.02572v2)
-    entre la tasa relativa de vaciado propia (nu_own) y el engrosamiento opuesto (nu_opp).
+    Integra:
+    1. Carrera normalizada de tiempos de primer paso rho_FPT = nu_own / nu_opp (arXiv:2403.02572v2).
+    2. Pulso de cancelacion agresiva L1 (cancel_net_l1, imb_l1 - arXiv:2502.17417).
+    3. Deplecion de soporte L2 (vacio_l2_ratio).
     Retorna (cola_toxica: bool, erosion_adversa: bool).
     """
     if veto_btc_activo:
@@ -60,29 +69,41 @@ def evaluar_aborto_cola_moallemi(
     ratio_cola = (q_l1_actual / q_l1_inicial) if q_l1_inicial > 0.0 else 1.0
     dt_eff = max(0.05, float(edad_orden_seg))
     dir_norm = "LONG" if str(direccion).upper() in ("BUY", "LONG") else "SHORT"
-    ofi_dir = float(ofi_actual) if dir_norm == "LONG" else -float(ofi_actual)
+    signo_dir = 1.0 if dir_norm == "LONG" else -1.0
+    ofi_dir = signo_dir * float(ofi_actual)
     presion_contra_leve = ofi_dir < -0.05
 
-    # Carrera Normalizada de Tiempos de Primer Paso (arXiv:2403.02572v2):
-    # Exige merma relativa propia >= 30% combinada con engrosamiento opuesto >= 5% y OFI sin traccion
+    # 1. Carrera Normalizada de Tiempos de Primer Paso (arXiv:2403.02572v2):
     carrera_primer_paso_adversa = False
     if q_l1_inicial > 0.0 and q_opp_inicial > 0.0 and ratio_cola <= max(0.65, hold_ratio_dyn):
         merma_rel_own = max(0.0, q_l1_inicial - q_l1_actual) / q_l1_inicial
         crec_rel_opp = (q_opp_actual - q_opp_inicial) / q_opp_inicial
         nu_own = merma_rel_own / dt_eff
         nu_opp_drain = max(0.0, q_opp_inicial - q_opp_actual) / (q_opp_inicial * dt_eff)
+        fpt_race_ratio = min(10.0, nu_own / max(0.02, nu_opp_drain))
         if (
             merma_rel_own >= 0.30
             and crec_rel_opp >= 0.05
             and ofi_dir < 0.0
-            and nu_own > (2.0 * max(0.02, nu_opp_drain))
+            and fpt_race_ratio > 2.0
         ):
             carrera_primer_paso_adversa = True
+
+    # 2. Retirada agresiva de liquidez L1 (arXiv:2502.17417):
+    cancel_dir = signo_dir * float(cancel_net_l1 or 0.0)
+    imb_dir = signo_dir * float(imb_l1 or 0.0)
+    retirada_l1_adversa = (
+        ratio_cola <= 0.72
+        and cancel_dir <= -0.52
+        and imb_dir <= -0.58
+        and ofi_dir <= 0.0
+    )
 
     cola_erosionada = (q_l1_inicial > 0.0) and (
         (ratio_cola < ratio_min and presion_contra_leve)
         or (q_l1_inicial >= 1000.0 and ratio_cola < 0.12 and ofi_dir <= 0.0)
         or carrera_primer_paso_adversa
+        or retirada_l1_adversa
     )
 
     umbral_ofi_efectivo = max(ofi_flip_base, 0.28) if ratio_cola >= 0.95 else max(ofi_flip_base, 0.22)
@@ -94,7 +115,7 @@ def evaluar_aborto_cola_moallemi(
     )
 
     if not cola_erosionada and not hurst_toxico and debe_proteger_orden_en_cola_por_flujo_favorable(
-        ratio_cola, ofi_dir, h_actual, min_q_floor=hold_ratio_dyn
+        ratio_cola, ofi_dir, h_actual, min_q_floor=hold_ratio_dyn, vacio_l2_ratio=vacio_l2_ratio
     ):
         return False, False
 
@@ -107,10 +128,14 @@ def listo_para_repeg_cola(
     fue_cancelada_postonly: bool,
     elapsed_seg: float,
     ultimo_repeg_elapsed_seg: float,
+    vacio_l2_ratio: float = 1.0,
 ) -> bool:
     if fue_cancelada_postonly:
         return True
-    intervalo = max(0.25, float(getattr(cfg, "REPEG_PASIVO_ENTRADA_SEG", 0.65)))
+    intervalo_base = max(0.25, float(getattr(cfg, "REPEG_PASIVO_ENTRADA_SEG", 0.65)))
+    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
+    factor_vacio = 0.85 if v_l2 >= 1.35 else 1.0
+    intervalo = max(0.25, round(intervalo_base * factor_vacio, 3))
     return bool((elapsed_seg - ultimo_repeg_elapsed_seg) >= intervalo)
 
 
@@ -125,6 +150,7 @@ def evaluar_salto_punta_penny(
     re_pegs_realizados: int,
     edad_en_nivel_seg: float = 1.0,
     ofi_ticks_racha: int = 0,
+    vacio_l2_ratio: float = 1.0,
 ) -> Tuple[bool, float]:
     if not bool(getattr(cfg, "PENNY_JUMP_HABILITADO", True)):
         return False, precio_orden
@@ -135,6 +161,8 @@ def evaluar_salto_punta_penny(
     if ofi_ticks_racha >= 8:
         return False, precio_orden
     if (tick_size / precio_orden) > 0.00045:
+        return False, precio_orden
+    if float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0) < 0.55:
         return False, precio_orden
     h_max = float(getattr(cfg, "MOALLEMI_HURST_ABORT_THRESHOLD", 0.485))
     if h_actual >= h_max:

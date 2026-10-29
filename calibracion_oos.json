@@ -1,7 +1,7 @@
 {
-  "estrategia": "HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0",
-  "codigo": "DOCTOR-BLYTHE-TERPSICHORA-V1.0",
-  "timestamp_utc": "2026-10-27 23:55:00 UTC",
+  "estrategia": "HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0",
+  "codigo": "DOCTOR-BLYTHE-TERPSICHORA-V7.0",
+  "timestamp_utc": "2026-10-29 08:00:00 UTC",
   "metricas_72h": {
     "total_trades": 0,
     "wins": 0,

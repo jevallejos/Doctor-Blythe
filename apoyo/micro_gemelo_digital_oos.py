@@ -2,7 +2,8 @@
 """
 Micro-Modulo de Apoyo #4: Motor Estadistico Walk-Forward (72h) y Simulador
 Contrafactual de 3,456 Combinaciones con Penalizacion Adversarial CVaR_10%
-(arXiv:2609.22785 & arXiv:2607.11888) y Evaluacion Activa de las 7 Dimensiones.
+(arXiv:2609.22785 & arXiv:2607.11888), Deduplicacion Markoviana de Rafagas (+15s)
+y Evaluacion de los 8 Atributos de Orden Superior (Terpsichora V7.0).
 """
 import itertools
 import math
@@ -39,14 +40,22 @@ def calcular_metricas_oos_72h(operaciones: List[Dict[str, Any]]) -> Dict[str, An
             "ahorro_scratch_usdt": 0.0,
             "cosechas_triz": 0,
             "cvar_10pct_usdt": 0.0,
+            "avg_mfe_capture_ratio": 0.65,
+            "avg_repeg_salida": 0.0,
+            "taker_exit_ratio": 0.0,
+            "avg_lvr_bps": 0.0020,
         }
     wins = 0
     scratches = 0
+    taker_exits = 0
     ganancia_bruta = 0.0
     perdida_bruta = 0.0
     ahorro_scratch = 0.0
     cosechas = 0
     retornos: List[float] = []
+    cap_list: List[float] = []
+    repeg_list: List[float] = []
+    lvr_list: List[float] = []
     costo_sl_unit = cfg.SL_INTERNO_PCT + cfg.COMISION_TAKER_PCT
 
     for op in operaciones:
@@ -54,6 +63,15 @@ def calcular_metricas_oos_72h(operaciones: List[Dict[str, Any]]) -> Dict[str, An
         retornos.append(r)
         motivo = str(op.get("motivo_salida", "")).upper()
         es_sc = bool(op.get("es_scratch")) or ("SCRATCH" in motivo)
+        if not bool(op.get("es_salida_maker", True)):
+            taker_exits += 1
+        lvr_list.append(float(op.get("lvr_bps", 0.0020) or 0.0020))
+        vec_in = op.get("vector_entrada") if isinstance(op.get("vector_entrada"), dict) else {}
+        if "mfe_capture_ratio" in vec_in:
+            cap_list.append(max(-1.50, min(1.50, float(vec_in.get("mfe_capture_ratio", 0.0) or 0.0))))
+        if "repeg_salida_count" in vec_in:
+            repeg_list.append(float(vec_in.get("repeg_salida_count", 0.0) or 0.0))
+
         if r > 0.0:
             wins += 1
             ganancia_bruta += r
@@ -73,6 +91,10 @@ def calcular_metricas_oos_72h(operaciones: List[Dict[str, Any]]) -> Dict[str, An
     pnl_neto = round(ganancia_bruta - perdida_bruta, 4)
     lambda_bayes = round(min(1.0, (n_total / 40.0) ** 2), 4)
     cvar_10 = calcular_cvar_10pct_adversarial(retornos)
+    avg_cap = round(sum(cap_list) / len(cap_list), 4) if cap_list else 0.65
+    avg_rep = round(sum(repeg_list) / len(repeg_list), 2) if repeg_list else 0.0
+    tk_ratio = round(taker_exits / float(n_total), 4)
+    avg_lvr = round(sum(lvr_list) / len(lvr_list), 4) if lvr_list else 0.0020
 
     return {
         "total_trades": n_total,
@@ -86,25 +108,46 @@ def calcular_metricas_oos_72h(operaciones: List[Dict[str, Any]]) -> Dict[str, An
         "ahorro_scratch_usdt": round(ahorro_scratch, 4),
         "cosechas_triz": cosechas,
         "cvar_10pct_usdt": cvar_10,
+        "avg_mfe_capture_ratio": avg_cap,
+        "avg_repeg_salida": avg_rep,
+        "taker_exit_ratio": tk_ratio,
+        "avg_lvr_bps": avg_lvr,
     }
+
+
+def _deduplicar_eventos_15s_gemelo(eventos_baul: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    dedup: List[Dict[str, Any]] = []
+    ultimo_ts: Dict[str, float] = {}
+    for ev in eventos_baul:
+        if ev.get("tipo_evento") and ev.get("tipo_evento") != "AUDITORIA_ESCUDO_15S":
+            continue
+        sym = str(ev.get("symbol", ""))
+        esc = str(ev.get("escudo", ""))
+        direc = str(ev.get("direccion", ""))
+        ts = float(ev.get("timestamp", 0.0) or 0.0)
+        clave = f"{sym}|{esc}|{direc}"
+        if ts <= 0.0 or (ts - ultimo_ts.get(clave, -1e9)) >= 15.0:
+            dedup.append(ev)
+            if ts > 0.0:
+                ultimo_ts[clave] = ts
+    return dedup
 
 
 def simular_malla_gemelo_3456(
     ops: List[Dict[str, Any]],
     eventos_baul: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    eventos_dedup = _deduplicar_eventos_15s_gemelo(eventos_baul)
     salvamentos = [
-        ev for ev in eventos_baul
+        ev for ev in eventos_dedup
         if ev.get("veredicto_oraculo_15s") == "CAPITAL_SAVED_TRUE_SHIELD"
     ]
     falsos_rechazos = [
-        ev for ev in eventos_baul
+        ev for ev in eventos_dedup
         if ev.get("veredicto_oraculo_15s") == "FALSE_REJECTION_OPPORTUNITY_LOST"
     ]
 
-    # Pre-extraer tuplas de operaciones para evaluacion vectorizada O(1) en las 3,456 celdas
-    # (mfe, mae, pnl_real, map_u, hold_seg, z_abs, ofi_abs, hurst_in, es_short)
-    ops_vec: List[Tuple[float, float, float, float, float, float, float, float, bool]] = []
+    ops_vec: List[Tuple[float, float, float, float, float, float, float, float, bool, float, int]] = []
     for op in ops:
         mfe = float(op.get("mfe_max_pnl_pct", 0.0)) / 100.0
         mae = abs(float(op.get("mae_min_pnl_pct", 0.0))) / 100.0
@@ -115,8 +158,10 @@ def simular_malla_gemelo_3456(
         z_in = abs(float(vec_in.get("z_entry", -2.65) or -2.65))
         ofi_in = abs(float(vec_in.get("ofi_entry", 0.20) or 0.20))
         h_in = float(vec_in.get("hurst_entry", 0.42) or 0.42)
+        v_l2 = float(vec_in.get("vacio_l2_ratio", 1.0) or 1.0)
+        rep_c = int(vec_in.get("repeg_salida_count", 0) or 0)
         es_short = str(op.get("side", "LONG")).upper() in ("SELL", "SHORT")
-        ops_vec.append((mfe, mae, pnl_real, map_u, hold_s, z_in, ofi_in, h_in, es_short))
+        ops_vec.append((mfe, mae, pnl_real, map_u, hold_s, z_in, ofi_in, h_in, es_short, v_l2, rep_c))
 
     n_salv = len(salvamentos)
     n_falsos = len(falsos_rechazos)
@@ -144,22 +189,21 @@ def simular_malla_gemelo_3456(
         retornos_sim: List[float] = []
         z_req = abs(z_hb)
 
-        for mfe, mae, pnl_real, map_u, hold_s, z_in, ofi_in, h_in, es_short in ops_vec:
-            # Filtro de entrada contrafactual (z_hb, ofi_m, h_s)
+        for mfe, mae, pnl_real, map_u, hold_s, z_in, ofi_in, h_in, es_short, v_l2, rep_c in ops_vec:
             if (z_in < z_req) or (ofi_in < ofi_m) or (es_short and h_in > h_s):
-                # Si la barrera habria filtrado una perdida, suma fracci?n de capital salvado
                 if pnl_real < 0.0:
                     r_op = abs(pnl_real) * 0.25
                 else:
                     r_op = -pnl_real * 0.15
             elif mfe >= tp_v:
-                r_op = map_u * (tp_v - fee_rt_maker)
+                bono_v = 1.05 if v_l2 >= 1.35 else 1.00
+                r_op = map_u * ((tp_v * bono_v) - fee_rt_maker)
             elif mfe >= st_v:
                 r_op = map_u * (st_v - fee_rt_maker)
             elif hold_s >= 42.0 and mae >= sl_d and pnl_real < 0.0:
                 r_op = -map_u * (sl_d + fee_taker_exit)
             else:
-                factor_sc = 0.88 if (sc_t >= 26.0 and mfe >= 0.0005) else (0.85 if sc_t <= 22.0 else 0.94)
+                factor_sc = 0.84 if (sc_t >= 26.0 and mfe >= 0.0005) else (0.82 if (sc_t <= 22.0 or rep_c >= 3) else 0.92)
                 r_op = pnl_real * factor_sc if pnl_real < 0.0 else pnl_real
             pnl_sim += r_op
             retornos_sim.append(r_op)

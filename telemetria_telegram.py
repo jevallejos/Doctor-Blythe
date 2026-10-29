@@ -1,7 +1,8 @@
 """
 Level 2 DAG: Non-Blocking 1:1 Transactional Telegram Notifier with Startup Service Alert,
-12s Canonical Deduplication, Bounded Background Executor Dispatch, Status Icons,
-and Zero-Spam Test Inbox for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+12s Canonical Deduplication, Bounded Background Executor Dispatch, Higher-Order Exit
+Telemetry (eta_MFE, RePegs, V_L2), Status Icons, and Zero-Spam Test Inbox for
+HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 from __future__ import annotations
 
@@ -105,7 +106,7 @@ def notificar_inicio_servicio(
     pid: int,
 ) -> bool:
     msg = (
-        f"{ICONO_COHETE} [DOCTOR-BLYTHE TERPSICHORA V1.0 ONLINE]\n"
+        f"{ICONO_COHETE} [DOCTOR-BLYTHE TERPSICHORA V7.0 ONLINE]\n"
         f"PID: {pid} | Radar: {cfg.FRECUENCIA_RADAR_HZ:.1f}Hz (L2 orderbook.50)\n"
         f"UTA Balance: {total_usdt:.4f} USDT (Free: {free_usdt:.4f} USDT)\n"
         f"Notional 3x: ~{nocional_usdt:.2f} USDT | Champions: {len(cfg.PARES_CAMPEONES)}\n"
@@ -140,10 +141,12 @@ def notificar_apertura_confirmada(
         return False
     _CACHE_DEDUP_12S[clave] = ahora
     nocional = round(abs(contratos * precio_entrada), 2)
+    m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
+    v_l2 = float(getattr(m_live, "vacio_l2_ratio", 1.0) or 1.0) if m_live is not None else 1.0
     msg = (
-        f"{ICONO_VERDE} [DOCTOR-BLYTHE V1.0] OPEN {dir_norm} {symbol}\n"
+        f"{ICONO_VERDE} [DOCTOR-BLYTHE V7.0] OPEN {dir_norm} {symbol}\n"
         f"Qty: {contratos} @ {precio_entrada} (~{nocional:.2f} USDT)\n"
-        f"SL: {sl_interno} | Kelly: {kelly_frac * 100:.0f}% | Z: {z_score:+.2f} | OFI: {ofi:+.2f}\n"
+        f"SL: {sl_interno} | Kelly: {kelly_frac * 100:.0f}% | Z: {z_score:+.2f} | OFI: {ofi:+.2f} | V_L2: {v_l2:.2f}x\n"
         f"ID: {orden_id}"
     )
     _APERTURAS_CONFIRMABLES[symbol] = {
@@ -173,7 +176,7 @@ def notificar_cosecha_parcial(
         return False
     _CACHE_DEDUP_12S[clave] = ahora
     msg = (
-        f"{ICONO_DIAMANTE} [DOCTOR-BLYTHE V1.0] 50% TRIZ HARVEST {symbol}\n"
+        f"{ICONO_DIAMANTE} [DOCTOR-BLYTHE V7.0] 50% TRIZ HARVEST {symbol}\n"
         f"Closed: {contratos_cerrados} @ {precio_cosecha} ({pnl_pct * 100:+.2f}% | {pnl_usdt:+.4f} USDT)"
     )
     if cfg.es_modo_test():
@@ -211,7 +214,7 @@ def notificar_cierre_confirmado(
         tipo_ev = "CLOSE_LOSS"
         icono = f"{ICONO_ROJO} [LOSS]"
     msg = (
-        f"{icono} [DOCTOR-BLYTHE V1.0] CLOSE {dir_norm} {symbol} [{motivo}]\n"
+        f"{icono} [DOCTOR-BLYTHE V7.0] CLOSE {dir_norm} {symbol} [{motivo}]\n"
         f"{precio_entrada} -> {precio_salida} | {pnl_pct * 100:+.2f}% ({pnl_usdt:+.4f} USDT) in {int(duracion_seg)}s\n"
         f"UTA Balance: {balance_uta:.4f} USDT"
     )
@@ -226,12 +229,17 @@ def notificar_digest_ejecutivo(
     salvamentos_15s: int,
     ahorro_escudos_usdt: float,
 ) -> bool:
+    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+    tp_act = float(ctrl.get("w3_tp_maker_pct", cfg.COSECHA_TRIZ_ACTIVACION_PCT)) * 100.0
+    stall_act = float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT)) * 100.0
+    unw_act = float(ctrl.get("w4_unwind_seg", 42.0))
     msg = (
-        f"{ICONO_DIAMANTE} [DOCTOR-BLYTHE V1.0 - 4H EXECUTIVE DIGEST]\n"
+        f"{ICONO_DIAMANTE} [DOCTOR-BLYTHE V7.0 - 4H EXECUTIVE DIGEST]\n"
         f"UTA Balance: {resumen_stats.get('real_usdt', 0.0):.4f} USDT (1:1 Parity)\n"
         f"Session Trades: {resumen_stats.get('trades', 0)} "
         f"(W:{resumen_stats.get('wins', 0)} / L:{resumen_stats.get('losses', 0)} / S:{resumen_stats.get('scratches', 0)})\n"
         f"Net PnL: {resumen_stats.get('total_pnl_usdt', 0.0):+.4f} USDT | LVR: {resumen_stats.get('lvr', 0.0):.4f}\n"
+        f"Autonomous Ctrl: TP=+{tp_act:.2f}% | StallBE=+{stall_act:.2f}% | Unwind={unw_act:.0f}s\n"
         f"Shield Interceptions (+15s): {salvamentos_15s} saved (+{ahorro_escudos_usdt:.4f} USDT est.)"
     )
     if cfg.es_modo_test():

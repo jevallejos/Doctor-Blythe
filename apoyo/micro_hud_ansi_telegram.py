@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo de Apoyo #3: Motor de Colores ANSI en Vivo para CLI HUD (verbot)
-con Cero Contaminacion en Disco.
+con Cero Contaminacion en Disco para HFT Doctor Blythe Engine -
+Production Baseline Terpsichora V7.0.
 """
 import time
 import config_parametros as cfg

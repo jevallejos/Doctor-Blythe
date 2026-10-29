@@ -1,8 +1,9 @@
 """
 Level 0 DAG: Global Configuration & Immutable Parameter Contract for
-HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 Maintains the strict 100-uppercase-constant invariant (AST_100_CONSTANTES_OK),
-sub-millisecond OOS JSON hot-reload, and Terpsichora V1.0 offensive dynamics.
+sub-millisecond OOS JSON hot-reload, Non-Regressive Autonomous Controller Manifold
+projection, and per-asset Bipower Variation elasticity reference profiles.
 """
 from __future__ import annotations
 
@@ -15,9 +16,9 @@ from typing import Any, Dict, Tuple
 # ==============================================================================
 # GROUP 1: SYSTEM IDENTITY, RUNTIME MODE & EXCHANGE UNIVERSE (#001 - #015)
 # ==============================================================================
-VERSION_SISTEMA: str = "1.0.0"
-NOMBRE_ESTRATEGIA: str = "HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0"
-CODIGO_ESTRATEGIA: str = "DOCTOR-BLYTHE-TERPSICHORA-V1.0"
+VERSION_SISTEMA: str = "7.0.0"
+NOMBRE_ESTRATEGIA: str = "HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0"
+CODIGO_ESTRATEGIA: str = "DOCTOR-BLYTHE-TERPSICHORA-V7.0"
 MODO_PAPER_TRADING: bool = False
 MODO_EJECUCION_LIVE: bool = True
 EXCHANGE_ID: str = "bybit"
@@ -177,6 +178,20 @@ _mapa_clase_activo: Dict[str, str] = {
     "ARB/USDT:USDT": CLASE_TIER1_LIQUIDO,
 }
 
+# Per-asset intrinsic Bipower Variation elasticity profile:
+# (sigma_raw_floor, sigma_natural_ref, sigma_raw_ceiling)
+# Used exclusively for intraday 24h percentile & elastic band scaling without
+# relaxing SCAR-LOCK-00 (VOLATILIDAD_BV_PISO_MIN = 0.00055) in Z-Score denominator.
+_perfil_elasticidad_bv_par: Dict[str, Tuple[float, float, float]] = {
+    "ZEREBRO/USDT:USDT": (0.00042, 0.00082, 0.00145),
+    "WAL/USDT:USDT": (0.00022, 0.00046, 0.00095),
+    "ARB/USDT:USDT": (0.00014, 0.00032, 0.00075),
+    "AVAX/USDT:USDT": (0.00014, 0.00030, 0.00072),
+    "TAO/USDT:USDT": (0.00016, 0.00035, 0.00080),
+    "XRP/USDT:USDT": (0.00012, 0.00028, 0.00068),
+    "BTC/USDT:USDT": (0.00010, 0.00024, 0.00060),
+}
+
 _limites_shadow_gate: Dict[str, Tuple[float, float]] = {
     "KELLY_FRACCION_BASE": (0.25, 0.62),
     "Z_SCORE_UMBRAL_HIGH_BETA": (-3.20, -2.20),
@@ -186,6 +201,24 @@ _limites_shadow_gate: Dict[str, Tuple[float, float]] = {
     "COSECHA_TRIZ_ACTIVACION_PCT": (0.0012, 0.0045),
     "SL_INTERNO_PCT": (0.0030, 0.0055),
     "TIEMPO_MAX_HOLD_SEG": (60.0, 120.0),
+}
+
+_limites_controlador_autonomo: Dict[str, Tuple[float, float]] = {
+    "w1_ofi_long": (0.05, 0.22),
+    "w2_btc_beta": (0.24, 0.45),
+    "w3_tp_maker_pct": (0.0012, 0.0035),
+    "w4_unwind_seg": (26.0, 55.0),
+    "w4_sl_decay_pct": (0.0028, 0.0042),
+    "w5_kelly_short": (0.35, 0.62),
+    "w5_kelly_long": (0.35, 0.58),
+    "hurst_cap_short_mod": (0.450, 0.485),
+    "mfe_stall_harvest_pct": (0.00085, 0.00150),
+    "sesgo_escudo_long": (0.00, 0.05),
+    "sesgo_escudo_short": (0.00, 0.05),
+    "sens_ofi_abort_cola": (-0.48, -0.22),
+    "sens_q_l1_hold_ratio": (0.18, 0.55),
+    "sens_scratch_edad_rebote_seg": (20.0, 38.0),
+    "sens_climax_hurst_override": (0.0, 1.0),
 }
 
 _parametros_operativos_aux: Dict[str, Any] = {
@@ -243,6 +276,18 @@ def obtener_clase_activo(symbol: str) -> str:
     return _mapa_clase_activo.get(symbol, CLASE_TIER1_LIQUIDO)
 
 
+def obtener_perfil_elasticidad_bv(symbol: str) -> Tuple[float, float, float]:
+    """
+    Retorna (sigma_raw_floor, sigma_natural_ref, sigma_raw_ceiling) del par
+    para el calculo del percentil intradia de 24h sin sesgo de truncamiento.
+    """
+    if symbol in _perfil_elasticidad_bv_par:
+        return _perfil_elasticidad_bv_par[symbol]
+    if obtener_clase_activo(symbol) == CLASE_HIGH_BETA:
+        return (0.00025, 0.00060, 0.00120)
+    return (0.00014, 0.00032, 0.00075)
+
+
 def obtener_aux(clave: str, default: Any = None) -> Any:
     if clave in globals():
         return globals()[clave]
@@ -275,6 +320,31 @@ def sanitizar_dict_calibracion_oos(datos: Dict[str, Any]) -> Dict[str, float]:
                 limpio[k] = max(vmin, min(vmax, val))
             except (TypeError, ValueError):
                 continue
+    return limpio
+
+
+def sanitizar_controlador_autonomo(ctrl_raw: Dict[str, Any]) -> Dict[str, float]:
+    """
+    Proyecta ortogonalmente cualquier diccionario del controlador autonomo
+    sobre la variedad compacta no-regresiva Omega_ctrl.
+    """
+    limpio: Dict[str, float] = {}
+    if not isinstance(ctrl_raw, dict):
+        return limpio
+    for k, v in ctrl_raw.items():
+        try:
+            val = float(v)
+        except (TypeError, ValueError):
+            continue
+        if k in _limites_controlador_autonomo:
+            vmin, vmax = _limites_controlador_autonomo[k]
+            limpio[k] = round(max(vmin, min(vmax, val)), 5)
+        elif k.startswith("alpha_disloc_"):
+            limpio[k] = round(max(1.00, min(1.40, val)), 4)
+        elif k.startswith("w_kelly_"):
+            limpio[k] = round(max(0.72, min(1.12, val)), 4)
+        elif k.startswith("edge_post_"):
+            limpio[k] = round(max(0.50, min(2.50, val)), 4)
     return limpio
 
 
@@ -316,11 +386,17 @@ def recargar_calibracion_oos_si_cambio(ruta_json: str | pathlib.Path | None = No
             TIEMPO_MAX_HOLD_SEG = aplicados["TIEMPO_MAX_HOLD_SEG"]
         try:
             import core_estado_ram as _ram_mod
-            ctrl_json = raw_data.get("controlador_autonomo")
-            if isinstance(ctrl_json, dict):
-                for k_c, v_c in ctrl_json.items():
-                    if k_c in _ram_mod.ESTADO_GLOBAL.controlador_autonomo:
-                        _ram_mod.ESTADO_GLOBAL.controlador_autonomo[k_c] = float(v_c)
+            ctrl_json_raw = raw_data.get("controlador_autonomo")
+            if isinstance(ctrl_json_raw, dict):
+                ctrl_limpio = sanitizar_controlador_autonomo(ctrl_json_raw)
+                ram_ctrl = _ram_mod.ESTADO_GLOBAL.controlador_autonomo
+                for k_c, v_c in ctrl_limpio.items():
+                    if k_c.startswith("alpha_disloc_") and k_c in ram_ctrl:
+                        ram_ctrl[k_c] = round(max(float(ram_ctrl[k_c]), float(v_c)), 4)
+                    elif k_c in ("sesgo_escudo_long", "sesgo_escudo_short") and k_c in ram_ctrl:
+                        ram_ctrl[k_c] = round(max(float(ram_ctrl[k_c]), float(v_c)), 4)
+                    else:
+                        ram_ctrl[k_c] = float(v_c)
             _ram_mod.ESTADO_GLOBAL.controlador_autonomo["w1_ofi_long"] = float(OFI_MIN_ENTRADA)
             _ram_mod.ESTADO_GLOBAL.controlador_autonomo["w3_tp_maker_pct"] = float(COSECHA_TRIZ_ACTIVACION_PCT)
         except Exception:
@@ -336,6 +412,8 @@ def recargar_calibracion_oos_si_cambio(ruta_json: str | pathlib.Path | None = No
 def __getattr__(name: str) -> Any:
     if name in _parametros_operativos_aux:
         return _parametros_operativos_aux[name]
+    if name == "KELLY_TOPE_MAXIMO":
+        return KELLY_FRACCION_MAX
     if name == "MAPA_CLASE_ACTIVO":
         return _mapa_clase_activo
     if name == "RUTA_BASE":

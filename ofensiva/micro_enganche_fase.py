@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Ofensivo #7: Puppeteer Phase-Latched Envelope (4.50s) para Captura
-de Suelos en V (LONG), Agotamiento/Rollover de Techos (SHORT-SNIPER), Disparo
-en Vertice y Modulacion Elastica de Profundidad por Edge Bayesiano del Par.
+de Suelos en V (LONG), Agotamiento/Rollover de Techos (SHORT-SNIPER), Disparo en
+Vertice y Modulacion Elastica de Profundidad por Edge Bayesiano y Percentil 24h
+para HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 from typing import Any, Tuple
 import config_parametros as cfg
 import core_estado_ram as ram
+from apoyo import micro_cinematica_l2 as mcl
 
 
 def _obtener_multiplicador_dislocacion_par(metrica: Any) -> float:
@@ -17,7 +19,15 @@ def _obtener_multiplicador_dislocacion_par(metrica: Any) -> float:
         return 1.0
     ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
     alpha = float(ctrl.get(f"alpha_disloc_{sym}", 1.0) or 1.0)
-    return max(1.0, min(1.40, alpha))
+    alpha_safe = max(1.0, min(1.40, alpha))
+    p_24h = float(getattr(metrica, "percentil_24h", 0.50) or 0.50)
+    es_hb = cfg.obtener_clase_activo(sym) == cfg.CLASE_HIGH_BETA
+    mult_elastico = mcl.calcular_multiplicador_elastico_par(
+        p_24h, alpha_disloc_par=alpha_safe, es_high_beta=es_hb
+    )
+    if hasattr(metrica, "multiplicador_elastico"):
+        metrica.multiplicador_elastico = mult_elastico
+    return max(1.00 if es_hb else 0.94, min(1.45, mult_elastico))
 
 
 def evaluar_dislocacion_y_latch_long(
@@ -34,8 +44,8 @@ def evaluar_dislocacion_y_latch_long(
     rec_base = -0.0018 if es_hb else -0.0011
     piso_base = -0.0011 if es_hb else -0.00075
 
-    z_umbral_long = z_base * alpha_par
-    dp_min_long = dp_base * alpha_par
+    z_umbral_long = min(z_base, z_base * alpha_par) if es_hb else (z_base * alpha_par)
+    dp_min_long = min(dp_base, dp_base * alpha_par) if es_hb else (dp_base * alpha_par)
     recorrido_req = rec_base * alpha_par
     piso_anti_ruido = piso_base * alpha_par
 

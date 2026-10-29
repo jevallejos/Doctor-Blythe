@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Ofensivo #3: Dimensionamiento Kelly 3x, Conviccion Bayesiana por Par
-y Proteccion Anti-110007 UTA (75% Margen Libre + Compensacion de Lag Post-Cancelacion).
+(con KELLY_FRACCION_MAX canonico) y Proteccion Anti-110007 UTA (75% Margen Libre +
+Compensacion de Lag Post-Cancelacion) para HFT Doctor Blythe Terpsichora V7.0.
 """
 import inspect
 import time
@@ -24,7 +25,10 @@ def resolver_capital_base_uta(balance_libre_crudo: float) -> float:
         return round(libre, 4)
     if len(pos_activas) == 0 and total_ram > 0.0 and 0.0 < free_ram < (total_ram * 0.75):
         ahora = time.time()
-        cancel_reciente = any(isinstance(v, (int, float)) and v < 0.0 and (ahora - abs(float(v))) <= 4.0 for v in locks.values())
+        cancel_reciente = any(
+            isinstance(v, (int, float)) and v < 0.0 and (ahora - abs(float(v))) <= 4.0
+            for v in locks.values()
+        )
         if cancel_reciente:
             return round(total_ram * 0.95, 4)
     if free_ram > 0.0:
@@ -64,7 +68,9 @@ def calcular_dimension_kelly_uta(
             if abs(w_par - 1.0) > 1e-4:
                 lev = float(getattr(cfg, "APALANCAMIENTO_OPERATIVO", 3))
                 min_ord = float(getattr(cfg, "ORDEN_MINIMA_BYBIT_USDT", 5.5))
-                kelly_f = round(min(float(cfg.KELLY_TOPE_MAXIMO), max(0.35, float(kelly_f) * w_par)), 4)
+                tope_k = float(getattr(cfg, "KELLY_FRACCION_MAX", 0.62))
+                piso_k = float(getattr(cfg, "KELLY_FRACCION_MIN", 0.35))
+                kelly_f = round(min(tope_k, max(piso_k, float(kelly_f) * w_par)), 4)
                 nocional_u = round(max(min_ord, float(nocional_u) * w_par), 4)
                 margen_u = round(nocional_u / lev, 4)
 

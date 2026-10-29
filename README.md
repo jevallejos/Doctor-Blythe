@@ -1,4 +1,4 @@
-# HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0
+# HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0
 
 * **Repositorio**: https://github.com/jevallejos/Doctor-Blythe.git
 * **Arquitectura**: Micro-Kernel Hexagonal (45/45 Archivos Canonicos Certificados)
@@ -7,12 +7,12 @@
 
 ---
 
-## 1. Dualidad Arquitectonica: Doctor Blythe (Defensa) + Terpsichora V1.0 (Ofensiva)
+## 1. Dualidad Arquitectonica: Doctor Blythe (Defensa) + Terpsichora V7.0 (Ofensiva)
 
 * **Doctor Blythe (Cirujano Reconstructor - Defensa Inmutable)**:
   Garantiza la supervivencia de la cuenta mediante el contrato estatico de 100 constantes (`AST_100_CONSTANTES_OK`), 18 escudos microestructurales no-regresivos (`SCAR-LOCK-00` a `SCAR-LOCK-18`), estado en RAM O(1) (`< 1.0 us`), paridad contable 1:1 con Bybit UTA y auditoria contrafactual a `+15.0s / +60.0s`.
 
-* **Terpsichora V1.0 (Titiritera Ofensiva - Cosecha Maker)**:
+* **Terpsichora V7.0 (Titiritera Ofensiva - Cosecha Maker)**:
   1. **Enganche de Fase (Phase-Latch 1800ms - 4500ms)**: Detecta dislocaciones extremas respecto a la `EMA900` y espera la confirmacion cinematica de frenado (Lyapunov + Hurst <= 0.485 + absorcion OFI/Hawkes) antes de disparar en `LONG` o `SHORT-SNIPER`.
   2. **Escudo Macro BTC (12.0s) con Liberacion Sincronizada**: Bloquea entradas durante sacudidas de Bitcoin y libera tempranamente el enfriamiento tras `3.5s` si BTC y la altcoin confirman un giro en V sincronizado.
   3. **Ejecucion 100% Maker (`PostOnly`) y Supervivencia en Cola**: Cotizacion Avellaneda-Stoikov, aborto prematuro de colas toxicas (`Early Queue Abort` a `0.80s`), captura anti-huerfanas de llenados en transito y filtro de lote minimo (`>= 15%`).

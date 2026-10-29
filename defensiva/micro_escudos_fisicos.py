@@ -1,13 +1,15 @@
 # File: defensiva/micro_escudos_fisicos.py
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Defensivo #1: Escudos Fisicos de Entrada (Terpsichora V1.0).
+Micro-Modulo Defensivo #1: Escudos Fisicos de Entrada (Terpsichora V7.0).
 Aisla las barreras cinematicas y de microestructura (Lyapunov, Hurst, Absorcion
-OFI/Hawkes con Veto Anti-Spoofing L1 arXiv:2502.17417, Coherencia de Signo RF-06
-y Conviccion Contra-EMA900).
+OFI/Hawkes con Veto Anti-Spoofing L1 arXiv:2502.17417, Sesgo Autonomo No-Regresivo,
+Entropia LOB arXiv:2610.16151, Coherencia de Signo RF-06 y Conviccion Contra-EMA900).
 """
 from __future__ import annotations
 from typing import Tuple
+import config_parametros as cfg
+import core_estado_ram as ram
 
 
 def evaluar_coherencia_signo_rf06(
@@ -29,13 +31,22 @@ def evaluar_freno_lyapunov(
     aceleracion_lyapunov: float,
     umbral_freno_long: float = -0.00022,
     umbral_agotamiento_short: float = -0.00010,
+    irrev_lob: float = 0.0,
 ) -> Tuple[bool, str]:
+    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+    irrev = float(irrev_lob or 0.0)
     if str(direccion).upper() in ("BUY", "LONG"):
-        if aceleracion_lyapunov < umbral_freno_long:
-            return False, f"LYAPUNOV_REPULSOR(a={aceleracion_lyapunov:+.5f}<{umbral_freno_long:+.5f})"
+        sesgo_l = 0.0 if cfg.es_modo_test() else max(0.0, float(ctrl.get("sesgo_escudo_long", 0.0) or 0.0))
+        penal_irrev = 0.00004 * max(0.0, irrev - 0.75)
+        u_long = float(umbral_freno_long) + (0.0008 * sesgo_l) + penal_irrev
+        if aceleracion_lyapunov < u_long:
+            return False, f"LYAPUNOV_REPULSOR(a={aceleracion_lyapunov:+.5f}<{u_long:+.5f})"
     else:
-        if aceleracion_lyapunov > umbral_agotamiento_short:
-            return False, f"LYAPUNOV_SHORT_NO_BRAKE(a={aceleracion_lyapunov:+.5f}>{umbral_agotamiento_short:+.5f})"
+        sesgo_s = 0.0 if cfg.es_modo_test() else max(0.0, float(ctrl.get("sesgo_escudo_short", 0.0) or 0.0))
+        penal_irrev_s = 0.00004 * max(0.0, irrev - 0.75)
+        u_short = float(umbral_agotamiento_short) - (0.0008 * sesgo_s) - penal_irrev_s
+        if aceleracion_lyapunov > u_short:
+            return False, f"LYAPUNOV_SHORT_NO_BRAKE(a={aceleracion_lyapunov:+.5f}>{u_short:+.5f})"
     return True, "OK"
 
 
@@ -63,28 +74,52 @@ def evaluar_absorcion_ofi_hawkes(
     hawkes_min_req: float = 0.10,
     imb_l1: float = 0.0,
     cancel_net_l1: float = 0.0,
+    irrev_lob: float = 0.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> Tuple[bool, str]:
+    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+    irrev = float(irrev_lob or 0.0)
+    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
+    penal_entropia = 0.06 * max(0.0, irrev - 0.72)
+
     if str(direccion).upper() in ("BUY", "LONG"):
+        sesgo_l = 0.0 if cfg.es_modo_test() else max(0.0, float(ctrl.get("sesgo_escudo_long", 0.0) or 0.0))
+        ofi_req_l = float(ofi_min_req) + sesgo_l + penal_entropia
+        hawkes_req_l = float(hawkes_min_req) + (0.50 * sesgo_l)
         if imb_l1 <= -0.78 and cancel_net_l1 <= -0.35 and ofi_actual < 0.35:
             return False, f"L1_SPOOF_BID(imbL1={imb_l1:+.2f},cancel={cancel_net_l1:+.2f})"
-        if ofi_actual < ofi_min_req or ticks_absorcion < ticks_min_req:
+        paso_rapido_1t = (
+            ticks_absorcion >= 1
+            and ofi_actual >= max(0.35, ofi_req_l * 2.2)
+            and hawkes_actual >= max(0.20, hawkes_req_l)
+            and v_l2 >= 0.85
+        )
+        if (ofi_actual < ofi_req_l or ticks_absorcion < ticks_min_req) and not paso_rapido_1t:
             return (
                 False,
-                f"WAIT_BID_ABSORPTION(OFI={ofi_actual:+.2f}[{ticks_absorcion}/{ticks_min_req}t]<{ofi_min_req:+.2f})",
+                f"WAIT_BID_ABSORPTION(OFI={ofi_actual:+.2f}[{ticks_absorcion}/{ticks_min_req}t]<{ofi_req_l:+.2f})",
             )
-        if hawkes_actual < hawkes_min_req:
-            return False, f"HAWKES_WEAK_LONG(I={hawkes_actual:+.2f}<{hawkes_min_req:+.2f})"
+        if hawkes_actual < hawkes_req_l:
+            return False, f"HAWKES_WEAK_LONG(I={hawkes_actual:+.2f}<{hawkes_req_l:+.2f})"
     else:
-        ofi_short_req = -abs(ofi_min_req)
+        sesgo_s = 0.0 if cfg.es_modo_test() else max(0.0, float(ctrl.get("sesgo_escudo_short", 0.0) or 0.0))
+        ofi_short_req = -(abs(float(ofi_min_req)) + sesgo_s + penal_entropia)
+        hawkes_req_s = -(abs(float(hawkes_min_req)) + (0.50 * sesgo_s))
         if imb_l1 >= 0.78 and cancel_net_l1 >= 0.35 and ofi_actual > -0.45:
             return False, f"L1_SPOOF_ASK(imbL1={imb_l1:+.2f},cancel={cancel_net_l1:+.2f})"
-        if ofi_actual > ofi_short_req or ticks_absorcion < ticks_min_req:
+        paso_rapido_s_1t = (
+            ticks_absorcion >= 1
+            and ofi_actual <= min(-0.45, ofi_short_req * 1.6)
+            and hawkes_actual <= min(-0.20, hawkes_req_s)
+            and v_l2 >= 0.85
+        )
+        if (ofi_actual > ofi_short_req or ticks_absorcion < ticks_min_req) and not paso_rapido_s_1t:
             return (
                 False,
                 f"WAIT_ASK_ABSORPTION(OFI={ofi_actual:+.2f}[{ticks_absorcion}/{ticks_min_req}t]>{ofi_short_req:+.2f})",
             )
-        if hawkes_actual > -abs(hawkes_min_req):
-            return False, f"HAWKES_WEAK_SHORT(I={hawkes_actual:+.2f}>{-abs(hawkes_min_req):+.2f})"
+        if hawkes_actual > hawkes_req_s:
+            return False, f"HAWKES_WEAK_SHORT(I={hawkes_actual:+.2f}>{hawkes_req_s:+.2f})"
     return True, "OK"
 
 
@@ -94,17 +129,24 @@ def evaluar_conviccion_contratendencia_ema900(
     ofi_actual: float,
     hurst_actual: float,
     z_score: float = 0.0,
+    irrev_lob: float = 0.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> Tuple[bool, str]:
     if abs(z_score) >= 6.0:
         return True, "OK"
+    irrev = float(irrev_lob or 0.0)
+    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
+    ajuste_ofi = (0.06 * max(0.0, irrev - 0.70)) + (0.04 if v_l2 < 0.65 else 0.0)
     if str(direccion).upper() in ("SELL", "SHORT") and ema900_dist_pct >= 0.0050:
-        if hurst_actual > 0.435 or ofi_actual > -0.42:
+        ofi_req_s = -(0.42 + ajuste_ofi)
+        if hurst_actual > 0.435 or ofi_actual > ofi_req_s:
             return (
                 False,
                 f"WEAK_COUNTER_TREND_SHORT(EMA900={ema900_dist_pct * 100:+.2f}%,OFI={ofi_actual:+.2f},H={hurst_actual:.2f})",
             )
     elif str(direccion).upper() in ("BUY", "LONG") and ema900_dist_pct <= -0.0050:
-        if hurst_actual > 0.435 or ofi_actual < 0.42:
+        ofi_req_l = 0.42 + ajuste_ofi
+        if hurst_actual > 0.435 or ofi_actual < ofi_req_l:
             return (
                 False,
                 f"WEAK_COUNTER_TREND_LONG(EMA900={ema900_dist_pct * 100:+.2f}%,OFI={ofi_actual:+.2f},H={hurst_actual:.2f})",

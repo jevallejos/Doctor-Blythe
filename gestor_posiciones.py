@@ -1,8 +1,9 @@
 """
 Level 6B DAG: Pure Single-Ticket Moallemi-Wald SPRT Optimal Stopping Exit Governor,
-Hyperbolic Convex MFE Ratchet kappa(MFE_t), Tick-Quantized Net-of-Fee Zero-Loss Floor (SCAR-LOCK-14),
-+0.11% Early Break-Even Shield, 18.0s Passive Maker Scratch, Startup Orphan Reconciler,
-and Colorized Live CLI HUD (verbot) for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+Hyperbolic Convex MFE Ratchet kappa(MFE_t, V_L2), Tick-Quantized Net-of-Fee Zero-Loss
+Floor (SCAR-LOCK-14), +0.11% Early Break-Even Shield with Anti-Taker Pullback Cushion,
+18.0s Multi-Step Elastic Maker Scratch, Startup Orphan Reconciler, and Colorized Live
+CLI HUD (verbot) for HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 from __future__ import annotations
 
@@ -47,8 +48,14 @@ def calcular_piso_be_maker(
     return mmw.calcular_piso_cero_perdida(precio_entrada, side, tick_size=tick_size)
 
 
-def calcular_kappa_convexo_wald(mfe_pct: float) -> float:
-    return mcw.calcular_kappa_convexo_wald(mfe_pct)
+def calcular_kappa_convexo_wald(
+    mfe_pct: float,
+    vacio_l2_ratio: float = 1.0,
+) -> float:
+    try:
+        return mcw.calcular_kappa_convexo_wald(mfe_pct, vacio_l2_ratio=vacio_l2_ratio)
+    except TypeError:
+        return mcw.calcular_kappa_convexo_wald(mfe_pct)
 
 
 def calcular_lambda_wald_sprt(
@@ -60,17 +67,31 @@ def calcular_lambda_wald_sprt(
     vol_bv: float = cfg.VOLATILIDAD_BV_PISO_MIN,
     hurst: float = 0.42,
     direccion: str = "LONG",
+    vacio_l2_ratio: float = 1.0,
 ) -> float:
-    return mcw.calcular_lambda_wald_sprt(
-        pnl_pct=pnl_pct,
-        mfe_pct=mfe_pct,
-        ofi_5s=ofi_5s,
-        edad_seg=edad_seg,
-        lambda_prev=lambda_prev,
-        vol_bv=vol_bv,
-        hurst=hurst,
-        direccion=direccion,
-    )
+    try:
+        return mcw.calcular_lambda_wald_sprt(
+            pnl_pct=pnl_pct,
+            mfe_pct=mfe_pct,
+            ofi_5s=ofi_5s,
+            edad_seg=edad_seg,
+            lambda_prev=lambda_prev,
+            vol_bv=vol_bv,
+            hurst=hurst,
+            direccion=direccion,
+            vacio_l2_ratio=vacio_l2_ratio,
+        )
+    except TypeError:
+        return mcw.calcular_lambda_wald_sprt(
+            pnl_pct=pnl_pct,
+            mfe_pct=mfe_pct,
+            ofi_5s=ofi_5s,
+            edad_seg=edad_seg,
+            lambda_prev=lambda_prev,
+            vol_bv=vol_bv,
+            hurst=hurst,
+            direccion=direccion,
+        )
 
 
 def _es_error_posicion_cerrada_bybit(exc: Exception) -> bool:
@@ -84,9 +105,52 @@ def _es_error_posicion_cerrada_bybit(exc: Exception) -> bool:
     )
 
 
+def _calcular_mfe_capture_seguro(pos: ram.PosicionActiva, precio_salida: float, pnl_bruto_pct: float) -> float:
+    if hasattr(pos, "calcular_mfe_capture_regularizado"):
+        return float(pos.calcular_mfe_capture_regularizado(precio_salida))
+    mfe_b = max(0.0, float(pos.max_pnl_pct_alcanzado))
+    mae_b = abs(float(pos.min_pnl_pct_alcanzado))
+    if pnl_bruto_pct >= 0.0 or mfe_b >= 0.0008:
+        return round(max(-1.50, min(1.50, pnl_bruto_pct / max(mfe_b, 0.0008))), 4)
+    return round(max(-1.50, min(0.0, -abs(pnl_bruto_pct) / max(mae_b, 0.0010))), 4)
+
+
+def _construir_vector_forense_cierre(
+    pos: ram.PosicionActiva,
+    precio_salida: float,
+    pnl_bruto_pct: float,
+) -> Dict[str, Any]:
+    m_close = ram.ESTADO_GLOBAL.metricas_ticks.get(pos.symbol)
+    vacio_out = round(float(getattr(m_close, "vacio_l2_ratio", 1.0) or 1.0), 3) if m_close is not None else 1.0
+    mfe_cap = _calcular_mfe_capture_seguro(pos, precio_salida, pnl_bruto_pct)
+    return {
+        "z_entry": pos.z_entrada,
+        "dp_pct": round(pos.dp_entrada_pct * 100.0, 4),
+        "ema900_pct": round(pos.ema900_entrada_pct * 100.0, 4),
+        "ofi_entry": pos.ofi_entrada,
+        "hurst_entry": pos.hurst_entrada,
+        "hawkes_entry": pos.hawkes_entrada,
+        "lyapunov_entry": pos.lyapunov_entrada,
+        "volatilidad_bv": pos.volatilidad_bv_entrada,
+        "volatilidad_bv_raw": float(getattr(pos, "volatilidad_bv_raw_entrada", pos.volatilidad_bv_entrada)),
+        "percentil_24h": pos.percentil_entrada,
+        "irrev_lob": round(float(getattr(pos, "irrev_lob_entrada", 0.0) or 0.0), 4),
+        "imb_l1": round(float(getattr(pos, "imb_l1_entrada", 0.0) or 0.0), 4),
+        "cancel_net_l1": round(float(getattr(pos, "cancel_net_l1_entrada", 0.0) or 0.0), 4),
+        "vacio_l2_entry": round(float(getattr(pos, "vacio_l2_entrada", 1.0) or 1.0), 3),
+        "q_l1_ratio_entry": round(float(getattr(pos, "q_l1_ratio_entrada", 1.0) or 1.0), 4),
+        "fpt_race_ratio": round(float(getattr(pos, "fpt_race_ratio", 0.0) or 0.0), 4),
+        "pendiente_delise": round(float(getattr(pos, "pendiente_delise", 0.0) or 0.0), 6),
+        "lambda_wald_exit": pos.lambda_wald,
+        "repeg_salida_count": pos.repeg_salida_count,
+        "mfe_capture_ratio": mfe_cap,
+        "vacio_l2_ratio": vacio_out,
+    }
+
+
 class GestorPosicionesChronosTriz:
     """
-    Pure Single-Ticket Moallemi-Wald Position Lifecycle & Convex Ratchet Governor.
+    Pure Single-Ticket Moallemi-Wald Position Lifecycle & Convex Ratchet Governor (Terpsichora V7.0).
     """
 
     def __init__(self) -> None:
@@ -147,6 +211,7 @@ class GestorPosicionesChronosTriz:
             f"{pos.precio_entrada} -> {px_out} | {pnl_neto_pct * 100:+.2f} % "
             f"({pnl_neto_usdt:+.4f} USDT) in {int(duracion)}s"
         )
+        vector_in = _construir_vector_forense_cierre(pos, px_out, pnl_bruto_pct)
         reg = st.registrar_operacion_cerrada(
             symbol=pos.symbol,
             side=pos.direccion,
@@ -163,6 +228,8 @@ class GestorPosicionesChronosTriz:
             mfe_pct=pos.max_pnl_pct_alcanzado,
             mae_pct=pos.min_pnl_pct_alcanzado,
             volatilidad_bv=pos.volatilidad_bv_entrada,
+            vector_entrada=vector_in,
+            trayectoria_pnl=pos.trayectoria_pnl,
         )
         tel.notificar_cierre_confirmado(
             symbol=pos.symbol,
@@ -228,27 +295,7 @@ class GestorPosicionesChronosTriz:
             f"{pos.precio_entrada} -> {precio_salida} | {pnl_neto_pct * 100:+.2f} % "
             f"({pnl_neto_usdt:+.4f} USDT) in {int(duracion)}s"
         )
-        m_close = ram.ESTADO_GLOBAL.metricas_ticks.get(pos.symbol)
-        mfe_cap_ratio = (
-            round(pnl_bruto_pct / pos.max_pnl_pct_alcanzado, 4)
-            if pos.max_pnl_pct_alcanzado > 0.0002
-            else 0.0
-        )
-        vector_in = {
-            "z_entry": pos.z_entrada,
-            "dp_pct": round(pos.dp_entrada_pct * 100.0, 4),
-            "ema900_pct": round(pos.ema900_entrada_pct * 100.0, 4),
-            "ofi_entry": pos.ofi_entrada,
-            "hurst_entry": pos.hurst_entrada,
-            "hawkes_entry": pos.hawkes_entrada,
-            "lyapunov_entry": pos.lyapunov_entrada,
-            "volatilidad_bv": pos.volatilidad_bv_entrada,
-            "percentil_24h": pos.percentil_entrada,
-            "lambda_wald_exit": pos.lambda_wald,
-            "repeg_salida_count": pos.repeg_salida_count,
-            "mfe_capture_ratio": mfe_cap_ratio,
-            "vacio_l2_ratio": round(m_close.vacio_l2_ratio, 3) if m_close is not None else 1.0,
-        }
+        vector_in = _construir_vector_forense_cierre(pos, precio_salida, pnl_bruto_pct)
         reg = st.registrar_operacion_cerrada(
             symbol=pos.symbol,
             side=pos.direccion,
@@ -399,11 +446,32 @@ class GestorPosicionesChronosTriz:
             return None
         side_close = "sell" if pos.direccion == "LONG" else "buy"
         motivo_up = motivo.upper()
+        m_exit = ram.ESTADO_GLOBAL.metricas_ticks.get(pos.symbol)
+        vacio_exit = float(getattr(m_exit, "vacio_l2_ratio", 1.0) or 1.0) if m_exit is not None else 1.0
+        edad_orden_act = (
+            max(0.0, ahora - pos.ts_orden_salida)
+            if (pos.en_proceso_cierre and pos.ts_orden_salida > 0.0)
+            else 0.0
+        )
+
         if "SCRATCH" in motivo_up:
             ofi_dir = ofi_5s if pos.direccion == "LONG" else -ofi_5s
-            px_target = mes.calcular_precio_scratch_acotado_un_tick(
-                pos.direccion, pos.precio_entrada, best_bid, best_ask, tick_size, ofi_dir
-            )
+            try:
+                px_target = mes.calcular_precio_scratch_acotado_un_tick(
+                    pos.direccion,
+                    pos.precio_entrada,
+                    best_bid,
+                    best_ask,
+                    tick_size,
+                    ofi_dir,
+                    edad_orden_salida_seg=edad_orden_act,
+                    repeg_salida_count=pos.repeg_salida_count,
+                    vacio_l2_ratio=vacio_exit,
+                )
+            except TypeError:
+                px_target = mes.calcular_precio_scratch_acotado_un_tick(
+                    pos.direccion, pos.precio_entrada, best_bid, best_ask, tick_size, ofi_dir
+                )
             px_target = eje.cuantizar_tick(px_target, tick_size)
         elif precio_objetivo_custom > 0.0:
             px_punta = best_ask if pos.direccion == "LONG" else best_bid
@@ -425,10 +493,22 @@ class GestorPosicionesChronosTriz:
                 if (pos.trinquete_be_activo and pos.sl_interno > 0.0)
                 else calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
             )
-            if pos.direccion == "LONG" and px_target < piso_be:
-                px_target = piso_be
-            elif pos.direccion == "SHORT" and px_target > piso_be:
-                px_target = piso_be
+            if "TRINQUETE_BE" in motivo_up and pos.repeg_salida_count >= 2:
+                t_sz = max(1e-8, float(tick_size))
+                piso_relax = (
+                    eje.cuantizar_tick(pos.precio_entrada - t_sz, t_sz, modo="floor")
+                    if pos.direccion == "LONG"
+                    else eje.cuantizar_tick(pos.precio_entrada + t_sz, t_sz, modo="ceil")
+                )
+                if pos.direccion == "LONG":
+                    px_target = max(piso_relax, best_ask if best_ask > 0.0 else px_target)
+                else:
+                    px_target = min(piso_relax, best_bid if best_bid > 0.0 else px_target)
+            else:
+                if pos.direccion == "LONG" and px_target < piso_be:
+                    px_target = piso_be
+                elif pos.direccion == "SHORT" and px_target > piso_be:
+                    px_target = piso_be
 
         if not pos.en_proceso_cierre or not pos.orden_salida_id:
             try:
@@ -488,11 +568,16 @@ class GestorPosicionesChronosTriz:
                 pos.orden_salida_id = ""
                 return None
 
-            intervalo_repeg = (
-                0.75
-                if "SCRATCH" in motivo_up
-                else medf.calcular_intervalo_repeg_salida_maker(motivo_up)
-            )
+            if "SCRATCH" in motivo_up:
+                intervalo_repeg = 0.55 if (vacio_exit < 0.60 or pos.repeg_salida_count >= 2) else 0.75
+            else:
+                try:
+                    intervalo_repeg = medf.calcular_intervalo_repeg_salida_maker(
+                        motivo_up, repeg_salida_count=pos.repeg_salida_count, vacio_l2_ratio=vacio_exit
+                    )
+                except TypeError:
+                    intervalo_repeg = medf.calcular_intervalo_repeg_salida_maker(motivo_up)
+
             urgencia_be = bool(
                 pos.trinquete_be_activo
                 and motivo == "TRINQUETE_BE_MAKER"
@@ -546,6 +631,13 @@ class GestorPosicionesChronosTriz:
         ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
         m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(pos.symbol)
         h_live = m_live.hurst if m_live is not None else pos.hurst_entrada
+        vacio_rat_l2 = float(getattr(m_live, "vacio_l2_ratio", 1.0) or 1.0) if m_live is not None else 1.0
+        ofi_dir_live = ofi_5s if pos.direccion == "LONG" else -ofi_5s
+
+        if hasattr(pos, "pendiente_delise"):
+            pos.pendiente_delise = calcular_pendiente_recuperacion_delise(
+                pnl_pct, pos.min_pnl_pct_alcanzado, edad, trayectoria_pnl=pos.trayectoria_pnl
+            )
 
         pos.lambda_wald = calcular_lambda_wald_sprt(
             pnl_pct=pnl_pct,
@@ -556,12 +648,25 @@ class GestorPosicionesChronosTriz:
             vol_bv=pos.volatilidad_bv_entrada,
             hurst=h_live,
             direccion=pos.direccion,
+            vacio_l2_ratio=vacio_rat_l2,
         )
         lambda_w = pos.lambda_wald
 
-        forzar_90s, activar_pre_escape_72s, motivo_esc = mer.evaluar_escape_temporal_posicion(
-            edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.direccion, pos.en_proceso_cierre
-        )
+        try:
+            forzar_90s, activar_pre_escape_72s, motivo_esc = mer.evaluar_escape_temporal_posicion(
+                edad,
+                pnl_pct,
+                pos.max_pnl_pct_alcanzado,
+                ofi_5s,
+                pos.direccion,
+                pos.en_proceso_cierre,
+                lambda_wald=lambda_w,
+                vacio_l2_ratio=vacio_rat_l2,
+            )
+        except TypeError:
+            forzar_90s, activar_pre_escape_72s, motivo_esc = mer.evaluar_escape_temporal_posicion(
+                edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.direccion, pos.en_proceso_cierre
+            )
         if forzar_90s:
             ram.log_operativo(
                 f"[SNIPER] {pos.symbol} reached maximum hold time "
@@ -569,15 +674,28 @@ class GestorPosicionesChronosTriz:
             )
             return await self._ejecutar_cierre_taker(exchange, pos, precio_actual, motivo_esc)
 
-        pos.sl_interno = mdcs.calcular_sl_interno_chronos(
-            pos.precio_entrada,
-            pos.direccion,
-            pos.sl_interno,
-            edad,
-            pos.max_pnl_pct_alcanzado,
-            tick_size,
-            pos.trinquete_be_activo,
-        )
+        try:
+            pos.sl_interno = mdcs.calcular_sl_interno_chronos(
+                pos.precio_entrada,
+                pos.direccion,
+                pos.sl_interno,
+                edad,
+                pos.max_pnl_pct_alcanzado,
+                tick_size,
+                pos.trinquete_be_activo,
+                lambda_wald=lambda_w,
+                vacio_l2_ratio=vacio_rat_l2,
+            )
+        except TypeError:
+            pos.sl_interno = mdcs.calcular_sl_interno_chronos(
+                pos.precio_entrada,
+                pos.direccion,
+                pos.sl_interno,
+                edad,
+                pos.max_pnl_pct_alcanzado,
+                tick_size,
+                pos.trinquete_be_activo,
+            )
         be_hit, sl_be_efectivo = medf.verificar_disparo_fisico_trinquete_be(
             pos.direccion,
             pos.trinquete_be_activo,
@@ -596,22 +714,47 @@ class GestorPosicionesChronosTriz:
         )
         if sl_hit:
             if pos.trinquete_be_activo:
-                if mmw.debe_absorber_micro_retroceso_be_temprano(
-                    pos.direccion,
-                    edad,
-                    pnl_pct,
-                    pos.max_pnl_pct_alcanzado,
-                    ofi_5s,
-                    lambda_w,
-                    pos.trailing_activo,
-                    pos.symbol,
-                ):
+                try:
+                    absorber_be = mmw.debe_absorber_micro_retroceso_be_temprano(
+                        pos.direccion,
+                        edad,
+                        pnl_pct,
+                        pos.max_pnl_pct_alcanzado,
+                        ofi_5s,
+                        lambda_w,
+                        pos.trailing_activo,
+                        pos.symbol,
+                        vacio_l2_ratio=vacio_rat_l2,
+                    )
+                except TypeError:
+                    absorber_be = mmw.debe_absorber_micro_retroceso_be_temprano(
+                        pos.direccion,
+                        edad,
+                        pnl_pct,
+                        pos.max_pnl_pct_alcanzado,
+                        ofi_5s,
+                        lambda_w,
+                        pos.trailing_activo,
+                        pos.symbol,
+                    )
+                if absorber_be:
                     return None
                 res_be = await self._iniciar_o_actualizar_salida_maker(
                     exchange, pos, best_bid, best_ask, tick_size, "TRINQUETE_BE_MAKER", ts_now, ofi_5s=ofi_5s
                 )
-                if res_be is not None or pnl_pct > -0.0008:
+                if res_be is not None:
                     return res_be
+                edad_orden_be = max(0.0, ts_now - pos.ts_orden_salida) if pos.ts_orden_salida > 0.0 else 0.0
+                ruptura_profunda_be = (
+                    pnl_pct <= -0.0020
+                    or (
+                        edad_orden_be >= 6.0
+                        and pnl_pct <= -0.0012
+                        and (ofi_dir_live <= -0.25 or vacio_rat_l2 < 0.50 or pos.repeg_salida_count >= 3)
+                    )
+                )
+                if not ruptura_profunda_be:
+                    return None
                 return await self._ejecutar_cierre_taker(exchange, pos, precio_actual, "TRINQUETE_BE_MAKER")
             return await self._ejecutar_cierre_taker(exchange, pos, precio_actual, "SL_INTERNO_CHRONOS")
 
@@ -632,7 +775,7 @@ class GestorPosicionesChronosTriz:
         # 2. Pure Single-Ticket Moallemi-Wald Convex Ratchet (or 50/50 Ladder when modo_escalera_50_50=True)
         if pos.max_pnl_pct_alcanzado >= umbral_cosecha:
             piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
-            kappa = calcular_kappa_convexo_wald(pos.max_pnl_pct_alcanzado)
+            kappa = calcular_kappa_convexo_wald(pos.max_pnl_pct_alcanzado, vacio_l2_ratio=vacio_rat_l2)
             if pos.direccion == "LONG":
                 piso_convexo = eje.cuantizar_tick(
                     pos.precio_entrada * (1.0 + (kappa * pos.max_pnl_pct_alcanzado)),
@@ -691,24 +834,68 @@ class GestorPosicionesChronosTriz:
             if m_live is not None
             else 0.0
         )
-        vacio_rat_l2 = m_live.vacio_l2_ratio if m_live is not None else 1.0
         diamante_ok, px_diamante = medf.evaluar_activacion_escudo_diamante_fase2(
             pos.direccion, pos.precio_entrada, precio_actual, best_bid, best_ask,
             edad, pnl_pct, lambda_w, tick_size, fase2_ya_ejecutada=pos.cosecha_activa,
             muro_opuesto_px=muro_op_l2, vacio_l2_ratio=vacio_rat_l2,
         )
+        try:
+            stall_ok = mdup.evaluar_cosecha_estancamiento_mfe(
+                pos.direccion,
+                edad,
+                pnl_pct,
+                pos.max_pnl_pct_alcanzado,
+                ofi_5s,
+                umbral_stall,
+                vacio_l2_ratio=vacio_rat_l2,
+                lambda_wald=lambda_w,
+            )
+            unwind_42_ok = mdup.evaluar_desarme_maker_unwind_42s(
+                pos.direccion,
+                edad,
+                pnl_pct,
+                pos.max_pnl_pct_alcanzado,
+                ofi_5s,
+                pos.cosecha_activa,
+                symbol=pos.symbol,
+                vacio_l2_ratio=vacio_rat_l2,
+                lambda_wald=lambda_w,
+            )
+        except TypeError:
+            stall_ok = mdup.evaluar_cosecha_estancamiento_mfe(
+                pos.direccion, edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, umbral_stall
+            )
+            unwind_42_ok = mdup.evaluar_desarme_maker_unwind_42s(
+                pos.direccion, edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.cosecha_activa
+            )
+        try:
+            inhibir_rally = mmw.debe_inhibir_maker_unwind_en_rally(
+                pos.direccion,
+                pnl_pct,
+                pos.max_pnl_pct_alcanzado,
+                ofi_5s,
+                pos.symbol,
+                vacio_l2_ratio=vacio_rat_l2,
+                lambda_wald=lambda_w,
+            )
+        except TypeError:
+            inhibir_rally = mmw.debe_inhibir_maker_unwind_en_rally(
+                pos.direccion,
+                pnl_pct,
+                pos.max_pnl_pct_alcanzado,
+                ofi_5s,
+                pos.symbol,
+                vacio_l2_ratio=vacio_rat_l2,
+            )
+
         if (
             (
                 diamante_ok
-                or mdup.evaluar_cosecha_estancamiento_mfe(
-                    pos.direccion, edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, umbral_stall
-                )
-                or mdup.evaluar_desarme_maker_unwind_42s(
-                    pos.direccion, edad, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.cosecha_activa
-                )
-                or (edad >= 16.0 and pnl_pct >= umbral_stall and (lambda_w <= 0.15 or ((ofi_5s if pos.direccion == 'LONG' else -ofi_5s) <= 0.08)))
+                or stall_ok
+                or unwind_42_ok
+                or (edad >= 16.0 and pnl_pct >= umbral_stall and (lambda_w <= 0.15 or ofi_dir_live <= 0.08))
             )
-            and (not mmw.debe_inhibir_maker_unwind_en_rally(pos.direccion, pnl_pct, pos.max_pnl_pct_alcanzado, ofi_5s, pos.symbol, vacio_l2_ratio=vacio_rat_l2))
+            and (not inhibir_rally)
         ):
             if not pos.trinquete_be_activo and pnl_pct >= (float(cfg.TRINQUETE_BE_OFFSET_PCT) + 0.00025):
                 piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
@@ -741,7 +928,7 @@ class GestorPosicionesChronosTriz:
             if res_keepalive is not None:
                 return res_keepalive
 
-        # 4. Pre-Escape Passive Evacuation at 72s
+        # 4. Pre-Escape Passive Evacuation at 54s-72s
         if activar_pre_escape_72s:
             motivo_72s = (
                 "MAKER_UNWIND"
@@ -761,31 +948,65 @@ class GestorPosicionesChronosTriz:
         # 5. Law 2 (RF-18): 18.0s Passive Maker-Scratch on Dead Fills (Delegated to defensiva/)
         hurst_live = m_live.hurst if m_live is not None else pos.hurst_entrada
         acel_live = m_live.aceleracion_lyapunov if m_live is not None else pos.lyapunov_entrada
-        ofi_dir_live = ofi_5s if pos.direccion == "LONG" else -ofi_5s
         acel_dir_live = acel_live if pos.direccion == "LONG" else -acel_live
-        ventana_28s_ok = mes.evaluar_ventana_elastica_scratch_28s(
-            edad, pos.max_pnl_pct_alcanzado, pnl_pct, ofi_dir_live, acel_lyap_dir=acel_dir_live
-        )
-        wald_scratch_ready = ventana_28s_ok and mes.evaluar_gatillo_maker_scratch_18s(
-            pos.direccion,
-            edad,
-            pnl_pct,
-            pos.max_pnl_pct_alcanzado,
-            ofi_5s,
-            lambda_w,
-            pos.trinquete_be_activo,
-            hurst_actual=hurst_live,
-            fill_post_aborto=False,
-            mae_pct=pos.min_pnl_pct_alcanzado,
-            trayectoria_pnl=pos.trayectoria_pnl,
-        )
-        if pos.en_proceso_cierre and mes.debe_escalar_scratch_colgado_a_taker(
-            pos.direccion,
-            max(0.0, ts_now - pos.ts_orden_salida),
-            pnl_pct,
-            ofi_5s,
-            pos.motivo_salida_pendiente,
-        ):
+        try:
+            ventana_28s_ok = mes.evaluar_ventana_elastica_scratch_28s(
+                edad,
+                pos.max_pnl_pct_alcanzado,
+                pnl_pct,
+                ofi_dir_live,
+                acel_lyap_dir=acel_dir_live,
+                vacio_l2_ratio=vacio_rat_l2,
+            )
+            wald_scratch_ready = ventana_28s_ok and mes.evaluar_gatillo_maker_scratch_18s(
+                pos.direccion,
+                edad,
+                pnl_pct,
+                pos.max_pnl_pct_alcanzado,
+                ofi_5s,
+                lambda_w,
+                pos.trinquete_be_activo,
+                hurst_actual=hurst_live,
+                fill_post_aborto=False,
+                mae_pct=pos.min_pnl_pct_alcanzado,
+                trayectoria_pnl=pos.trayectoria_pnl,
+                vacio_l2_ratio=vacio_rat_l2,
+            )
+            escalar_sc_tk = pos.en_proceso_cierre and mes.debe_escalar_scratch_colgado_a_taker(
+                pos.direccion,
+                max(0.0, ts_now - pos.ts_orden_salida),
+                pnl_pct,
+                ofi_5s,
+                pos.motivo_salida_pendiente,
+                repeg_salida_count=pos.repeg_salida_count,
+                vacio_l2_ratio=vacio_rat_l2,
+            )
+        except TypeError:
+            ventana_28s_ok = mes.evaluar_ventana_elastica_scratch_28s(
+                edad, pos.max_pnl_pct_alcanzado, pnl_pct, ofi_dir_live, acel_lyap_dir=acel_dir_live
+            )
+            wald_scratch_ready = ventana_28s_ok and mes.evaluar_gatillo_maker_scratch_18s(
+                pos.direccion,
+                edad,
+                pnl_pct,
+                pos.max_pnl_pct_alcanzado,
+                ofi_5s,
+                lambda_w,
+                pos.trinquete_be_activo,
+                hurst_actual=hurst_live,
+                fill_post_aborto=False,
+                mae_pct=pos.min_pnl_pct_alcanzado,
+                trayectoria_pnl=pos.trayectoria_pnl,
+            )
+            escalar_sc_tk = pos.en_proceso_cierre and mes.debe_escalar_scratch_colgado_a_taker(
+                pos.direccion,
+                max(0.0, ts_now - pos.ts_orden_salida),
+                pnl_pct,
+                ofi_5s,
+                pos.motivo_salida_pendiente,
+            )
+
+        if escalar_sc_tk:
             return await self._ejecutar_cierre_taker(
                 exchange, pos, precio_actual, "MAKER_SCRATCH_18S"
             )
@@ -799,14 +1020,27 @@ class GestorPosicionesChronosTriz:
             return await self._iniciar_o_actualizar_salida_maker(
                 exchange, pos, best_bid, best_ask, tick_size, "MAKER_SCRATCH_18S", ts_now, ofi_5s=ofi_5s
             )
-        if pos.en_proceso_cierre and mir.debe_forzar_evacuacion_scratch_estancado(
-            pos.en_proceso_cierre,
-            pos.motivo_salida_pendiente,
-            ts_now - pos.ts_orden_salida,
-            pnl_pct,
-            ofi_5s,
-            pos.direccion,
-        ):
+        try:
+            forzar_sc_est = pos.en_proceso_cierre and mir.debe_forzar_evacuacion_scratch_estancado(
+                pos.en_proceso_cierre,
+                pos.motivo_salida_pendiente,
+                ts_now - pos.ts_orden_salida,
+                pnl_pct,
+                ofi_5s,
+                pos.direccion,
+                repeg_salida_count=pos.repeg_salida_count,
+                vacio_l2_ratio=vacio_rat_l2,
+            )
+        except TypeError:
+            forzar_sc_est = pos.en_proceso_cierre and mir.debe_forzar_evacuacion_scratch_estancado(
+                pos.en_proceso_cierre,
+                pos.motivo_salida_pendiente,
+                ts_now - pos.ts_orden_salida,
+                pnl_pct,
+                ofi_5s,
+                pos.direccion,
+            )
+        if forzar_sc_est:
             ram.log_operativo(
                 f"[MAKER-SCRATCH ESCALATION] {pos.symbol} passive scratch unfilled after "
                 f"{ts_now - pos.ts_orden_salida:.1f}s with PnL {pnl_pct * 100:+.2f}%: "

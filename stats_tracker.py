@@ -1,8 +1,8 @@
 """
 Level 3 DAG: Transactional Black Box Ledger (tribrain_stats_v1.jsonl),
-1:1 Bybit UTA Balance Parity Engine, and Continuous Limit Order Book
-Loss-Versus-Rebalancing (LOB LVR) Tracker for HFT Doctor Blythe Engine -
-Production Baseline Terpsichora V1.0.
+1:1 Bybit UTA Balance Parity Engine, Higher-Order Exit Friction Telemetry,
+and Continuous Limit Order Book Loss-Versus-Rebalancing (LOB LVR) Tracker for
+HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 from __future__ import annotations
 
@@ -25,19 +25,34 @@ def calcular_lvr_instantaneo(
     duracion_seg: float,
     volatilidad_bv: float = cfg.VOLATILIDAD_BV_PISO_MIN,
     es_maker: bool = True,
+    es_entrada_maker: bool = True,
+    repeg_salida_count: int = 0,
+    vacio_l2_ratio: float = 1.0,
 ) -> float:
-    return mpl.calcular_lvr_instantaneo(
-        precio_entrada=precio_entrada,
-        precio_salida=precio_salida,
-        duracion_seg=duracion_seg,
-        volatilidad_bv=volatilidad_bv,
-        es_maker=es_maker,
-    )
+    try:
+        return mpl.calcular_lvr_instantaneo(
+            precio_entrada=precio_entrada,
+            precio_salida=precio_salida,
+            duracion_seg=duracion_seg,
+            volatilidad_bv=volatilidad_bv,
+            es_maker=es_maker,
+            es_entrada_maker=es_entrada_maker,
+            repeg_salida_count=repeg_salida_count,
+            vacio_l2_ratio=vacio_l2_ratio,
+        )
+    except TypeError:
+        return mpl.calcular_lvr_instantaneo(
+            precio_entrada=precio_entrada,
+            precio_salida=precio_salida,
+            duracion_seg=duracion_seg,
+            volatilidad_bv=volatilidad_bv,
+            es_maker=es_maker,
+        )
 
 
 class GestorEstadisticasHFT:
     """
-    Immutable JSONL Ledger and 1:1 Bybit UTA Parity Synchronizer.
+    Immutable JSONL Ledger and 1:1 Bybit UTA Parity Synchronizer (Terpsichora V7.0).
     """
 
     def __init__(self, ruta_jsonl: Optional[pathlib.Path] = None) -> None:
@@ -156,12 +171,21 @@ class GestorEstadisticasHFT:
             or ("UNWIND" in motivo_salida.upper() and abs(pnl_pct) <= 0.0014 and pnl_usdt <= 0.0)
         )
         resultado = "WIN" if pnl_usdt > 0.0 else ("SCRATCH" if es_scratch else "LOSS")
+
+        vec_dict = dict(vector_entrada) if isinstance(vector_entrada, dict) else {}
+        repeg_c = int(vec_dict.get("repeg_salida_count", 0) or 0)
+        vacio_r = float(vec_dict.get("vacio_l2_ratio", 1.0) or 1.0)
+        vol_raw = float(vec_dict.get("volatilidad_bv_raw", volatilidad_bv) or volatilidad_bv)
+
         lvr_trade = calcular_lvr_instantaneo(
             precio_entrada=precio_entrada,
             precio_salida=precio_salida,
             duracion_seg=duracion_seg,
-            volatilidad_bv=volatilidad_bv,
-            es_maker=(es_entrada_maker and es_salida_maker),
+            volatilidad_bv=vol_raw if not cfg.es_modo_test() else volatilidad_bv,
+            es_maker=bool(es_salida_maker),
+            es_entrada_maker=bool(es_entrada_maker),
+            repeg_salida_count=repeg_c,
+            vacio_l2_ratio=vacio_r,
         )
 
         registro: Dict[str, Any] = {
@@ -189,8 +213,8 @@ class GestorEstadisticasHFT:
             "mae_min_pnl_pct": round(float(mae_pct) * 100.0, 4),
             "lvr_bps": lvr_trade,
         }
-        if vector_entrada:
-            registro["vector_entrada"] = dict(vector_entrada)
+        if vec_dict:
+            registro["vector_entrada"] = vec_dict
         if trayectoria_pnl:
             registro["trayectoria_pnl"] = dict(trayectoria_pnl)
 

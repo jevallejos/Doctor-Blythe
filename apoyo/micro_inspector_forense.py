@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo de Apoyo #6: Inspector Forense Anatomico de 5 Niveles (verbot -a).
-Analiza tribrain_stats_v1.jsonl y baul_ia_forense.jsonl para mostrar en consola:
-1. Desempeno detallado por Par Campeon (WR, PnL, MFE, MAE, Edge Ratio, LVR).
-2. Matriz de Atribucion por Motivo de Salida y Rol de Liquidez (Maker vs Taker, Fees, MFE Capture).
-3. Efectividad de cada Escudo en defensiva/ (+15s Counterfactual Vault con Excursion Extrema).
-4. Markout Post-Cierre (+15s / +30s / +60s): Ahorro real de Maker-Scratch y Captura de Wald.
-5. Diagnostico Prescriptivo Automatico de la IA Forense y Pesos Autonomos Activos.
+Micro-Modulo de Apoyo #6: Inspector Forense Anatomico de 5 Niveles (verbot -a)
+con Atribucion de los 8 Atributos de Orden Superior, Deduplicacion Markoviana
+de Escudos (+15s) y Memoria Bayesiana Completa de los 6 Pares Campeones para
+HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 import collections
 import json
@@ -47,6 +44,8 @@ def generar_reporte_anatomico_dict() -> Dict[str, Any]:
     st.GESTOR_ESTADISTICAS.cargar_historial_disco()
     ops = list(st.GESTOR_ESTADISTICAS.operaciones)
     eventos = cargar_eventos_baul_forense()
+    if not ops and not cfg.es_modo_test():
+        ops = [e for e in eventos if e.get("tipo_evento") == "CIERRE_OPERACION_REAL"]
 
     por_par: Dict[str, Dict[str, Any]] = {}
     for par in cfg.PARES_CAMPEONES:
@@ -60,6 +59,8 @@ def generar_reporte_anatomico_dict() -> Dict[str, Any]:
             "mfe_sum": 0.0,
             "mae_sum": 0.0,
             "lvr_sum": 0.0,
+            "cap_sum": 0.0,
+            "repeg_sum": 0.0,
         }
 
     por_motivo: Dict[str, Dict[str, Any]] = collections.defaultdict(
@@ -72,6 +73,10 @@ def generar_reporte_anatomico_dict() -> Dict[str, Any]:
             "mfe_sum": 0.0,
             "gross_pct_sum": 0.0,
             "hold_sum": 0.0,
+            "cap_sum": 0.0,
+            "repeg_sum": 0.0,
+            "wald_sum": 0.0,
+            "vacio_sum": 0.0,
         }
     )
 
@@ -83,7 +88,8 @@ def generar_reporte_anatomico_dict() -> Dict[str, Any]:
         if sym not in por_par:
             por_par[sym] = {
                 "trades": 0, "wins": 0, "losses": 0, "scratches": 0,
-                "pnl_usdt": 0.0, "fees_usdt": 0.0, "mfe_sum": 0.0, "mae_sum": 0.0, "lvr_sum": 0.0,
+                "pnl_usdt": 0.0, "fees_usdt": 0.0, "mfe_sum": 0.0, "mae_sum": 0.0,
+                "lvr_sum": 0.0, "cap_sum": 0.0, "repeg_sum": 0.0,
             }
         d = por_par[sym]
         d["trades"] += 1
@@ -100,6 +106,12 @@ def generar_reporte_anatomico_dict() -> Dict[str, Any]:
         es_sc = bool(op.get("es_scratch")) or ("SCRATCH" in motivo.upper())
         es_out_maker = bool(op.get("es_salida_maker", True))
 
+        vec_in = op.get("vector_entrada") if isinstance(op.get("vector_entrada"), dict) else {}
+        cap_v = max(-1.50, min(1.50, float(vec_in.get("mfe_capture_ratio", 0.0) or 0.0)))
+        rep_v = float(vec_in.get("repeg_salida_count", 0.0) or 0.0)
+        wald_v = float(vec_in.get("lambda_wald_exit", 0.0) or 0.0)
+        vac_v = float(vec_in.get("vacio_l2_ratio", 1.0) or 1.0)
+
         if pnl > 0.0:
             d["wins"] += 1
         elif es_sc:
@@ -112,6 +124,8 @@ def generar_reporte_anatomico_dict() -> Dict[str, Any]:
         d["mfe_sum"] += mfe_v
         d["mae_sum"] += mae_v
         d["lvr_sum"] += lvr_v
+        d["cap_sum"] += cap_v
+        d["repeg_sum"] += rep_v
 
         dm = por_motivo[motivo]
         dm["trades"] += 1
@@ -123,6 +137,10 @@ def generar_reporte_anatomico_dict() -> Dict[str, Any]:
         dm["mfe_sum"] += mfe_v
         dm["gross_pct_sum"] += gross_pct
         dm["hold_sum"] += hold_v
+        dm["cap_sum"] += cap_v
+        dm["repeg_sum"] += rep_v
+        dm["wald_sum"] += wald_v
+        dm["vacio_sum"] += vac_v
 
         bucket_rol = maker_exit_stats if es_out_maker else taker_exit_stats
         bucket_rol["trades"] += 1
@@ -131,29 +149,58 @@ def generar_reporte_anatomico_dict() -> Dict[str, Any]:
         bucket_rol["net"] = round(bucket_rol["net"] + pnl, 4)
 
     escudos_stats: Dict[str, Dict[str, Any]] = collections.defaultdict(
-        lambda: {"total": 0, "saved": 0, "false_rej": 0, "chop": 0, "usdt_saved": 0.0}
+        lambda: {"total": 0, "episodios": 0, "saved": 0, "false_rej": 0, "chop": 0, "usdt_saved": 0.0}
     )
     post_exit_events: List[Dict[str, Any]] = []
+    ultimo_ts_esc: Dict[str, float] = {}
 
     for ev in eventos:
         t_ev = str(ev.get("tipo_evento", ""))
         if t_ev == "AUDITORIA_ESCUDO_15S":
             esc = str(ev.get("escudo", "UNKNOWN"))
+            sym_e = str(ev.get("symbol", ""))
+            dir_e = str(ev.get("direccion", ""))
+            ts_e = float(ev.get("timestamp", 0.0) or 0.0)
             ver = str(ev.get("veredicto_oraculo_15s", ""))
             st_e = escudos_stats[esc]
             st_e["total"] += 1
+
+            clave_ep = f"{sym_e}|{esc}|{dir_e}"
+            es_nuevo_ep = (ts_e - ultimo_ts_esc.get(clave_ep, -1e9)) >= 15.0
+            if es_nuevo_ep:
+                ultimo_ts_esc[clave_ep] = ts_e
+                st_e["episodios"] += 1
+
             if ver == "CAPITAL_SAVED_TRUE_SHIELD":
                 st_e["saved"] += 1
+                if es_nuevo_ep:
+                    st_e["usdt_saved"] = round(
+                        st_e["usdt_saved"] + float(ev.get("ahorro_estimado_usdt", 0.0)), 4
+                    )
             elif ver == "FALSE_REJECTION_OPPORTUNITY_LOST":
                 st_e["false_rej"] += 1
             else:
                 st_e["chop"] += 1
-            st_e["usdt_saved"] = round(st_e["usdt_saved"] + float(ev.get("ahorro_estimado_usdt", 0.0)), 4)
         elif t_ev == "AUDITORIA_POST_CIERRE_60S":
             post_exit_events.append(ev)
 
+    res_glob = dict(st.GESTOR_ESTADISTICAS.obtener_resumen())
+    tot_tr = sum(d["trades"] for d in por_par.values())
+    if tot_tr > int(res_glob.get("trades", 0)):
+        tot_w = sum(d["wins"] for d in por_par.values())
+        tot_l = sum(d["losses"] for d in por_par.values())
+        tot_s = sum(d["scratches"] for d in por_par.values())
+        tot_pnl = round(sum(d["pnl_usdt"] for d in por_par.values()), 4)
+        eff_den_g = max(1, tot_w + tot_l)
+        res_glob["trades"] = tot_tr
+        res_glob["wins"] = tot_w
+        res_glob["losses"] = tot_l
+        res_glob["scratches"] = tot_s
+        res_glob["win_rate"] = round((tot_w / eff_den_g) * 100.0, 1) if (tot_w + tot_l) > 0 else 0.0
+        res_glob["total_pnl_usdt"] = tot_pnl
+
     return {
-        "resumen_global": st.GESTOR_ESTADISTICAS.obtener_resumen(),
+        "resumen_global": res_glob,
         "por_par": por_par,
         "por_motivo": dict(por_motivo),
         "rol_salida": {"maker": maker_exit_stats, "taker": taker_exit_stats},
@@ -163,6 +210,14 @@ def generar_reporte_anatomico_dict() -> Dict[str, Any]:
 
 
 def imprimir_auditoria_forense_cli() -> None:
+    try:
+        cfg.recargar_calibracion_oos_si_cambio()
+        from apoyo import micro_sensibilidad_autonoma as _msa
+        _msa.auto_calibrar_sensibilidades_en_vivo(ram.ESTADO_GLOBAL, None)
+    except Exception:
+        pass
+    ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
+
     rep = generar_reporte_anatomico_dict()
     res = rep["resumen_global"]
     rol = rep["rol_salida"]
@@ -170,16 +225,9 @@ def imprimir_auditoria_forense_cli() -> None:
     gross_tot = round(mk_s["gross"] + tk_s["gross"], 4)
     fees_tot = round(mk_s["fees"] + tk_s["fees"], 4)
 
-    pesos_pares = []
-    for p_sym in ("ZEREBRO/USDT:USDT", "WAL/USDT:USDT", "ARB/USDT:USDT"):
-        c_sym = p_sym.split("/")[0]
-        a_d = float(ctrl.get(f"alpha_disloc_{p_sym}", 1.0))
-        w_k = float(ctrl.get(f"w_kelly_{p_sym}", 1.0))
-        pesos_pares.append(f"{c_sym}(Disloc={a_d:.2f}x,Kelly={w_k:.2f}x)")
-    print(f"   -> {_C_MAGENTA}[BAYESIAN PAIR MEMORY]{_C_RESET} " + " | ".join(pesos_pares))
-    print(f"{_C_CYAN}{'=' * 92}{_C_RESET}")
+    print(f"{_C_CYAN}{'=' * 96}{_C_RESET}")
     print(f"{_C_WHITE} [FORENSIC ANATOMY INSPECTOR - verbot -a] {cfg.NOMBRE_ESTRATEGIA}{_C_RESET}")
-    print(f"{_C_CYAN}{'=' * 92}{_C_RESET}")
+    print(f"{_C_CYAN}{'=' * 96}{_C_RESET}")
     c_pnl = _C_GREEN if res["total_pnl_usdt"] >= 0.0 else _C_RED
     c_grs = _C_GREEN if gross_tot >= 0.0 else _C_YELLOW
     print(
@@ -194,13 +242,13 @@ def imprimir_auditoria_forense_cli() -> None:
         f"{_C_YELLOW}Taker Exits: {tk_s['trades']} (Net {tk_s['net']:+.4f} USDT){_C_RESET}"
     )
 
-    print(f"{_C_CYAN}{'-' * 92}{_C_RESET}")
+    print(f"{_C_CYAN}{'-' * 96}{_C_RESET}")
     print(f"{_C_WHITE} 1. BREAKDOWN BY CHAMPION PAIR (SIGNAL QUALITY, EDGE RATIO & LVR){_C_RESET}")
     print(
         f" {'PAIR':<19} | {'TRD':<3} | {'W/L/S':<9} | {'EFF WR':<6} | "
         f"{'AVG MFE':<7} | {'AVG MAE':<7} | {'EDGE':<5} | {'LVR':<6} | {'NET PNL'}"
     )
-    print(f" {'-' * 88}")
+    print(f" {'-' * 92}")
     for par, d in rep["por_par"].items():
         tr = d["trades"]
         w, l, s = d["wins"], d["losses"], d["scratches"]
@@ -218,50 +266,55 @@ def imprimir_auditoria_forense_cli() -> None:
             f"{col}{d['pnl_usdt']:+8.4f} USDT{_C_RESET}"
         )
 
-    print(f"{_C_CYAN}{'-' * 92}{_C_RESET}")
-    print(f"{_C_WHITE} 2. EXIT REASON & MFE CAPTURE ATTRIBUTION MATRIX{_C_RESET}")
+    print(f"{_C_CYAN}{'-' * 96}{_C_RESET}")
+    print(f"{_C_WHITE} 2. EXIT REASON, HIGHER-ORDER WALD/L2 TELEMETRY & MFE CAPTURE MATRIX{_C_RESET}")
     mot_map = rep["por_motivo"]
     if not mot_map:
         print(f" {_C_YELLOW}[INFO] No closed trades recorded yet.{_C_RESET}")
     else:
         print(
-            f" {'EXIT REASON':<23} | {'TRD':<3} | {'MKR%':<5} | {'AVG HOLD':<8} | "
-            f"{'AVG MFE':<7} | {'GROSS':<8} | {'FEES':<7} | {'NET PNL'}"
+            f" {'EXIT REASON':<22} | {'TRD':<3} | {'MKR%':<4} | {'HOLD':<6} | "
+            f"{'MFE':<7} | {'ETA_MFE':<7} | {'REPEG':<5} | {'V_L2':<5} | {'NET PNL'}"
         )
-        print(f" {'-' * 88}")
+        print(f" {'-' * 92}")
         for mot, dm in sorted(mot_map.items(), key=lambda x: x[1]["net_usdt"], reverse=True):
             ntr = max(1, dm["trades"])
             mkr_pct = (dm["maker_exits"] / ntr) * 100.0
             avg_h = dm["hold_sum"] / ntr
             avg_m = dm["mfe_sum"] / ntr
+            avg_cap = dm["cap_sum"] / ntr
+            avg_rep = dm["repeg_sum"] / ntr
+            avg_vac = dm["vacio_sum"] / ntr
             col_m = _C_GREEN if dm["net_usdt"] > 0.0 else _C_RED
             print(
-                f" {mot:<23} | {dm['trades']:<3d} | {mkr_pct:4.0f}% | {avg_h:6.1f}s  | "
-                f"{avg_m:+6.3f}% | {dm['gross_usdt']:+7.4f} | -{dm['fees_usdt']:.4f} | "
+                f" {mot:<22} | {dm['trades']:<3d} | {mkr_pct:3.0f}% | {avg_h:5.1f}s | "
+                f"{avg_m:+6.3f}% | {avg_cap:+6.2f}x | {avg_rep:4.1f}  | {avg_vac:4.2f}x | "
                 f"{col_m}{dm['net_usdt']:+8.4f} USDT{_C_RESET}"
             )
 
-    print(f"{_C_CYAN}{'-' * 92}{_C_RESET}")
-    print(f"{_C_WHITE} 3. DEFENSIVE SHIELD ACCURACY (+15.0s COUNTERFACTUAL ORACLE){_C_RESET}")
+    print(f"{_C_CYAN}{'-' * 96}{_C_RESET}")
+    print(f"{_C_WHITE} 3. DEFENSIVE SHIELD ACCURACY (+15.0s COUNTERFACTUAL ORACLE - DEDUP EPISODES){_C_RESET}")
     esc_map = rep["escudos_15s"]
     if not esc_map:
         print(f" {_C_YELLOW}[INFO] No +15s shield interceptions recorded in current epoch yet.{_C_RESET}")
     else:
         print(
-            f" {'SHIELD NAME':<22} | {'BLOCKS':<6} | {'SAVED':<6} | {'CHOP':<6} | "
-            f"{'FALSE_REJ':<9} | {'PREC%':<6} | {'EST. SAVED'}"
+            f" {'SHIELD NAME':<22} | {'RAW/EP':<9} | {'SAVED':<5} | {'CHOP':<5} | "
+            f"{'FALSE_REJ':<9} | {'PREC%':<6} | {'DEDUP SAVED'}"
         )
-        print(f" {'-' * 88}")
+        print(f" {'-' * 92}")
         for esc, st_e in sorted(esc_map.items(), key=lambda x: x[1]["total"], reverse=True):
             tot_e = max(1, st_e["total"])
+            ep_e = max(1, st_e.get("episodios", tot_e))
             prec_pct = ((tot_e - st_e["false_rej"]) / tot_e) * 100.0
+            raw_ep_str = f"{st_e['total']}/{ep_e}"
             print(
-                f" {esc:<22} | {st_e['total']:<6d} | {_C_GREEN}{st_e['saved']:<6d}{_C_RESET} | "
-                f"{st_e['chop']:<6d} | {_C_YELLOW}{st_e['false_rej']:<9d}{_C_RESET} | "
+                f" {esc:<22} | {raw_ep_str:<9} | {_C_GREEN}{st_e['saved']:<5d}{_C_RESET} | "
+                f"{st_e['chop']:<5d} | {_C_YELLOW}{st_e['false_rej']:<9d}{_C_RESET} | "
                 f"{prec_pct:5.1f}% | {_C_GREEN}+{st_e['usdt_saved']:.4f} USDT{_C_RESET}"
             )
 
-    print(f"{_C_CYAN}{'-' * 92}{_C_RESET}")
+    print(f"{_C_CYAN}{'-' * 96}{_C_RESET}")
     print(f"{_C_WHITE} 4. POST-EXIT MARKOUT TRACKER (+15s / +30s / +60s AFTER CLOSE){_C_RESET}")
     post_list = rep["post_cierre_60s"]
     if not post_list:
@@ -283,23 +336,24 @@ def imprimir_auditoria_forense_cli() -> None:
                 f"+60s:{ev_p.get('continuation_60s_pct', 0.0):+.3f}% ({ev_p.get('veredicto_post_cierre', '')})"
             )
 
-    print(f"{_C_CYAN}{'-' * 92}{_C_RESET}")
-    print(f"{_C_WHITE} 5. AI FORENSIC PRESCRIPTIVE DIAGNOSTIC & AUTONOMOUS WEIGHTS{_C_RESET}")
-    try:
-        cfg.recargar_calibracion_oos_si_cambio()
-        from apoyo import micro_sensibilidad_autonoma as _msa
-        _msa.auto_calibrar_sensibilidades_en_vivo(ram.ESTADO_GLOBAL, None)
-    except Exception:
-        pass
-    ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
+    print(f"{_C_CYAN}{'-' * 96}{_C_RESET}")
+    print(f"{_C_WHITE} 5. AI FORENSIC PRESCRIPTIVE DIAGNOSTIC & AUTONOMOUS WEIGHTS (TERPSICHORA V7.0){_C_RESET}")
     print(
         f"   -> Active Autonomous Weights: TP={ctrl.get('w3_tp_maker_pct', 0.0014)*100:.2f}% | "
         f"StallBE={ctrl.get('mfe_stall_harvest_pct', 0.0011)*100:.2f}% | "
         f"Unwind={ctrl.get('w4_unwind_seg', 42.0):.0f}s | "
         f"ScratchRebound={ctrl.get('sens_scratch_edad_rebote_seg', 30.0):.0f}s | "
         f"Q_Hold={ctrl.get('sens_q_l1_hold_ratio', 0.25):.2f} | "
+        f"BTC_Beta={ctrl.get('w2_btc_beta', 0.32):.3f} | "
         f"KellyIA={ram.ESTADO_GLOBAL.multiplicador_kelly_ia:.2f}x"
     )
+    pesos_pares = []
+    for p_sym in cfg.PARES_CAMPEONES:
+        c_sym = p_sym.split("/")[0]
+        a_d = float(ctrl.get(f"alpha_disloc_{p_sym}", 1.0))
+        w_k = float(ctrl.get(f"w_kelly_{p_sym}", 1.0))
+        pesos_pares.append(f"{c_sym}(Disloc={a_d:.2f}x,Kelly={w_k:.2f}x)")
+    print(f"   -> {_C_MAGENTA}[BAYESIAN PAIR MEMORY]{_C_RESET} " + " | ".join(pesos_pares))
     if tk_s["trades"] > 0:
         print(
             f"   -> {_C_YELLOW}[FEE-DRAG ALERT]{_C_RESET} {tk_s['trades']} Taker exits caused "
@@ -309,7 +363,7 @@ def imprimir_auditoria_forense_cli() -> None:
     if esc_temp and esc_temp["trades"] > 0:
         print(
             f"   -> {_C_CYAN}[SELF-REMEDIATION ACTIVE]{_C_RESET} {esc_temp['trades']} ESCAPE_TEMPORAL detected "
-            f"(Avg MFE {esc_temp['mfe_sum']/esc_temp['trades']:+.3f}%): elastic 55s-72s BE decompression & "
-            f"9s step-down scratch active."
+            f"(Avg MFE {esc_temp['mfe_sum']/esc_temp['trades']:+.3f}%): elastic 54s-72s BE decompression & "
+            f"7.5s multi-step scratch active."
         )
-    print(f"{_C_CYAN}{'=' * 92}{_C_RESET}")
+    print(f"{_C_CYAN}{'=' * 96}{_C_RESET}")

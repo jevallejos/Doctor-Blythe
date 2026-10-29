@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Gate 0 Static Auditor for HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+Gate 0 Static Auditor for HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 Verifies pure UTF-8 (no BOM), Unix LF line endings, AST compilation, and the
 exact 100-uppercase-constant contract (AST_100_CONSTANTES_OK) across all 45 canonical files.
 """
@@ -122,7 +122,7 @@ def auditar_archivo(rel_path: str, tipo: str, auto_sanitize: bool = True) -> Tup
 
 def main() -> int:
     print("=" * 90)
-    print(" [GATE 0] STATIC UTF-8 / LF / AST INTEGRITY AUDIT -- DOCTOR-BLYTHE TERPSICHORA V1.0")
+    print(" [GATE 0] STATIC UTF-8 / LF / AST INTEGRITY AUDIT -- DOCTOR-BLYTHE TERPSICHORA V7.0")
     print("=" * 90)
     errores = 0
     for rel_path, tipo in ARCHIVOS_CANONICOS:
@@ -133,7 +133,7 @@ def main() -> int:
             errores += 1
     print("=" * 90)
     if errores == 0:
-        print(" FINAL RESULT: 0 ERRORS DETECTED | DOCTOR-BLYTHE TERPSICHORA V1.0 (45/45) CERTIFIED")
+        print(" FINAL RESULT: 0 ERRORS DETECTED | DOCTOR-BLYTHE TERPSICHORA V7.0 (45/45) CERTIFIED")
         print("=" * 90)
         return 0
     print(f" FINAL RESULT: {errores} FILE(S) WITH VALIDATION ERRORS")

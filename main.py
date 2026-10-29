@@ -3,8 +3,8 @@
 """
 Level 7 DAG: Central 25.0 Hz Asynchronous WebSocket Orchestrator, Single-Instance
 Physical PID Lock, Bybit UTA Startup Auditor, 5.0s Live L2 Telemetry Pulse,
-Fault-Tolerant Maintenance Governor, and Atomic os.execv Auto-Respawn for
-HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+Causal OOS-then-Live Autonomous Governor, and Atomic os.execv Auto-Respawn for
+HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 from __future__ import annotations
 
@@ -294,8 +294,8 @@ async def bucle_gobernador_mantenimiento(
 
             if (ahora - ts_ultimo_oos) >= 30.0:
                 ts_ultimo_oos = ahora
-                msa.auto_calibrar_sensibilidades_en_vivo(ram.ESTADO_GLOBAL, eje.EJECUTOR_GLOBAL)
                 recargado, _, aplicados = cfg.recargar_calibracion_oos_si_cambio()
+                msa.auto_calibrar_sensibilidades_en_vivo(ram.ESTADO_GLOBAL, eje.EJECUTOR_GLOBAL)
                 if recargado:
                     ram.log_operativo(
                         f"[HOT-RELOAD OOS] Autonomous parameters synchronized from calibracion_oos.json: "
@@ -319,10 +319,11 @@ async def bucle_gobernador_mantenimiento(
                     ordenados = sorted(activos, key=lambda x: abs(x.z_score), reverse=True)
                     top1 = ordenados[0]
                     p1 = top1.symbol.split("/")[0]
+                    v1_l2 = float(getattr(top1, "vacio_l2_ratio", 1.0) or 1.0)
                     resumen_top = (
                         f"{p1}@{top1.mid:.5g} Z={top1.z_score:+.2f} "
                         f"DP={top1.dp_pct * 100:+.2f}% EMA={top1.ema900_dist_pct * 100:+.2f}% "
-                        f"OFI={top1.ofi_profundo:+.2f} H={top1.hurst:.2f}"
+                        f"OFI={top1.ofi_profundo:+.2f} H={top1.hurst:.2f} V_L2={v1_l2:.2f}"
                     )
                     if len(ordenados) > 1:
                         top2 = ordenados[1]

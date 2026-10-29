@@ -1,8 +1,8 @@
 """
-Level 4 DAG: Asynchronous Tri-Cortex Groq LPU Ensemble, Structural Anti-LUNA
-Collapse Filter, and Asymmetric Anti-Fragile Kelly Sizing Engine with Outlier
-Convex Expansion (|Z| >= 8.0 -> gamma_outlier <= 1.15) for
-HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+Level 4 DAG: Asynchronous Tri-Cortex Groq LPU Ensemble, Entropic Structural
+Anti-LUNA Collapse Filter, and Capital-Elastic Anti-Fragile Kelly Sizing Engine
+with MFE-Capture & Taker-Friction Feedback for HFT Doctor Blythe Engine -
+Production Baseline Terpsichora V7.0.
 """
 from __future__ import annotations
 
@@ -31,10 +31,21 @@ def evaluar_matriz_direccional_cuantitativa(
     dp_pct: float,
     ofi: float,
     hurst: float = 0.42,
+    irrev_lob: float = 0.0,
 ) -> str:
-    return mcc.evaluar_matriz_direccional_cuantitativa(
-        symbol=symbol, z_score=z_score, dp_pct=dp_pct, ofi=ofi, hurst=hurst
-    )
+    try:
+        return mcc.evaluar_matriz_direccional_cuantitativa(
+            symbol=symbol,
+            z_score=z_score,
+            dp_pct=dp_pct,
+            ofi=ofi,
+            hurst=hurst,
+            irrev_lob=irrev_lob,
+        )
+    except TypeError:
+        return mcc.evaluar_matriz_direccional_cuantitativa(
+            symbol=symbol, z_score=z_score, dp_pct=dp_pct, ofi=ofi, hurst=hurst
+        )
 
 
 def calcular_bono_house_money() -> float:
@@ -47,10 +58,25 @@ def calcular_fraccion_kelly_antifragil(
     hurst: float = 0.42,
     side: str = "LONG",
     symbol: str = "",
+    irrev_lob: float = 0.0,
+    cancel_net_l1: float = 0.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> float:
-    return mck.calcular_fraccion_kelly_antifragil(
-        z_score=z_score, ofi=ofi, hurst=hurst, side=side, symbol=symbol
-    )
+    try:
+        return mck.calcular_fraccion_kelly_antifragil(
+            z_score=z_score,
+            ofi=ofi,
+            hurst=hurst,
+            side=side,
+            symbol=symbol,
+            irrev_lob=irrev_lob,
+            cancel_net_l1=cancel_net_l1,
+            vacio_l2_ratio=vacio_l2_ratio,
+        )
+    except TypeError:
+        return mck.calcular_fraccion_kelly_antifragil(
+            z_score=z_score, ofi=ofi, hurst=hurst, side=side, symbol=symbol
+        )
 
 
 def calcular_dimension_kelly(
@@ -60,15 +86,31 @@ def calcular_dimension_kelly(
     hurst: float = 0.42,
     side: str = "LONG",
     symbol: str = "",
+    irrev_lob: float = 0.0,
+    cancel_net_l1: float = 0.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> Tuple[float, float, float]:
-    return mck.calcular_dimension_kelly(
-        capital_libre_usdt=capital_libre_usdt,
-        z_score=z_score,
-        ofi=ofi,
-        hurst=hurst,
-        side=side,
-        symbol=symbol,
-    )
+    try:
+        return mck.calcular_dimension_kelly(
+            capital_libre_usdt=capital_libre_usdt,
+            z_score=z_score,
+            ofi=ofi,
+            hurst=hurst,
+            side=side,
+            symbol=symbol,
+            irrev_lob=irrev_lob,
+            cancel_net_l1=cancel_net_l1,
+            vacio_l2_ratio=vacio_l2_ratio,
+        )
+    except TypeError:
+        return mck.calcular_dimension_kelly(
+            capital_libre_usdt=capital_libre_usdt,
+            z_score=z_score,
+            ofi=ofi,
+            hurst=hurst,
+            side=side,
+            symbol=symbol,
+        )
 
 
 class OrquestadorTriCortexLPU:
@@ -118,6 +160,7 @@ class OrquestadorTriCortexLPU:
                     dp_pct=m.dp_pct,
                     ofi=m.ofi_profundo,
                     hurst=m.hurst,
+                    irrev_lob=float(getattr(m, "irrev_lob", 0.0) or 0.0),
                 )
             else:
                 modo = ram.MODO_DIRECCIONAL_DUAL
@@ -138,6 +181,7 @@ class OrquestadorTriCortexLPU:
         self._idx_c2 += 1
 
         ultimos = st.GESTOR_ESTADISTICAS.operaciones[-12:]
+        n_ult = len(ultimos)
         wins = sum(1 for op in ultimos if float(op.get("pnl_usdt", 0.0)) > 0.0)
         losses = sum(
             1 for op in ultimos
@@ -150,20 +194,34 @@ class OrquestadorTriCortexLPU:
             if not op.get("es_scratch", False)
         )
         scratches_12 = sum(1 for op in ultimos if op.get("es_scratch", False))
+        taker_12 = sum(1 for op in ultimos if not bool(op.get("es_salida_maker", True)))
+        cap_vals = [
+            max(-1.50, min(1.50, float((op.get("vector_entrada") or {}).get("mfe_capture_ratio", 0.0) or 0.0)))
+            for op in ultimos
+            if isinstance(op.get("vector_entrada"), dict) and "mfe_capture_ratio" in op.get("vector_entrada", {})
+        ]
+        avg_cap = (sum(cap_vals) / len(cap_vals)) if cap_vals else 0.35
+
+        cap_uta = max(float(cfg.CAPITAL_BASE_HISTORICO_USDT), float(ram.ESTADO_GLOBAL.capital_total_uta or 0.0))
+        rho_cap = max(0.85, cap_uta / max(1.0, float(cfg.CAPITAL_BASE_HISTORICO_USDT)))
+
         ciclos_reales = wins + losses
         wr_12 = (wins / ciclos_reales) if ciclos_reales > 0 else 1.0
-        if (ciclos_reales >= 3 and pnl_efectivo < -0.22) or (ciclos_reales >= 4 and wr_12 < 0.30):
+        if (ciclos_reales >= 3 and pnl_efectivo < (-0.22 * rho_cap)) or (ciclos_reales >= 4 and wr_12 < 0.30):
             mult = 0.72
-        elif (ciclos_reales >= 2 and pnl_efectivo < -0.12) or pnl_12 < -0.28:
+        elif (ciclos_reales >= 2 and pnl_efectivo < (-0.12 * rho_cap)) or pnl_12 < (-0.28 * rho_cap):
             mult = 0.85
-        elif scratches_12 >= 4 and pnl_12 <= -0.08:
+        elif scratches_12 >= 4 and pnl_12 <= (-0.08 * rho_cap):
             mult = 0.88
-        elif wins >= 4 and wr_12 >= 0.70 and pnl_12 >= 0.14:
-            mult = 1.10
-        elif wins >= 2 and pnl_12 > 0.06:
+        elif not cfg.es_modo_test() and n_ult >= 5 and taker_12 >= 4 and pnl_12 <= (-0.05 * rho_cap):
+            mult = 0.86
+        elif wins >= 4 and wr_12 >= 0.70 and pnl_12 >= (0.14 * rho_cap):
+            mult = 1.12 if (not cfg.es_modo_test() and avg_cap >= 0.65 and taker_12 <= 1) else 1.10
+        elif wins >= 2 and pnl_12 > (0.06 * rho_cap):
             mult = 1.05
         else:
             mult = 1.00
+
         ram.ESTADO_GLOBAL.multiplicador_kelly_ia = mult
         lat_ms = int((time.perf_counter() - t0) * 1000)
         ram.log_operativo(
@@ -177,7 +235,25 @@ class OrquestadorTriCortexLPU:
         modelo = self.modelos_forense[self._idx_c3 % len(self.modelos_forense)]
         self._idx_c3 += 1
 
-        cuarentena_seg = mcc.calcular_segundos_cuarentena_post_perdida(motivo)
+        repeg_last = 0
+        vacio_last = 1.0
+        m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
+        if m_live is not None:
+            vacio_last = float(getattr(m_live, "vacio_l2_ratio", 1.0) or 1.0)
+        if st.GESTOR_ESTADISTICAS.operaciones:
+            ult_op = st.GESTOR_ESTADISTICAS.operaciones[-1]
+            if str(ult_op.get("symbol", "")) == symbol and isinstance(ult_op.get("vector_entrada"), dict):
+                repeg_last = int(ult_op["vector_entrada"].get("repeg_salida_count", 0) or 0)
+
+        try:
+            cuarentena_seg = mcc.calcular_segundos_cuarentena_post_perdida(
+                motivo,
+                pnl_usdt=pnl_usdt,
+                repeg_salida_count=repeg_last,
+                vacio_l2_ratio=vacio_last,
+            )
+        except TypeError:
+            cuarentena_seg = mcc.calcular_segundos_cuarentena_post_perdida(motivo)
 
         ram.ESTADO_GLOBAL.activar_cuarentena_par(symbol, cuarentena_seg, motivo=f"FORENSIC_{motivo}")
         lat_ms = int((time.perf_counter() - t0) * 1000)

@@ -1,9 +1,10 @@
 """
 Level 6A DAG: Pure Moallemi-Stoikov Passive Maker (Limit PostOnly) Execution
 Engine with Zero-RTT Micro-Price Pre-Lead (0ms), 250ms Queue-Jump Re-Peg,
-Adverse L1 Queue Depletion Abort (<15% Q_L1), Minimum Fill Guard (<15%), and
-Pre-Validated Bybit V5 MarkPrice Stop-Loss Geometry (SEI-02) for
-HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+First-Passage-Time Race Ratio Tracking (arXiv:2403.02572v2), Uncensored 16-Attribute
+OPSR Telemetry (COLT 2026), Minimum Fill Guard (<15%), and Pre-Validated Bybit V5
+MarkPrice Stop-Loss Geometry (SEI-02) for HFT Doctor Blythe Engine -
+Production Baseline Terpsichora V7.0.
 """
 from __future__ import annotations
 from defensiva.micro_escape_reconciliador import debe_adoptar_en_lugar_de_liquidar_huerfana
@@ -138,7 +139,7 @@ async def enmendar_o_reemplazar_orden_maker(
 
 class EjecutorSniperBybit:
     """
-    Moallemi-Stoikov Zero-Adverse-Selection PostOnly Execution Engine.
+    Moallemi-Stoikov Zero-Adverse-Selection PostOnly Execution Engine (Terpsichora V7.0).
     """
 
     def __init__(self) -> None:
@@ -278,6 +279,8 @@ class EjecutorSniperBybit:
             repegs_hechos = 0
             ultimo_repeg_elapsed = 0.0
             abortada_en_cola = False
+            q_l1_ratio_last = 1.0
+            fpt_race_ratio_last = 0.0
             ts_inicio = time.perf_counter()
             paso_poll = min(0.08, max(0.02, ttl_max / 10.0))
 
@@ -324,21 +327,48 @@ class EjecutorSniperBybit:
                 if m_live is not None and filled_actual <= 0.0 and permitir_repeg:
                     q_l1_now = m_live.bid_qty if dir_norm == "LONG" else m_live.ask_qty
                     q_opp_now = m_live.ask_qty if dir_norm == "LONG" else m_live.bid_qty
+                    q_l1_ratio_last = round(q_l1_now / max(1e-9, q_l1_init), 4) if q_l1_init > 0.0 else 1.0
+                    dt_q = max(0.05, float(elapsed))
+                    merma_own_q = max(0.0, q_l1_init - q_l1_now) / max(1e-9, q_l1_init)
+                    drain_opp_q = max(0.0, q_opp_init - q_opp_now) / max(1e-9, q_opp_init)
+                    fpt_race_ratio_last = round(
+                        min(10.0, (merma_own_q / dt_q) / max(0.02, drain_opp_q / dt_q)),
+                        4,
+                    )
+                    vacio_live = float(getattr(m_live, "vacio_l2_ratio", 1.0) or 1.0)
+                    imb_live = float(getattr(m_live, "imb_l1", 0.0) or 0.0)
+                    cancel_live = float(getattr(m_live, "cancel_net_l1", 0.0) or 0.0)
                     veto_btc_activo = (
                         (dir_norm == "LONG" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_long_hasta)
                         or (dir_norm == "SHORT" and ahora_wall < ram.ESTADO_GLOBAL.btc_veto_short_hasta)
                     )
-                    cola_toxica, erosion_adversa = mmm.evaluar_aborto_cola_moallemi(
-                        dir_norm,
-                        q_l1_init,
-                        q_l1_now,
-                        m_live.ofi_profundo,
-                        m_live.hurst,
-                        elapsed,
-                        veto_btc_activo,
-                        q_opp_inicial=q_opp_init,
-                        q_opp_actual=q_opp_now,
-                    )
+                    try:
+                        cola_toxica, erosion_adversa = mmm.evaluar_aborto_cola_moallemi(
+                            dir_norm,
+                            q_l1_init,
+                            q_l1_now,
+                            m_live.ofi_profundo,
+                            m_live.hurst,
+                            elapsed,
+                            veto_btc_activo,
+                            q_opp_inicial=q_opp_init,
+                            q_opp_actual=q_opp_now,
+                            cancel_net_l1=cancel_live,
+                            imb_l1=imb_live,
+                            vacio_l2_ratio=vacio_live,
+                        )
+                    except TypeError:
+                        cola_toxica, erosion_adversa = mmm.evaluar_aborto_cola_moallemi(
+                            dir_norm,
+                            q_l1_init,
+                            q_l1_now,
+                            m_live.ofi_profundo,
+                            m_live.hurst,
+                            elapsed,
+                            veto_btc_activo,
+                            q_opp_inicial=q_opp_init,
+                            q_opp_actual=q_opp_now,
+                        )
                     if cola_toxica and not fue_cancelada_postonly:
                         try:
                             await exchange.cancel_order(orden_id, symbol)
@@ -359,16 +389,30 @@ class EjecutorSniperBybit:
                         and q_l1_now > (q_l1_init * 2.4)
                         and (m_live.ask - m_live.bid) >= (tick_size * 1.95)
                     )
-                    listo_jump_250ms = mmm.listo_para_repeg_cola(
-                        fue_cancelada_postonly, elapsed, ultimo_repeg_elapsed
-                    )
-                    if repegs_hechos < 2 and listo_jump_250ms:
-                        salto_ok, px_penny = mmm.evaluar_salto_punta_penny(
-                            dir_norm, precio_orden, m_live.bid, m_live.ask, tick_size,
-                            m_live.ofi_profundo, m_live.hurst, repegs_hechos,
-                            edad_en_nivel_seg=elapsed - ultimo_repeg_elapsed,
-                            ofi_ticks_racha=m_live.ofi_ticks_consecutivos,
+                    try:
+                        listo_jump_250ms = mmm.listo_para_repeg_cola(
+                            fue_cancelada_postonly, elapsed, ultimo_repeg_elapsed, vacio_l2_ratio=vacio_live
                         )
+                    except TypeError:
+                        listo_jump_250ms = mmm.listo_para_repeg_cola(
+                            fue_cancelada_postonly, elapsed, ultimo_repeg_elapsed
+                        )
+                    if repegs_hechos < 2 and listo_jump_250ms:
+                        try:
+                            salto_ok, px_penny = mmm.evaluar_salto_punta_penny(
+                                dir_norm, precio_orden, m_live.bid, m_live.ask, tick_size,
+                                m_live.ofi_profundo, m_live.hurst, repegs_hechos,
+                                edad_en_nivel_seg=elapsed - ultimo_repeg_elapsed,
+                                ofi_ticks_racha=m_live.ofi_ticks_consecutivos,
+                                vacio_l2_ratio=vacio_live,
+                            )
+                        except TypeError:
+                            salto_ok, px_penny = mmm.evaluar_salto_punta_penny(
+                                dir_norm, precio_orden, m_live.bid, m_live.ask, tick_size,
+                                m_live.ofi_profundo, m_live.hurst, repegs_hechos,
+                                edad_en_nivel_seg=elapsed - ultimo_repeg_elapsed,
+                                ofi_ticks_racha=m_live.ofi_ticks_consecutivos,
+                            )
                         nuevo_px = px_penny if salto_ok else calcular_precio_penny_jump(
                             m_live.bid, m_live.ask, tick_size, dir_norm, micro_price=m_live.micro_price
                         )
@@ -448,15 +492,43 @@ class EjecutorSniperBybit:
                 except Exception:
                     pass
 
+            m_end = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
+            vol_bv = float(senal.get("volatilidad_bv", cfg.VOLATILIDAD_BV_PISO_MIN))
+            vol_bv_raw = float(senal.get("volatilidad_bv_raw", getattr(m_end, "volatilidad_bv_raw", vol_bv)) or vol_bv)
+            pct_24h = float(senal.get("percentil_24h", getattr(m_end, "percentil_24h", 0.50)) or 0.50)
+            etiqueta_pct = str(senal.get("etiqueta_percentil") or getattr(m_end, "etiqueta_percentil", "") or pct_24h)
+            vacio_l2_in = float(senal.get("vacio_l2_ratio", getattr(m_end, "vacio_l2_ratio", 1.0)) or 1.0)
+            imb_l1_in = float(senal.get("imb_l1", getattr(m_end, "imb_l1", 0.0)) or 0.0)
+            cancel_l1_in = float(senal.get("cancel_net_l1", getattr(m_end, "cancel_net_l1", 0.0)) or 0.0)
+            irrev_in = float(senal.get("irrev_lob", getattr(m_end, "irrev_lob", 0.0)) or 0.0)
+
             if filled_final <= 0.0:
                 esc_opsr = "OPSR_QUEUE_ABORT" if abortada_en_cola else "OPSR_TTL_EXPIRED"
+                vec_opsr = {
+                    "z_entry": z_val,
+                    "dp_pct": round(float(senal.get("dp_pct", 0.0)) * 100.0, 4),
+                    "ema900_pct": round(float(senal.get("ema900_pct", 0.0)) * 100.0, 4),
+                    "ofi_entry": ofi_val,
+                    "hurst_entry": hurst_val,
+                    "hawkes_entry": float(senal.get("hawkes", 0.0)),
+                    "lyapunov_entry": float(senal.get("lyapunov", 0.0)),
+                    "volatilidad_bv": vol_bv,
+                    "volatilidad_bv_raw": vol_bv_raw,
+                    "percentil_24h": etiqueta_pct,
+                    "vacio_l2_ratio": round(vacio_l2_in, 3),
+                    "imb_l1": round(imb_l1_in, 4),
+                    "cancel_net_l1": round(cancel_l1_in, 4),
+                    "irrev_lob": round(irrev_in, 4),
+                    "q_l1_ratio": q_l1_ratio_last,
+                    "fpt_race_ratio": fpt_race_ratio_last,
+                }
                 ram.ESTADO_GLOBAL.encolar_auditoria_forense_15s(
                     symbol,
                     dir_norm,
                     esc_opsr,
                     f"repeg={repegs_hechos}",
                     precio_orden,
-                    {"z_entry": z_val, "ofi_entry": ofi_val, "hurst_entry": hurst_val},
+                    vec_opsr,
                 )
                 if not abortada_en_cola:
                     ram.log_operativo(
@@ -484,35 +556,53 @@ class EjecutorSniperBybit:
             sl_int, sl_srv = calcular_niveles_sl_iniciales(precio_fill, dir_norm, tick_size)
             await self._colocar_sl_servidor_bybit(exchange, symbol, sl_srv, side=dir_norm, tick_size=tick_size)
 
-            vol_bv = float(senal.get("volatilidad_bv", cfg.VOLATILIDAD_BV_PISO_MIN))
-            tp_din = mcs.calcular_tp_dinamico_volatilidad(vol_bv)
+            try:
+                tp_din = mcs.calcular_tp_dinamico_volatilidad(
+                    vol_bv, percentil_24h=pct_24h, vacio_l2_ratio=vacio_l2_in, symbol=symbol
+                )
+            except TypeError:
+                tp_din = mcs.calcular_tp_dinamico_volatilidad(vol_bv)
             fee_entrada = abs(filled_final * precio_fill) * cfg.COMISION_MAKER_PCT
 
-            pos = ram.PosicionActiva(
-                symbol=symbol,
-                side=dir_norm,
-                contratos=filled_final,
-                contratos_iniciales=filled_final,
-                precio_entrada=precio_fill,
-                timestamp_apertura=time.time(),
-                orden_entrada_id=orden_id,
-                sl_interno=sl_int,
-                sl_bybit=sl_srv,
-                tp_dinamico_pct=round(tp_din, 5),
-                fees_acumulados_usdt=round(fee_entrada, 6),
-                es_entrada_maker=True,
-                kelly_usado=kelly_frac,
-                z_entrada=z_val,
-                ofi_entrada=ofi_val,
-                hurst_entrada=hurst_val,
-                hawkes_entrada=float(senal.get("hawkes", 0.0)),
-                lyapunov_entrada=float(senal.get("lyapunov", 0.0)),
-                ema900_entrada_pct=float(senal.get("ema900_pct", 0.0)),
-                dp_entrada_pct=float(senal.get("dp_pct", 0.0)),
-                volatilidad_bv_entrada=vol_bv,
-                percentil_entrada=float(senal.get("percentil_24h", 0.50)),
-                latencia_rtt_ms=round(rtt_ms, 2),
-            )
+            kwargs_pos: Dict[str, Any] = {
+                "symbol": symbol,
+                "side": dir_norm,
+                "contratos": filled_final,
+                "contratos_iniciales": filled_final,
+                "precio_entrada": precio_fill,
+                "timestamp_apertura": time.time(),
+                "orden_entrada_id": orden_id,
+                "sl_interno": sl_int,
+                "sl_bybit": sl_srv,
+                "tp_dinamico_pct": round(tp_din, 5),
+                "fees_acumulados_usdt": round(fee_entrada, 6),
+                "es_entrada_maker": True,
+                "kelly_usado": kelly_frac,
+                "z_entrada": z_val,
+                "ofi_entrada": ofi_val,
+                "hurst_entrada": hurst_val,
+                "hawkes_entrada": float(senal.get("hawkes", 0.0)),
+                "lyapunov_entrada": float(senal.get("lyapunov", 0.0)),
+                "ema900_entrada_pct": float(senal.get("ema900_pct", 0.0)),
+                "dp_entrada_pct": float(senal.get("dp_pct", 0.0)),
+                "volatilidad_bv_entrada": vol_bv,
+                "percentil_entrada": pct_24h,
+                "latencia_rtt_ms": round(rtt_ms, 2),
+            }
+            try:
+                pos = ram.PosicionActiva(
+                    **kwargs_pos,
+                    volatilidad_bv_raw_entrada=vol_bv_raw,
+                    irrev_lob_entrada=irrev_in,
+                    imb_l1_entrada=imb_l1_in,
+                    cancel_net_l1_entrada=cancel_l1_in,
+                    vacio_l2_entrada=vacio_l2_in,
+                    q_l1_ratio_entrada=q_l1_ratio_last,
+                    fpt_race_ratio=fpt_race_ratio_last,
+                )
+            except TypeError:
+                pos = ram.PosicionActiva(**kwargs_pos)
+
             ram.ESTADO_GLOBAL.posiciones_activas[symbol] = pos
             self.disparos_llenados += 1
 

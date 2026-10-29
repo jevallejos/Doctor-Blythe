@@ -2,7 +2,8 @@
 """
 Micro-Modulo Defensivo #4: Geometria MarkPrice Stop-Loss (SEI-02), Calculo de
 Niveles SL Iniciales, Ley 2 (RF-18) de Evacuacion Pasiva Maker-Scratch 18.0s
-con Pendiente Multi-Horizonte de DeLise (arXiv:2407.16527) y Tope Anti-Deslizamiento.
+con Pendiente Multi-Horizonte de DeLise (arXiv:2407.16527) y Escalonamiento
+Elastico Anti-RePeg por Vacio L2 para HFT Doctor Blythe Terpsichora V7.0.
 """
 from typing import Dict, Optional, Tuple
 import config_parametros as cfg
@@ -56,7 +57,7 @@ def calcular_pendiente_recuperacion_delise(
     """
     Mejora de Frontera #4 (arXiv:2407.16527 - DeLise Post-Fill Negative Drift):
     Calcula la velocidad de recuperacion cinematica entre t=5s y el instante actual,
-    verificando que no exista deterioro recesivo respecto a t=15s.
+    verificando que no exista deterioro recesivo respecto a t=15s o t=18s.
     """
     if edad_seg < 8.0:
         return 0.0
@@ -84,11 +85,13 @@ def evaluar_gatillo_maker_scratch_18s(
     fill_post_aborto: bool = False,
     mae_pct: float = 0.0,
     trayectoria_pnl: Optional[Dict[str, float]] = None,
+    vacio_l2_ratio: float = 1.0,
 ) -> bool:
     t_scratch = float(cfg.obtener_aux("MAKER_SCRATCH_TIEMPO_SEG", 18.0))
     ofi_adv = float(cfg.obtener_aux("MAKER_SCRATCH_OFI_ADVERSO", -0.15))
     dir_norm = "LONG" if str(direccion).upper() in ("BUY", "LONG") else "SHORT"
     ofi_dir = float(ofi_5s) if dir_norm == "LONG" else -float(ofi_5s)
+    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
 
     if fill_post_aborto and edad_seg >= 10.0 and not trinquete_be_activo:
         if mfe_pct <= 0.00015 and pnl_pct <= -0.00055:
@@ -103,6 +106,7 @@ def evaluar_gatillo_maker_scratch_18s(
         and pendiente_delise >= 0.000025
         and flujo_recuperando
         and pnl_pct > -0.0012
+        and v_l2 >= 0.55
     )
 
     # 1. Regla Invariante RF-18 (Test 16/18): Fill muerto sin rebote ni recuperacion DeLise
@@ -117,17 +121,28 @@ def evaluar_gatillo_maker_scratch_18s(
         return True
 
     # 2. Ventana de Maduracion Fractal y Proteccion de Semilla Ganadora
-    semilla_protegida = mir.proteger_semilla_ganadora_de_scratch(
-        edad_seg, pnl_pct, mfe_pct, ofi_5s, dir_norm
-    )
+    try:
+        semilla_protegida = mir.proteger_semilla_ganadora_de_scratch(
+            edad_seg,
+            pnl_pct,
+            mfe_pct,
+            ofi_5s,
+            dir_norm,
+            vacio_l2_ratio=v_l2,
+            pendiente_delise=pendiente_delise,
+        )
+    except TypeError:
+        semilla_protegida = mir.proteger_semilla_ganadora_de_scratch(
+            edad_seg, pnl_pct, mfe_pct, ofi_5s, dir_norm
+        )
     tuvo_pulso_inicial = (
         semilla_protegida
         or recuperacion_delise_activa
-        or ((mfe_pct >= 0.00040) and (hurst_actual <= 0.44))
+        or ((mfe_pct >= 0.00040) and (hurst_actual <= 0.44) and (v_l2 >= 0.55))
     )
     edad_min_flujo = 30.0 if tuvo_pulso_inicial else max(18.0, t_scratch)
     if tuvo_pulso_inicial and edad_seg < 30.0:
-        colapso_profundo = (pnl_pct <= -0.0015) and (ofi_dir <= -0.42)
+        colapso_profundo = (pnl_pct <= -0.0015) and (ofi_dir <= -0.42 or v_l2 < 0.45)
         if not colapso_profundo:
             return False
 
@@ -153,13 +168,25 @@ def debe_escalar_scratch_colgado_a_taker(
     pnl_pct: float,
     ofi_5s: float,
     motivo_pendiente: str,
+    repeg_salida_count: int = 0,
+    vacio_l2_ratio: float = 1.0,
 ) -> bool:
+    """
+    Evita escalar prematuramente un Maker-Scratch a Taker (lo que multiplico por 4.58x
+    el costo de los scratches en produccion):
+    - Solo escala a Market Taker si hay riesgo inminente de SL (pnl <= -0.30%),
+      o colapso severo tras >= 14.0s, o >= 6 re-pegs fallidos con soporte L2 roto (< 0.50).
+    """
     if "SCRATCH" not in str(motivo_pendiente).upper():
         return False
     dir_norm = "LONG" if str(direccion).upper() in ("BUY", "LONG") else "SHORT"
     ofi_dir = float(ofi_5s) if dir_norm == "LONG" else -float(ofi_5s)
-    # Solo escala a Market Taker si hay riesgo real de SL (pnl <= -0.30%) o colapso sostenido tras 14s
+    n_rep = max(0, int(repeg_salida_count or 0))
+    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
+
     if pnl_pct <= -0.0030 and edad_orden_salida_seg >= 4.5 and ofi_dir <= -0.25:
+        return True
+    if n_rep >= 6 and v_l2 < 0.50 and pnl_pct <= -0.0020 and ofi_dir <= -0.25:
         return True
     if edad_orden_salida_seg >= 14.0 and pnl_pct <= -0.0022 and ofi_dir <= -0.42:
         return True
@@ -174,21 +201,37 @@ def calcular_precio_scratch_acotado_un_tick(
     tick_size: float,
     ofi_5s_dir: float,
     edad_orden_salida_seg: float = 0.0,
+    repeg_salida_count: int = 0,
+    vacio_l2_ratio: float = 1.0,
 ) -> float:
     """
     Cotizador elastico de evacuacion pasiva Maker-Scratch:
-    - En t_orden < 9s con flujo neutral (OFI_dir > -0.22), ancla a +-1 tick de entrada.
-    - A medida que edad_orden_salida_seg avanza (ej. ARB estancado en Trades #9 y #12),
-      relaja progresivamente 1 tick adicional cada 9.0s (hasta 4 ticks o 0.06%) para
-      garantizar el llenado PostOnly en best_ask/best_bid antes de ESCAPE_TEMPORAL (90s).
+    - En el disparo inicial (t_orden == 0, repeg == 0) con flujo neutral (OFI_dir > -0.22),
+      ancla exactamente a +-1 tick de entrada (certificando Test [16/18]).
+    - A medida que edad_orden_salida_seg avanza (cada 7.5s), o se acumulan re-pegs
+      sin llenar (cada 2 re-pegs), o el soporte L2 se evapora (vacio_l2_ratio < 0.60),
+      relaja progresivamente hasta 5 ticks (o 0.08%) para lograr el fill PostOnly
+      como Maker antes de caer en liquidacion Taker.
     """
     t_size = max(float(tick_size or 0.00001), 1e-8)
     side_u = str(side).upper()
+    n_rep = max(0, int(repeg_salida_count or 0))
+    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
     flujo_neutral = float(ofi_5s_dir) > -0.22
-    escalones_tiempo = int(max(0.0, float(edad_orden_salida_seg)) // 9.0)
-    max_ticks_base = 1.0 if flujo_neutral else 3.0
-    ticks_permitidos = min(4.0, max_ticks_base + float(escalones_tiempo))
-    max_dist_precio = max(ticks_permitidos * t_size, float(entry_price) * min(0.00065, 0.00020 * ticks_permitidos))
+
+    escalones_tiempo = int(max(0.0, float(edad_orden_salida_seg)) // 7.5)
+    escalones_repeg = n_rep // 2
+    escalon_vacio = 1 if (v_l2 < 0.60 and (edad_orden_salida_seg > 0.0 or n_rep > 0)) else 0
+
+    max_ticks_base = (1.0 if n_rep <= 1 else 2.0) if flujo_neutral else 3.0
+    ticks_permitidos = min(
+        5.0,
+        max_ticks_base + float(escalones_tiempo + escalones_repeg + escalon_vacio),
+    )
+    max_dist_precio = max(
+        ticks_permitidos * t_size,
+        float(entry_price) * min(0.00080, 0.00020 * ticks_permitidos),
+    )
 
     if side_u in ("LONG", "BUY"):
         piso_elastico = round(float(entry_price) - max_dist_precio, 8)
@@ -208,21 +251,24 @@ def evaluar_ventana_elastica_scratch_28s(
     acel_lyap_dir: float = 0.0,
     tiempo_base_seg: float = 18.0,
     tiempo_rebote_seg: float = 28.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> bool:
     """
     - Si a los 18.0s el fill esta muerto (mfe_pct <= 0.0008 y ofi_dir <= 0.05), evacua
       cumpliendo RF-18 y Test [16/18].
-    - Si mfe_pct estuvo en (0.0008, 0.0011) (sin alcanzar Early BE) y tras >= 30s
-      cae en perdida con flujo en contra, abre la compuerta para evitar caer al SL.
+    - Si mfe_pct estuvo en (0.0008, 0.0011) (sin alcanzar Early BE) y tras >= 25s-30s
+      cae en perdida con flujo en contra o vacio L2 adverso, abre la compuerta Maker.
     """
     ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
     t_rebote = max(float(tiempo_rebote_seg), float(ctrl.get("sens_scratch_edad_rebote_seg", 28.0)))
+    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
     if edad_seg < tiempo_base_seg:
         return False
     if mfe_pct > 0.0008:
-        return bool(edad_seg >= max(30.0, t_rebote) and pnl_unrealized_pct <= -0.00075 and ofi_dir <= -0.15)
+        t_umbral_mfe = 25.0 if v_l2 < 0.60 else max(30.0, t_rebote)
+        return bool(edad_seg >= t_umbral_mfe and pnl_unrealized_pct <= -0.00075 and (ofi_dir <= -0.15 or v_l2 < 0.55))
     if ofi_dir <= 0.05:
         return True
-    if edad_seg < t_rebote and pnl_unrealized_pct > -0.0012 and acel_lyap_dir >= -0.00025:
+    if edad_seg < t_rebote and pnl_unrealized_pct > -0.0012 and acel_lyap_dir >= -0.00025 and v_l2 >= 0.55:
         return False
     return bool(edad_seg >= t_rebote and pnl_unrealized_pct <= 0.0002)

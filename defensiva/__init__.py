@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Paquete Defensivo HFT Doctor Blythe Terpsichora V1.0."""
+"""Paquete Defensivo HFT Doctor Blythe Terpsichora V7.0."""
 __all__ = (
     "micro_candado_climax_hurst",
     "micro_cortafuegos_contagio",

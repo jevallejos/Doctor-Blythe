@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Paquete de Apoyo Matematico, Telemetria y Gemelo Digital HFT Doctor Blythe V1.0."""
+"""Paquete de Apoyo Matematico, Telemetria y Gemelo Digital HFT Doctor Blythe V7.0."""
 __all__ = (
     "micro_cinematica_l2",
     "micro_gemelo_digital_oos",

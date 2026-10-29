@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# HFT DOCTOR BLYTHE ENGINE - PRODUCTION BASELINE TERPSICHORA V1.0
+# HFT DOCTOR BLYTHE ENGINE - PRODUCTION BASELINE TERPSICHORA V7.0
 # Low-Jitter Linux Kernel Tuning (TCP BBR, slow_start_after_idle=0, THP madvise,
 # AWS Atomic Clock Sync, systemd Service Lifecycle & Official UNIX Manpage)
 # ==============================================================================
@@ -61,7 +61,7 @@ SYSCTL_EOF
     # 5. Primary HFT Engine systemd Service Unit (doctor-blythe.service)
     sudo -n tee /etc/systemd/system/doctor-blythe.service >/dev/null 2>&1 << MAIN_SVC_EOF || true
 [Unit]
-Description=HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0 (25Hz LOB)
+Description=HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0 (25Hz LOB)
 After=network-online.target chrony.service
 Wants=network-online.target
 
@@ -125,16 +125,16 @@ TIMER_EOF
     # 7. Official UNIX Manpage Installation (man verbot / man doctor-blythe)
     sudo -n mkdir -p /usr/local/share/man/man1 >/dev/null 2>&1 || true
     sudo -n tee /usr/local/share/man/man1/verbot.1 >/dev/null 2>&1 << 'MAN_EOF' || true
-.TH VERBOT 1 "Octubre 2026" "Doctor Blythe Terpsichora V1.0" "Manual de Operacion HFT"
+.TH VERBOT 1 "Octubre 2026" "Doctor Blythe Terpsichora V7.0" "Manual de Operacion HFT"
 .SH NAME
-verbot, doctor-blythe \- Consola de telemetria, auditoria forense y gestion de servicio para el motor HFT Doctor Blythe Terpsichora V1.0 (25.0 Hz Bybit UTA V5).
+verbot, doctor-blythe \- Consola de telemetria, auditoria forense y gestion de servicio para el motor HFT Doctor Blythe Terpsichora V7.0 (25.0 Hz Bybit UTA V5).
 .SH SYNOPSIS
 .B verbot
 [\fICOMANDO\fR | \fIOPCION\fR]
 .SH DESCRIPTION
 .B verbot
 es la interfaz de comando y control de cero latencia para el motor de ejecucion microestructural
-.B HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0
+.B HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0
 (Arquitectura Micro-Kernel Hexagonal de 45 archivos canonicos dividida en \fBofensiva/\fR, \fBdefensiva/\fR y \fBapoyo/\fR).
 .PP
 Todos los comandos de visualizacion interceptan las senales de interrupcion localmente, garantizando que presionar \fBCtrl+C\fR cierre unicamente la vista de consola sin detener jamas el demonio en segundo plano.
@@ -193,7 +193,7 @@ Boveda forense de intercepciones (+15s) y markouts post-cierre (+60s).
 .I /etc/sysctl.d/99-doctor-blythe-hft.conf
 Parametros de red y memoria del kernel Linux para baja latencia.
 .SH AUTHOR
-Arquitectura HFT Doctor Blythe Terpsichora V1.0 (45/45 Canonical Files Certified).
+Arquitectura HFT Doctor Blythe Terpsichora V7.0 (45/45 Canonical Files Certified).
 MAN_EOF
     sudo -n gzip -f /usr/local/share/man/man1/verbot.1 >/dev/null 2>&1 || true
     sudo -n cp -f /usr/local/share/man/man1/verbot.1.gz /usr/local/share/man/man1/doctor-blythe.1.gz >/dev/null 2>&1 || true
@@ -248,18 +248,18 @@ verbot() {
                 ;;
             status)
                 echo "======================================================================================"
-                echo " [SERVICE STATUS - HFT DOCTOR BLYTHE TERPSICHORA V1.0]"
+                echo " [SERVICE STATUS - HFT DOCTOR BLYTHE TERPSICHORA V7.0]"
                 echo "======================================================================================"
                 local lpid=""
                 if [ -f .tribrain.lock ]; then
                     lpid="$(cat .tribrain.lock 2>/dev/null | tr -d '[:space:]')"
                 fi
                 if [ -n "${lpid}" ] && kill -0 "${lpid}" 2>/dev/null; then
-                    echo -e " -> Engine State    : [1;92mACTIVE (RUNNING)[0m"
+                    echo -e " -> Engine State    :  [1;92mACTIVE (RUNNING) [0m"
                     echo " -> Active PID      : ${lpid} (Uptime: $(ps -o etime= -p "${lpid}" 2>/dev/null | tr -d ' ') | CPU: $(ps -o %cpu= -p "${lpid}" 2>/dev/null | tr -d ' ')% | MEM: $(ps -o %mem= -p "${lpid}" 2>/dev/null | tr -d ' ')%)"
                     echo " -> Kernel Priority : Nice=$(ps -o ni= -p "${lpid}" 2>/dev/null | tr -d ' ') | OOM_Score_Adj=$(cat /proc/${lpid}/oom_score_adj 2>/dev/null || echo 'N/A')"
                 else
-                    echo -e " -> Engine State    : [1;91mSTOPPED[0m"
+                    echo -e " -> Engine State    :  [1;91mSTOPPED [0m"
                 fi
                 echo " -> Systemd Service : doctor-blythe.service ($(systemctl is-enabled doctor-blythe.service 2>/dev/null || echo 'unregistered') / $(systemctl is-active doctor-blythe.service 2>/dev/null || true))"
                 echo " -> OOS Timer (8h)  : doctor-blythe-oos.timer ($(systemctl is-enabled doctor-blythe-oos.timer 2>/dev/null || echo 'disabled') / $(systemctl is-active doctor-blythe-oos.timer 2>/dev/null || true))"
@@ -272,7 +272,7 @@ verbot() {
                     lpid="$(cat .tribrain.lock 2>/dev/null | tr -d '[:space:]')"
                 fi
                 if [ -n "${lpid}" ] && kill -0 "${lpid}" 2>/dev/null; then
-                    echo -e "[1;92m[OK] Doctor Blythe is already running on PID ${lpid} (Single-Instance Guard active).[0m"
+                    echo -e " [1;92m[OK] Doctor Blythe is already running on PID ${lpid} (Single-Instance Guard active). [0m"
                 else
                     rm -f .tribrain.lock
                     sudo systemctl start doctor-blythe.service
@@ -283,11 +283,11 @@ verbot() {
                         sudo -n ionice -c 2 -n 0 -p "${lpid}" >/dev/null 2>&1 || true
                         echo -800 | sudo -n tee "/proc/${lpid}/oom_score_adj" >/dev/null 2>&1 || true
                     fi
-                    echo -e "[1;92m[OK] Doctor Blythe service started (PID ${lpid}).[0m"
+                    echo -e " [1;92m[OK] Doctor Blythe service started (PID ${lpid}). [0m"
                 fi
                 ;;
             stop)
-                echo -e "[1;93m[INFO] Stopping Doctor Blythe service gracefully (SIGTERM)...[0m"
+                echo -e " [1;93m[INFO] Stopping Doctor Blythe service gracefully (SIGTERM)... [0m"
                 sudo systemctl stop doctor-blythe.service 2>/dev/null || true
                 tmux kill-session -t demonio_hft 2>/dev/null || true
                 if [ -f .tribrain.lock ]; then
@@ -299,11 +299,11 @@ verbot() {
                     fi
                     rm -f .tribrain.lock
                 fi
-                echo -e "[1;92m[OK] Doctor Blythe stopped cleanly.[0m"
+                echo -e " [1;92m[OK] Doctor Blythe stopped cleanly. [0m"
                 ;;
             restart)
                 if [ "${2}" = "--hard" ]; then
-                    echo -e "[1;93m[INFO] Performing full systemd hard restart...[0m"
+                    echo -e " [1;93m[INFO] Performing full systemd hard restart... [0m"
                     verbot stop
                     sleep 1
                     verbot start
@@ -314,7 +314,7 @@ verbot() {
                     fi
                     if [ -n "${lpid}" ] && kill -0 "${lpid}" 2>/dev/null; then
                         touch main.py
-                        echo -e "[1;96m[OK] Atomic zero-downtime reload (os.execv) triggered for PID ${lpid} (executes as soon as Slots == 0/1).[0m"
+                        echo -e " [1;96m[OK] Atomic zero-downtime reload (os.execv) triggered for PID ${lpid} (executes as soon as Slots == 0/1). [0m"
                     else
                         verbot start
                     fi
@@ -323,11 +323,11 @@ verbot() {
             enable)
                 sudo systemctl enable doctor-blythe.service doctor-blythe-oos.timer
                 sudo systemctl start doctor-blythe-oos.timer
-                echo -e "[1;92m[OK] Auto-start on boot ENABLED for doctor-blythe.service & doctor-blythe-oos.timer.[0m"
+                echo -e " [1;92m[OK] Auto-start on boot ENABLED for doctor-blythe.service & doctor-blythe-oos.timer. [0m"
                 ;;
             disable)
                 sudo systemctl disable doctor-blythe.service
-                echo -e "[1;93m[OK] Auto-start on boot DISABLED for doctor-blythe.service.[0m"
+                echo -e " [1;93m[OK] Auto-start on boot DISABLED for doctor-blythe.service. [0m"
                 ;;
             man|-h|--help|help)
                 if command -v man >/dev/null 2>&1 && man -w verbot >/dev/null 2>&1; then

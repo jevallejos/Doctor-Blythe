@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Ofensivo #4: Cotizador Zero-RTT Stoikov Micro-Price,
-Penny-Jump Quoting con Filtro de Seleccion Adversa y Cuantizacion Exacta de Ticks y Lotes.
+Micro-Modulo Ofensivo #4: Cotizador Zero-RTT Stoikov Micro-Price, Penny-Jump Quoting
+con Filtro de Seleccion Adversa, Cuantizacion Exacta de Ticks y Lotes, y Objetivo
+de Cosecha Elastico Acoplado al Percentil Intradia 24h y Vacio L2 (Terpsichora V7.0).
 """
 import math
 import config_parametros as cfg
@@ -69,13 +70,33 @@ def calcular_precio_penny_jump(
     return cuantizar_tick(candidato, t_size, modo="ceil")
 
 
-def calcular_tp_dinamico_volatilidad(volatilidad_bv: float) -> float:
+def calcular_tp_dinamico_volatilidad(
+    volatilidad_bv: float,
+    percentil_24h: float = 0.50,
+    vacio_l2_ratio: float = 1.0,
+    symbol: str = "",
+) -> float:
     """
-    Objetivo de cosecha elastico acoplado a la volatilidad Bipower realizada:
-    - En regimenes de volatilidad moderada (vol_bv ~ 0.00055 - 0.00065),
-      situa la activacion de cosecha en +0.140% a +0.185%.
-    - En alta volatilidad (vol_bv >= 0.00076), escala hacia +0.20% - +0.32%.
+    Objetivo de cosecha elastico acoplado a la volatilidad Bipower relativa del par,
+    al percentil intradia de 24h (P_24h) y a la razon de vacio profundo L2 (V_L2):
+    - Resuelve el congelamiento de activos Tier-1 (ARB, AVAX, TAO, XRP) donde
+      volatilidad_bv = 0.00055, modulando el objetivo mediante P_24h in [0.05, 0.99]
+      y expandiendo cuando V_L2 >= 1.25 (ausencia de resistencia opuesta en L2..L15).
     """
     vol_limpia = max(float(cfg.VOLATILIDAD_BV_PISO_MIN), float(volatilidad_bv))
-    piso_elastico = max(float(cfg.COSECHA_TRIZ_ACTIVACION_PCT), float(cfg.COSECHA_ESTANCAMIENTO_MFE_PCT) + 0.00028)
-    return round(max(piso_elastico, min(0.0032, vol_limpia * 2.65)), 5)
+    piso_elastico = max(
+        float(cfg.COSECHA_TRIZ_ACTIVACION_PCT),
+        float(cfg.COSECHA_ESTANCAMIENTO_MFE_PCT) + 0.00028,
+    )
+    tp_base_bv = max(piso_elastico, vol_limpia * 2.65)
+    p_24 = max(cfg.PERCENTIL_DIA_MIN, min(cfg.PERCENTIL_DIA_MAX, float(percentil_24h or 0.50)))
+    v_l2 = max(0.20, min(3.00, float(vacio_l2_ratio or 1.0)))
+
+    mod_percentil = 1.0 + max(-0.06, 0.48 * (p_24 - 0.50))
+    mod_vacio = 1.0 + max(-0.08, min(0.22, 0.25 * (v_l2 - 1.0)))
+    if symbol and hasattr(cfg, "obtener_clase_activo") and cfg.obtener_clase_activo(symbol) == cfg.CLASE_TIER1_LIQUIDO:
+        tp_candidato = max(piso_elastico, tp_base_bv * mod_percentil * mod_vacio)
+    else:
+        tp_candidato = max(piso_elastico, tp_base_bv * (0.50 + 0.50 * mod_percentil) * mod_vacio)
+
+    return round(max(piso_elastico, min(0.0032, tp_candidato)), 5)

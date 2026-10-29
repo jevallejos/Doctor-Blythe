@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 Deterministic 18/18 Certification Suite for
-HFT Doctor Blythe Engine - Production Baseline Terpsichora V1.0.
+HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 Executes 100% in isolated test mode (TRIBRAIN_TEST_MODE=1) with zero external
-network calls, certifying all 6 forensic fixes and SCAR-LOCK-00..18 invariants.
+network calls, certifying all 8 higher-order physical attributes, per-asset
+elasticity, des-saturated Wald SPRT, and SCAR-LOCK-00..18 invariants.
 """
 from __future__ import annotations
-# === [TERPSICHORA-PROTECT-CAL-OOS-SNAPSHOT] ===
+
 import atexit as _atexit_cal_guard
 import pathlib as _pathlib_cal_guard
 
@@ -15,22 +16,8 @@ _SNAPSHOT_CAL_OOS_BYTES = _CAL_OOS_PATH_GUARD.read_bytes() if _CAL_OOS_PATH_GUAR
 
 
 def _restaurar_calibracion_oos_post_test() -> None:
-    if _SNAPSHOT_CAL_OOS_BYTES is not None:
+    if _SNAPSHOT_CAL_OOS_BYTES is not None and _CAL_OOS_PATH_GUARD.exists():
         _CAL_OOS_PATH_GUARD.write_bytes(_SNAPSHOT_CAL_OOS_BYTES)
-
-
-_atexit_cal_guard.register(_restaurar_calibracion_oos_post_test)
-# === [TERPSICHORA-CAL-OOS-RESTORE-GUARD] ===
-import atexit as _atexit_cal_guard
-import pathlib as _pathlib_cal_guard
-
-_CAL_OOS_PATH_GUARD = _pathlib_cal_guard.Path(__file__).resolve().parent / "calibracion_oos.json"
-_CAL_OOS_SNAPSHOT_BYTES = _CAL_OOS_PATH_GUARD.read_bytes() if _CAL_OOS_PATH_GUARD.exists() else None
-
-
-def _restaurar_calibracion_oos_post_test() -> None:
-    if _CAL_OOS_SNAPSHOT_BYTES is not None and _CAL_OOS_PATH_GUARD.exists():
-        _CAL_OOS_PATH_GUARD.write_bytes(_CAL_OOS_SNAPSHOT_BYTES)
 
 
 _atexit_cal_guard.register(_restaurar_calibracion_oos_post_test)
@@ -197,7 +184,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
         ast.parse(raw.decode("utf-8"), filename=m_rel)
     ram.log_operativo(" [1/18] AST compilation and pure UTF-8/LF encoding verified across all 40 Python modules.")
 
-    # [2/18] 100-Constant Contract & Terpsichora V1.0 Hardened Parameters
+    # [2/18] 100-Constant Contract & Terpsichora V7.0 Hardened Parameters
     tree_cfg = ast.parse((base / "config_parametros.py").read_text(encoding="utf-8"))
     consts = [
         t.id for n in tree_cfg.body if isinstance(n, ast.Assign)
@@ -211,7 +198,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
     assert cfg.COSECHA_ESTANCAMIENTO_MFE_PCT == 0.0011
     assert cfg.obtener_aux("MAKER_SCRATCH_TIEMPO_SEG") == 18.0
     ram.log_operativo(
-        " [2/18] Terpsichora V1.0 AST Contract validated: 100 unique constants "
+        " [2/18] Terpsichora V7.0 AST Contract validated: 100 unique constants "
         "(H_Short<=0.485, EarlyBE=+0.11%, Scratch=18.0s, SL=-0.45%, Hold=90s)."
     )
 
@@ -260,7 +247,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
         f" [6/18] Anti-Fragile Kelly Sizing (Tier1 {k_mod*100:.1f}% vs Short-Sniper {k_ext*100:.1f}%) & Defensive Shrinkage (Mult={mult_def:.2f}) validated."
     )
 
-    # [7/18] Bipower VentanaZ Noise vs Dislocation Separation
+    # [7/18] Bipower VentanaZ Noise vs Dislocation Separation & Unclamped Per-Asset Elasticity
     vz = rad.VentanaZ()
     t_now = time.time()
     for i in range(40):
@@ -268,6 +255,9 @@ async def ejecutar_suite_certificacion_v1() -> int:
         z_n, _, _ = vz.actualizar(px_n, t_now + i * 0.04)
     z_crash, dp_crash, _ = vz.actualizar(0.9820, t_now + 2.0)
     assert abs(z_n) < 0.80 and z_crash <= -5.0 and dp_crash < -0.015
+    p_arb_calm, _ = rad.calcular_percentil_intradia_24h(0.00055, t_now, symbol="ARB/USDT:USDT", volatilidad_bv_raw=0.00015)
+    p_arb_storm, _ = rad.calcular_percentil_intradia_24h(0.00055, t_now, symbol="ARB/USDT:USDT", volatilidad_bv_raw=0.00072)
+    assert p_arb_storm > p_arb_calm
     ram.log_operativo(
         f" [7/18] Bipower VentanaZ verified: Micro-noise Z={z_n:+.2f} (Ignored) | Dislocation Z={z_crash:+.2f} (Triggered)."
     )
@@ -306,7 +296,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
     ram.ESTADO_GLOBAL.inicializar_whitelist_campeones()
     ram.log_operativo(" [10/18] Cross-Asset Contagion Firewall (>= 3 pairs in <=10s) and Post-SL Quarantine (240s) validated.")
 
-    # [11/18] Terpsichora V1.0 Phase-Latched LONG V-Bottom Radar & BTC Macro Veto
+    # [11/18] Terpsichora V7.0 Phase-Latched LONG V-Bottom Radar & BTC Macro Veto
     radar_test = rad.RadarVolatilidadHFT()
     t_r = time.time()
     for i in range(12):
@@ -330,6 +320,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
         t_r + 1.16,
     )
     assert disp_l is True and side_l == "LONG" and sig_l is not None and sig_l["dp_pct"] < -0.0028
+    assert "irrev_lob" in sig_l and "vacio_l2_ratio" in sig_l and "cancel_net_l1" in sig_l
     ram.log_operativo(" [11/18] Terpsichora Phase-Latched LONG V-Bottom Engine, Braking Kinematics & Hawkes Absorption validated.")
 
     # [12/18] Terpsichora SHORT-SNIPER Engine, RF-06 Sign Coherence & H <= 0.485 Hard Cap
@@ -417,6 +408,7 @@ async def ejecutar_suite_certificacion_v1() -> int:
         ex_h, pos_h, 0.02215, 0.02214, 0.02215, ofi_5s=-0.18, tick_size=0.00001, step_size=0.1, modo_escalera_50_50=True
     )
     assert reg_win is not None and reg_win["pnl_usdt"] > 0.0
+    assert -1.50 <= float(reg_win["vector_entrada"]["mfe_capture_ratio"]) <= 1.50
     ram.log_operativo(
         f" [15/18] SCAR-LOCK-14 Zero-Loss Floor (ARB {piso_l} / WAL {techo_s}), +0.11% Early BE Shield, and 50/50 Harvest validated."
     )
@@ -463,11 +455,14 @@ async def ejecutar_suite_certificacion_v1() -> int:
     assert reg_sl is not None and reg_sl["motivo_salida"] == "SL_EXCHANGE" and pos_sl.cerrada is True
     ram.log_operativo(" [17/18] pos.cerrada idempotency lock, retCode:110017 capture (SL_EXCHANGE), and Telegram 1:1 pairing validated.")
 
-    # [18/18] Walk-Forward OOS Evaluator, Sub-ms Hot-Reload & 3,456-Combo Digital Twin (--lab)
+    # [18/18] Walk-Forward OOS Evaluator, Sub-ms Hot-Reload, Autonomous Governor & 3,456-Combo Digital Twin (--lab)
     oos.ejecutar_calibracion_walk_forward_oos(escribir_archivos=True)
     cfg._ultimo_mtime_oos = 0.0
     ok_hr, ms_hr, _ = cfg.recargar_calibracion_oos_si_cambio()
+    ctrl_auto = mn.msa.auto_calibrar_sensibilidades_en_vivo(ram.ESTADO_GLOBAL, eje.EJECUTOR_GLOBAL)
+    rep_an_dict = mn.mif.generar_reporte_anatomico_dict()
     rep_lab = oos.ejecutar_laboratorio_gemelo_digital_3456(escribir_disco=False)
+    assert isinstance(ctrl_auto, dict) and "w2_btc_beta" in ctrl_auto and "por_par" in rep_an_dict
     assert oos.calcular_cvar_10pct_adversarial([-0.08, 0.05, 0.07]) < 0.0
     assert ok_hr and ms_hr < 50.0 and rep_lab["combinaciones_evaluadas"] == 3456 and "cvar_10pct_optimo_usdt" in rep_lab
     ram.log_operativo(

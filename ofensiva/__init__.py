@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Paquete Ofensivo HFT Doctor Blythe Terpsichora V1.0."""
+"""Paquete Ofensivo HFT Doctor Blythe Terpsichora V7.0."""
 __all__ = (
     "micro_conviccion_kelly",
     "micro_cotizador_stoikov",
