@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Defensivo #7: Compresion Temporal Estocastica del Stop-Loss Interno
-(CHRONOS Time-Decay SL) Acoplada a Wald SPRT y Vacio Profundo L2 para Posiciones
-Estancadas sin Zona Muerta con Early BE (HFT Doctor Blythe Terpsichora V7.0).
+Micro-Modulo Defensivo #7: Compresion Temporal Estocastica C1-Monotona del
+Stop-Loss Interno (CHRONOS Time-Decay SL) Acoplada a Wald SPRT y Vacio Profundo L2
+para Posiciones Estancadas (HFT Doctor Blythe Terpsichora V7.0).
 """
 import config_parametros as cfg
 import core_estado_ram as ram
@@ -20,24 +20,19 @@ def calcular_sl_interno_chronos(
     lambda_wald: float = 0.0,
     vacio_l2_ratio: float = 1.0,
 ) -> float:
-    """
-    Si una posicion supera la ventana elastica de inicio (w4_unwind_seg modulada
-    por lambda_wald y vacio_l2_ratio) sin haber activado el trinquete Break-Even
-    y con MFE < mfe_stall_harvest_pct (+0.11%), comprime el Stop-Loss interno
-    desde -0.45% hacia -w4_sl_decay_pct (-0.32%) de forma convexa.
-    """
     if trinquete_be_activo or precio_entrada <= 0.0:
         return sl_actual
 
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
     unwind_base = float(ctrl.get("w4_unwind_seg", 42.0))
     umbral_stall = float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT))
+
     lam_w = float(lambda_wald or 0.0)
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
-
     adelanto_w = 6.0 if lam_w <= -2.00 else (3.0 if lam_w <= -1.20 else 0.0)
     adelanto_v = 4.0 if v_l2 < 0.60 else 0.0
     unwind_seg = max(28.0, unwind_base - adelanto_w - adelanto_v)
+
     if edad_seg < unwind_seg or mfe_pct >= umbral_stall:
         return sl_actual
 
@@ -51,9 +46,8 @@ def calcular_sl_interno_chronos(
     exponente_conv = 0.68 if (lam_w <= -2.00 or v_l2 < 0.60) else 0.85
     progreso_convexo = progreso_lin ** exponente_conv
     dist_pct = sl_base_pct - (progreso_convexo * max(0.0, sl_base_pct - sl_decay_pct))
-    if not cfg.es_modo_test() and (45.0 <= float(edad_seg) <= 78.0):
-        dist_pct = min(0.0045, float(dist_pct) * 1.25)
     t_sz = max(1e-8, float(tick_size))
+
     if str(direccion).upper() in ("BUY", "LONG"):
         candidato = mcs.cuantizar_tick(precio_entrada * (1.0 - dist_pct), t_sz, modo="floor")
         return max(sl_actual, candidato)

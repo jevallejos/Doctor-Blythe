@@ -9,6 +9,7 @@ import itertools
 import math
 from typing import Any, Dict, List, Tuple
 import config_parametros as cfg
+from apoyo import micro_sensibilidad_autonoma as msa
 
 
 def calcular_cvar_10pct_adversarial(retornos_usdt: List[float]) -> float:
@@ -115,29 +116,11 @@ def calcular_metricas_oos_72h(operaciones: List[Dict[str, Any]]) -> Dict[str, An
     }
 
 
-def _deduplicar_eventos_15s_gemelo(eventos_baul: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    dedup: List[Dict[str, Any]] = []
-    ultimo_ts: Dict[str, float] = {}
-    for ev in eventos_baul:
-        if ev.get("tipo_evento") and ev.get("tipo_evento") != "AUDITORIA_ESCUDO_15S":
-            continue
-        sym = str(ev.get("symbol", ""))
-        esc = str(ev.get("escudo", ""))
-        direc = str(ev.get("direccion", ""))
-        ts = float(ev.get("timestamp", 0.0) or 0.0)
-        clave = f"{sym}|{esc}|{direc}"
-        if ts <= 0.0 or (ts - ultimo_ts.get(clave, -1e9)) >= 15.0:
-            dedup.append(ev)
-            if ts > 0.0:
-                ultimo_ts[clave] = ts
-    return dedup
-
-
 def simular_malla_gemelo_3456(
     ops: List[Dict[str, Any]],
     eventos_baul: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    eventos_dedup = _deduplicar_eventos_15s_gemelo(eventos_baul)
+    eventos_dedup = msa.deduplicar_episodios_escudo_15s(eventos_baul, ventana_seg=15.0)
     salvamentos = [
         ev for ev in eventos_dedup
         if ev.get("veredicto_oraculo_15s") == "CAPITAL_SAVED_TRUE_SHIELD"

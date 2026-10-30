@@ -212,8 +212,6 @@ class PosicionActiva:
     fpt_race_ratio: float = 0.0
     pendiente_delise: float = 0.0
     mfe_capture_ratio: float = 0.0
-    cota_ticks_scratch_elastica: int = 0
-    piso_wald_convexo_elastico: float = 0.0
 
     def __post_init__(self) -> None:
         if self.max_precio_favorable <= 0.0:
@@ -356,7 +354,7 @@ class EstadoGlobalRAM:
             "sesgo_escudo_long": 0.0,
             "sesgo_escudo_short": 0.0,
             "sens_ofi_abort_cola": -0.35,
-            "sens_q_l1_hold_ratio": 0.55,
+            "sens_q_l1_hold_ratio": 0.25,
             "sens_scratch_edad_rebote_seg": 32.0,
             "sens_climax_hurst_override": 1.0,
         }

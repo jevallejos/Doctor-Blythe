@@ -110,7 +110,8 @@ def generar_reporte_anatomico_dict() -> Dict[str, Any]:
         cap_v = max(-1.50, min(1.50, float(vec_in.get("mfe_capture_ratio", 0.0) or 0.0)))
         rep_v = float(vec_in.get("repeg_salida_count", 0.0) or 0.0)
         wald_v = float(vec_in.get("lambda_wald_exit", 0.0) or 0.0)
-        vac_v = float(vec_in.get("vacio_l2_ratio", 1.0) or 1.0)
+        from apoyo import micro_sensibilidad_autonoma as _msa_v
+        vac_v = _msa_v.extraer_vacio_l2_evento(op)
 
         if pnl > 0.0:
             d["wins"] += 1
@@ -368,32 +369,21 @@ def imprimir_auditoria_forense_cli() -> None:
         )
     try:
         from apoyo import micro_cinematica_l2 as _mcl_el
-        from apoyo import micro_gemelo_digital_oos as _mgd_el
         from apoyo import micro_sensibilidad_autonoma as _msa_el
-        from ofensiva import micro_cotizador_stoikov as _mcs_el
-        from ofensiva import micro_enganche_fase as _mef_el
-        from ofensiva import micro_retenedor_fill_parcial as _mrfp_el
-        _ = (
-            _mcl_el.calcular_curva_estacional_continua_utc,
-            _mgd_el._deduplicar_eventos_15s_gemelo,
-            _msa_el._deduplicar_episodios_escudo_15s,
-            _msa_el._extraer_vacio_l2_evento,
-            _msa_el.calcular_perfil_bayesiano_par,
-            _mcs_el._contar_decimales_paso,
-            _mef_el.calcular_impedancia_log_vacio_l2,
-            _mef_el._obtener_multiplicador_dislocacion_par,
-            _mrfp_el._obtener_contexto_l2_en_vuelo,
-        )
+
         st.GESTOR_ESTADISTICAS.cargar_historial_disco()
         _ev_all = cargar_eventos_baul_forense()
         _mk_60 = [e for e in _ev_all if e.get("tipo_evento") == "AUDITORIA_POST_CIERRE_60S"]
-        _el_w = _msa_el.calcular_pesos_elasticos_antifalso_scratch(list(st.GESTOR_ESTADISTICAS.operaciones), _mk_60)
+        _ops_all = list(st.GESTOR_ESTADISTICAS.operaciones)
+        _perf_g = _msa_el.calcular_perfil_bayesiano_par(_ops_all, 0.0)
+        _el_w = _msa_el.calcular_pesos_elasticos_antifalso_scratch(_ops_all, _mk_60)
+        _s_utc = _mcl_el.calcular_curva_estacional_continua_utc()
         print(
             f"   -> {_C_GREEN}[ELASTIC ANTI-FALSE-SCRATCH]{_C_RESET} "
-            f"TauScratch={_el_w['tau_scratch_seg']:.1f}s | "
-            f"ZeroGiveaway<{_el_w['zero_giveaway_seg']:.0f}s (0 ticks) | "
+            f"S_UTC={_s_utc:.2f} | TauScratch={_el_w['tau_scratch_seg']:.1f}s | "
+            f"BBO-Scratch={_el_w['zero_giveaway_seg']:.0f}s (Max 1 RePeg) | "
             f"KappaWald={_el_w['kappa_wald_base']:.2f} | "
-            f"Q_HoldAbort={_el_w['q_hold_abort']:.2f} | EdgeFilter: AVAX={_el_w.get('pair_disloc_mult', {}).get('AVAX/USDT:USDT', 1.0):.2f}x/{_el_w.get('pair_kelly_mult', {}).get('AVAX/USDT:USDT', 1.0):.2f}x ARB={_el_w.get('pair_disloc_mult', {}).get('ARB/USDT:USDT', 1.0):.2f}x WAL={_el_w.get('pair_disloc_mult', {}).get('WAL/USDT:USDT', 1.0):.2f}x"
+            f"Q_HoldAbort={_el_w['q_hold_abort']:.2f}"
         )
     except Exception:
         pass

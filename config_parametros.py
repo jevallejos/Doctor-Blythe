@@ -347,7 +347,7 @@ def sanitizar_controlador_autonomo(ctrl_raw: Dict[str, Any]) -> Dict[str, float]
             limpio[k] = round(max(0.50, min(2.50, val)), 4)
         elif k.startswith("sesgo_escudo_"):
             limpio[k] = round(max(-0.08, min(0.10, val)), 4)
-        elif k.startswith(("_adam_m_", "_adam_v_", "_adam_t_", "diag_v_l2_")):
+        elif k.startswith(("_adam_m_", "_adam_v_", "_adam_t_", "_adam_last_ts_", "diag_v_l2_")):
             limpio[k] = round(val, 6)
     return limpio
 

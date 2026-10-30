@@ -3,11 +3,11 @@
 Micro-Modulo Ofensivo #7: Puppeteer Phase-Latched Envelope (4.50s) para Captura
 de Suelos en V (LONG), Agotamiento/Rollover de Techos (SHORT-SNIPER), Disparo en
 Vertice e Impedancia Log-Elastica de Vacio L2 (V_L2) con Modulacion por Edge
-Bayesiano y Percentil 24h para HFT Doctor Blythe Engine -
-Production Baseline Terpsichora V7.0.
+Bayesiano y Percentil 24h para HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 import math
 from typing import Any, Tuple
+
 import config_parametros as cfg
 import core_estado_ram as ram
 from apoyo import micro_cinematica_l2 as mcl
@@ -43,7 +43,7 @@ def calcular_impedancia_log_vacio_l2(
     return round(max(0.90, min(1.34, psi)), 6)
 
 
-def _obtener_multiplicador_dislocacion_par(metrica: Any) -> float:
+def obtener_multiplicador_dislocacion_par(metrica: Any) -> float:
     if cfg.es_modo_test():
         return 1.0
     sym = str(getattr(metrica, "symbol", "") or "")
@@ -61,7 +61,7 @@ def _obtener_multiplicador_dislocacion_par(metrica: Any) -> float:
         mult_elastico = round(mult_elastico * alpha_safe, 4)
     if hasattr(metrica, "multiplicador_elastico"):
         metrica.multiplicador_elastico = mult_elastico
-    return max(1.00 if es_hb else 0.90, min(1.45, mult_elastico))
+    return max(0.95 if es_hb else 0.90, min(1.45, mult_elastico))
 
 
 def evaluar_dislocacion_y_latch_long(
@@ -72,7 +72,7 @@ def evaluar_dislocacion_y_latch_long(
     ahora: float,
     metrica: Any,
 ) -> Tuple[bool, bool]:
-    alpha_par = _obtener_multiplicador_dislocacion_par(metrica)
+    alpha_par = obtener_multiplicador_dislocacion_par(metrica)
     z_base = cfg.Z_SCORE_UMBRAL_HIGH_BETA if es_hb else cfg.Z_SCORE_UMBRAL_TIER1
     dp_base = cfg.DP_MIN_EXCURSION_LONG_HB if es_hb else cfg.DP_MIN_EXCURSION_LONG_T1
     rec_base = -0.0018 if es_hb else -0.0011
@@ -86,18 +86,15 @@ def evaluar_dislocacion_y_latch_long(
     else:
         alpha_sym = 1.0
 
-    psi_l2 = calcular_impedancia_log_vacio_l2(vacio_l2, 1.0)
+    psi_l2 = calcular_impedancia_log_vacio_l2(vacio_l2, alpha_sym)
     raiz_psi_l2 = math.sqrt(psi_l2)
 
     z_umbral_base = min(z_base, z_base * alpha_par) if es_hb else (z_base * alpha_par)
     dp_req_base = min(dp_base, dp_base * alpha_par) if es_hb else (dp_base * alpha_par)
-    piso_z_duro = z_base if es_hb else (z_base * 0.90)
-    piso_dp_duro = dp_base if es_hb else (dp_base * 0.90)
-
-    z_umbral_eff = min(piso_z_duro, z_umbral_base * psi_l2)
-    dp_req_eff = min(piso_dp_duro, dp_req_base * raiz_psi_l2)
-    z_umbral_long = z_umbral_eff
-    dp_min_long = dp_req_eff
+    piso_z_duro = (z_base * min(1.0, psi_l2)) if es_hb else (z_base * 0.90)
+    piso_dp_duro = (dp_base * min(1.0, raiz_psi_l2)) if es_hb else (dp_base * 0.90)
+    z_umbral_long = min(piso_z_duro, z_umbral_base * psi_l2)
+    dp_min_long = min(piso_dp_duro, dp_req_base * raiz_psi_l2)
     recorrido_req = (rec_base * alpha_par) * raiz_psi_l2
     piso_anti_ruido = (piso_base * alpha_par) * raiz_psi_l2
 
@@ -123,6 +120,7 @@ def evaluar_dislocacion_y_latch_long(
         and dp_pct < 0.0
         and excursion_dual_ok
     )
+
     if dislocacion_long_activa:
         prev_z = metrica.phase_latch_z_peak if (metrica.phase_latched and metrica.phase_latch_dir == "LONG") else z_score
         prev_ema = metrica.phase_latch_ema_dist if (metrica.phase_latched and metrica.phase_latch_dir == "LONG") else ema900_dist_pct
@@ -155,32 +153,23 @@ def evaluar_sobreextension_y_rollover_short(
     metrica: Any,
     est: Any,
 ) -> Tuple[bool, bool, bool]:
-    alpha_par = _obtener_multiplicador_dislocacion_par(metrica)
+    alpha_par = obtener_multiplicador_dislocacion_par(metrica)
     ema_base = cfg.EMA900_SOBREEXTENSION_SHORT_HB if es_hb else cfg.EMA900_SOBREEXTENSION_SHORT_T1
     dp_base = cfg.DP_MIN_EXCURSION_SHORT_HB if es_hb else cfg.DP_MIN_EXCURSION_SHORT_T1
 
     symbol = str(getattr(est, "symbol", "") or getattr(metrica, "symbol", "") or "")
-    vacio_est = float(getattr(est, "vacio_l2_ratio", 0.0) or 0.0)
-    if vacio_est > 0.0:
-        vacio_l2 = vacio_est
-    elif not cfg.es_modo_test():
-        m_ram = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol) if symbol else metrica
-        vacio_l2 = float(getattr(m_ram, "vacio_l2_ratio", getattr(metrica, "vacio_l2_ratio", 1.0)) or 1.0)
-    else:
-        vacio_l2 = float(getattr(metrica, "vacio_l2_ratio", 1.0) or 1.0)
-
+    vacio_l2 = float(getattr(metrica, "vacio_l2_ratio", 1.0) or 1.0)
     if not cfg.es_modo_test():
         ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
         alpha_sym = float(ctrl.get(f"alpha_disloc_{symbol}", 1.0) or 1.0)
     else:
         alpha_sym = 1.0
 
-    psi_l2 = calcular_impedancia_log_vacio_l2(vacio_l2, 1.0)
+    psi_l2 = calcular_impedancia_log_vacio_l2(vacio_l2, alpha_sym)
     raiz_psi_l2 = math.sqrt(psi_l2)
 
     z_base_short = cfg.Z_SCORE_SHORT_UMBRAL * alpha_par
-    z_req_short = max(cfg.Z_SCORE_SHORT_UMBRAL * 0.90, z_base_short * psi_l2)
-    z_short_req = z_req_short
+    z_short_req = max(cfg.Z_SCORE_SHORT_UMBRAL * 0.90, z_base_short * psi_l2)
     ema_min_short = (ema_base * alpha_par) * raiz_psi_l2
     dp_min_short = (dp_base * alpha_par) * raiz_psi_l2
 
@@ -202,6 +191,7 @@ def evaluar_sobreextension_y_rollover_short(
         and z_score >= z_short_req
         and dp_pct >= dp_min_short
     )
+
     if sobreextension_short:
         prev_z_s = metrica.phase_latch_z_peak if (metrica.phase_latched and metrica.phase_latch_dir == "SHORT") else z_score
         prev_ema_s = metrica.phase_latch_ema_dist if (metrica.phase_latched and metrica.phase_latch_dir == "SHORT") else ema900_dist_pct
@@ -251,12 +241,6 @@ def confirmar_disparo_vertice_armado(
         return False
 
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio and vacio_l2_ratio > 0.0 else 1.0)
-    if not cfg.es_modo_test() and abs(v_l2 - 1.0) < 1e-6:
-        for m_tick in (getattr(ram.ESTADO_GLOBAL, "metricas_ticks", {}) or {}).values():
-            if getattr(m_tick, "phase_latched", False) and abs(float(getattr(m_tick, "z_score", 0.0)) - float(z_score)) < 1e-4:
-                v_l2 = float(getattr(m_tick, "vacio_l2_ratio", 1.0) or 1.0)
-                break
-
     ofi_piso_vertice = 0.04
     if v_l2 < 0.65 and (not cfg.es_modo_test() or abs(float(vacio_l2_ratio or 1.0) - 1.0) > 1e-6):
         ofi_piso_vertice = -0.05 + 0.22 * max(0.0, -math.tanh(math.log(max(0.12, v_l2))))

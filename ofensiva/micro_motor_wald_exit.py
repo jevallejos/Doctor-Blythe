@@ -1,12 +1,41 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Ofensivo #2: Piso Zero-Loss (SCAR-LOCK-14), Oxigeno Elastico
-Temprano MFE (18s-30s) Acoplado a Vacio Profundo L2 e Inhibidor de MAKER_UNWIND
-en Rally para HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
+Micro-Modulo Ofensivo #2: Piso Zero-Loss (SCAR-LOCK-14), Trinquete Convexo
+Unificado de Wald, Oxigeno Elastico Temprano MFE Acoplado a Vacio Profundo L2 e
+Inhibidor de MAKER_UNWIND en Rally para HFT Doctor Blythe Terpsichora V7.0.
 """
 import math
+
 import config_parametros as cfg
 import core_estado_ram as ram
+from ofensiva import micro_cresta_convexo_sprt as mcw
+
+
+def calcular_ratchet_convexo_mfe_elastico(
+    precio_entrada: float,
+    mfe_pct: float,
+    v_l2: float,
+    eta_mfe_hist: float,
+    es_long: bool,
+    tick_size: float,
+    fee_maker: float = 0.0002,
+) -> float:
+    piso_fee_pct = max(float(cfg.TRINQUETE_BE_OFFSET_PCT), 2.0 * float(fee_maker) + 0.00015)
+    mfe_dec = float(mfe_pct) / 100.0 if abs(float(mfe_pct)) > 0.05 else float(mfe_pct)
+    if mfe_dec <= piso_fee_pct:
+        return float(precio_entrada) * (1.0 + piso_fee_pct if es_long else 1.0 - piso_fee_pct)
+
+    kappa_base = mcw.calcular_kappa_convexo_wald(mfe_dec, vacio_l2_ratio=v_l2)
+    eta_clamped = max(0.0, min(1.0, float(eta_mfe_hist)))
+    v_freno = math.tanh(max(0.0, float(v_l2) - 1.0))
+    kappa_lock = max(0.35, min(0.82, kappa_base + 0.08 * (0.65 - eta_clamped) - 0.05 * v_freno))
+    ganancia_bloqueada_pct = max(piso_fee_pct, mfe_dec * kappa_lock)
+    t_sz = float(tick_size) if float(tick_size) > 0.0 else 0.0
+    if es_long:
+        raw_p = float(precio_entrada) * (1.0 + ganancia_bloqueada_pct)
+        return round(math.ceil((raw_p / t_sz) - 1e-9) * t_sz, 8) if t_sz > 0.0 else raw_p
+    raw_p = float(precio_entrada) * (1.0 - ganancia_bloqueada_pct)
+    return round(math.floor((raw_p / t_sz) + 1e-9) * t_sz, 8) if t_sz > 0.0 else raw_p
 
 
 def calcular_piso_cero_perdida(
@@ -33,12 +62,13 @@ def calcular_piso_cero_perdida(
         t_size,
         fee_maker=float(cfg.COMISION_MAKER_PCT),
     )
+
     if dir_norm == "LONG":
         raw = precio_entrada * (1.0 + offset_min)
         piso = round(math.ceil((raw / t_size) - 1e-9) * t_size, decimales)
         if piso <= precio_entrada:
             piso = round(precio_entrada + max(t_size, 1e-6), 6)
-        if not cfg.es_modo_test() and mfe_pct > 0.00055:
+        if not cfg.es_modo_test() and mfe_pct > 0.0014:
             piso = max(piso, round(piso_ratchet, decimales))
         return piso
     else:
@@ -46,7 +76,7 @@ def calcular_piso_cero_perdida(
         techo = round(math.floor((raw / t_size) + 1e-9) * t_size, decimales)
         if techo >= precio_entrada:
             techo = round(precio_entrada - max(t_size, 1e-6), 6)
-        if not cfg.es_modo_test() and mfe_pct > 0.00055:
+        if not cfg.es_modo_test() and mfe_pct > 0.0014:
             techo = min(techo, round(piso_ratchet, decimales))
         return techo
 
@@ -62,13 +92,9 @@ def debe_absorber_micro_retroceso_be_temprano(
     symbol: str = "",
     vacio_l2_ratio: float = 1.0,
 ) -> bool:
-    """
-    Otorga oxigeno elastico ante micro-retrocesos sobre el piso Break-Even temprano
-    cuando el flujo H-OFI y el soporte L2 (vacio_l2_ratio) confirman que el impulso
-    sigue vivo, evitando liquidar en el piso del pullback (Casos Trades #20, #72, #81).
-    """
     if trailing_wald_activo or mfe_pct >= cfg.COSECHA_TRIZ_ACTIVACION_PCT:
         return False
+
     es_hb = cfg.obtener_clase_activo(symbol) == cfg.CLASE_HIGH_BETA if symbol else True
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
     if symbol and v_l2 == 1.0 and not cfg.es_modo_test():
@@ -105,6 +131,7 @@ def debe_inhibir_maker_unwind_en_rally(
 ) -> bool:
     if pnl_pct < 0.00095:
         return False
+
     es_hb = cfg.obtener_clase_activo(symbol) == cfg.CLASE_HIGH_BETA if symbol else True
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
     if symbol and v_l2 == 1.0 and not cfg.es_modo_test():
@@ -124,34 +151,3 @@ def debe_inhibir_maker_unwind_en_rally(
     if pnl_pct < 0.0011:
         return False
     return bool(retroceso <= tol_retroceso and ofi_dir >= 0.10)
-
-
-def calcular_ratchet_convexo_mfe_elastico(
-    precio_entrada: float,
-    mfe_pct: float,
-    v_l2: float,
-    eta_mfe_hist: float,
-    es_long: bool,
-    tick_size: float,
-    fee_maker: float = 0.0002,
-) -> float:
-    """
-    Trinquete Convexo Elastico de Abraham Wald:
-    Bloquea una fraccion continua kappa_lock in [0.32, 0.78] del MFE por encima del piso libre de fees SCAR-LOCK-14.
-    """
-    import math
-    piso_fee_pct = 2.0 * float(fee_maker) + 0.00015
-    mfe_dec = float(mfe_pct) / 100.0 if abs(float(mfe_pct)) > 0.05 else float(mfe_pct)
-    if mfe_dec <= piso_fee_pct:
-        return float(precio_entrada) * (1.0 + piso_fee_pct if es_long else 1.0 - piso_fee_pct)
-    sig_mfe = 1.0 / (1.0 + math.exp(-((mfe_dec - 0.0012) / 0.00035)))
-    eta_clamped = max(0.0, min(1.0, float(eta_mfe_hist)))
-    v_freno = math.tanh(max(0.0, float(v_l2)))
-    kappa_lock = max(0.32, min(0.78, 0.38 + 0.30 * sig_mfe + 0.18 * (1.0 - eta_clamped) - 0.15 * v_freno))
-    ganancia_bloqueada_pct = max(piso_fee_pct, mfe_dec * kappa_lock)
-    t_sz = float(tick_size) if float(tick_size) > 0.0 else 0.0
-    if es_long:
-        raw_p = float(precio_entrada) * (1.0 + ganancia_bloqueada_pct)
-        return round(math.ceil(raw_p / t_sz) * t_sz, 8) if t_sz > 0.0 else raw_p
-    raw_p = float(precio_entrada) * (1.0 - ganancia_bloqueada_pct)
-    return round(math.floor(raw_p / t_sz) * t_sz, 8) if t_sz > 0.0 else raw_p

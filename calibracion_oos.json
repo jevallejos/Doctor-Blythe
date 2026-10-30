@@ -40,6 +40,6 @@
     "sens_ofi_abort_cola": -0.35,
     "sens_q_l1_hold_ratio": 0.25,
     "sens_scratch_edad_rebote_seg": 32.0,
-    "sens_climax_hurst_override": 0.0
+    "sens_climax_hurst_override": 1.0
   }
 }

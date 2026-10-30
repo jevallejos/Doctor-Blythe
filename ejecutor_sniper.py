@@ -7,8 +7,6 @@ MarkPrice Stop-Loss Geometry (SEI-02) for HFT Doctor Blythe Engine -
 Production Baseline Terpsichora V7.0.
 """
 from __future__ import annotations
-from defensiva.micro_escape_reconciliador import debe_adoptar_en_lugar_de_liquidar_huerfana
-from ofensiva.micro_motor_maker import debe_proteger_orden_en_cola_por_flujo_favorable
 
 import asyncio
 import time
@@ -242,6 +240,10 @@ class EjecutorSniperBybit:
                 side=dir_norm,
                 symbol=symbol,
             )
+            if not cfg.es_modo_test():
+                nocional_usdt = msk.acotar_nocional_por_liquidez_l1_y_racha(
+                    nocional_usdt, precio_orden * q_l1_init
+                )
             if nocional_usdt < cfg.ORDEN_MINIMA_BYBIT_USDT:
                 nocional_usdt = cfg.ORDEN_MINIMA_BYBIT_USDT
 
@@ -426,8 +428,11 @@ class EjecutorSniperBybit:
 
                         drift_pct = abs(nuevo_px - precio_inicial) / precio_inicial if precio_inicial > 0.0 else 0.0
                         favorable_escape = (
-                            (dir_norm == "LONG" and nuevo_px > precio_orden and m_live.ofi_profundo >= (cfg.OFI_MIN_ENTRADA * 0.70))
-                            or (dir_norm == "SHORT" and nuevo_px < precio_orden and m_live.ofi_profundo <= (cfg.OFI_MAX_ENTRADA_SHORT * 0.70))
+                            (
+                                (dir_norm == "LONG" and nuevo_px > precio_orden and m_live.ofi_profundo >= (cfg.OFI_MIN_ENTRADA * 0.70))
+                                or (dir_norm == "SHORT" and nuevo_px < precio_orden and m_live.ofi_profundo <= (cfg.OFI_MAX_ENTRADA_SHORT * 0.70))
+                            )
+                            and (cfg.es_modo_test() or mmm.autorizar_repeg_con_derivada_ofi(m_live.ofi_profundo, ofi_val, max(0.10, elapsed - ultimo_repeg_elapsed), q_l1_ratio_last, dir_norm == "LONG") or mmm.debe_proteger_orden_en_cola_por_flujo_favorable(q_l1_ratio_last, m_live.ofi_profundo if dir_norm == "LONG" else -m_live.ofi_profundo, m_live.hurst, vacio_l2_ratio=vacio_live))
                         )
                         if favorable_escape and 0.0 < drift_pct <= cfg.REPEG_DRIFT_MAX_PCT:
                             try:
@@ -637,27 +642,3 @@ class EjecutorSniperBybit:
 
 
 EJECUTOR_GLOBAL = EjecutorSniperBybit()
-def validar_filtros_elasticos_disparo_y_repeg(
-    nocional_usdt: float,
-    liquidez_l1_usdt: float,
-    ofi_actual: float,
-    ofi_inicial: float,
-    dt_seg: float,
-    q_ratio: float,
-    es_long: bool,
-) -> Tuple[float, bool]:
-    """Conecta la cota de liquidez L1 y la guardia de derivada OFI en ejecutor_sniper.py."""
-    from ofensiva import micro_motor_maker as _mmm
-    from ofensiva import micro_sizing_kelly as _msk
-    noc_acotado = _msk.acotar_nocional_por_liquidez_l1_y_racha(
-        nocional_kelly_usdt=float(nocional_usdt),
-        liquidez_l1_usdt=float(liquidez_l1_usdt),
-    )
-    repeg_ok = _mmm.autorizar_repeg_con_derivada_ofi(
-        ofi_actual=float(ofi_actual),
-        ofi_inicial=float(ofi_inicial),
-        dt_seg=float(dt_seg),
-        q_ratio=float(q_ratio),
-        es_long=bool(es_long),
-    )
-    return noc_acotado, repeg_ok

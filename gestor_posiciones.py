@@ -583,7 +583,15 @@ class GestorPosicionesChronosTriz:
                 return None
 
             if "SCRATCH" in motivo_up:
-                intervalo_repeg = 0.55 if (vacio_exit < 0.60 or pos.repeg_salida_count >= 2) else 0.75
+                cota_rep_sc = mes.calcular_concesion_ticks_scratch_elastica(
+                    max(0.0, ahora - pos.timestamp_apertura),
+                    edad_orden_act,
+                    ofi_5s if pos.direccion == "LONG" else -ofi_5s,
+                    mfe_alcanzado_pct=pos.max_pnl_pct_alcanzado,
+                )
+                if pos.repeg_salida_count >= max(1, cota_rep_sc) and vacio_exit >= 0.48:
+                    return None
+                intervalo_repeg = 0.65 if vacio_exit < 0.60 else 0.95
             else:
                 try:
                     intervalo_repeg = medf.calcular_intervalo_repeg_salida_maker(
@@ -641,7 +649,6 @@ class GestorPosicionesChronosTriz:
             return None
         ts_now = float(ahora) if ahora is not None else time.time()
         edad = ts_now - pos.timestamp_apertura
-        _ = calcular_ajuste_elastico_posicion_en_vivo(pos, max(0.0, edad), ofi_5s, tick_size)
         pnl_pct = pos.actualizar_excursion(precio_actual, ts_now)
         ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
         m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(pos.symbol)
@@ -778,7 +785,7 @@ class GestorPosicionesChronosTriz:
 
         # 1. Early Break-Even Shield at +0.11% MFE
         if pos.max_pnl_pct_alcanzado >= umbral_stall and not pos.trinquete_be_activo and pnl_pct < umbral_cosecha:
-            piso_be_early = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
+            piso_be_early = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size, mfe_pct=pos.max_pnl_pct_alcanzado, v_l2=vacio_rat_l2)
             pos.sl_interno = piso_be_early
             pos.trinquete_be_activo = True
             ram.log_operativo(
@@ -789,23 +796,22 @@ class GestorPosicionesChronosTriz:
 
         # 2. Pure Single-Ticket Moallemi-Wald Convex Ratchet (or 50/50 Ladder when modo_escalera_50_50=True)
         if pos.max_pnl_pct_alcanzado >= umbral_cosecha:
-            piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
+            piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size, mfe_pct=pos.max_pnl_pct_alcanzado, v_l2=vacio_rat_l2)
             kappa = calcular_kappa_convexo_wald(pos.max_pnl_pct_alcanzado, vacio_l2_ratio=vacio_rat_l2)
+            piso_convexo = mmw.calcular_ratchet_convexo_mfe_elastico(
+                pos.precio_entrada,
+                pos.max_pnl_pct_alcanzado,
+                vacio_rat_l2,
+                0.65,
+                pos.direccion == "LONG",
+                tick_size,
+                fee_maker=float(cfg.COMISION_MAKER_PCT),
+            )
             if pos.direccion == "LONG":
-                piso_convexo = eje.cuantizar_tick(
-                    pos.precio_entrada * (1.0 + (kappa * pos.max_pnl_pct_alcanzado)),
-                    tick_size,
-                    modo="floor",
-                )
-                nuevo_piso = max(piso_be, piso_convexo)
+                nuevo_piso = max(piso_be, eje.cuantizar_tick(piso_convexo, tick_size, modo="floor"))
                 mejoro_piso = nuevo_piso > pos.sl_interno
             else:
-                piso_convexo = eje.cuantizar_tick(
-                    pos.precio_entrada * (1.0 - (kappa * pos.max_pnl_pct_alcanzado)),
-                    tick_size,
-                    modo="ceil",
-                )
-                nuevo_piso = min(piso_be, piso_convexo)
+                nuevo_piso = min(piso_be, eje.cuantizar_tick(piso_convexo, tick_size, modo="ceil"))
                 mejoro_piso = (pos.sl_interno <= 0.0) or (nuevo_piso < pos.sl_interno)
 
             primera_activacion_wald = not pos.trailing_activo
@@ -913,7 +919,7 @@ class GestorPosicionesChronosTriz:
             and (not inhibir_rally)
         ):
             if not pos.trinquete_be_activo and pnl_pct >= (float(cfg.TRINQUETE_BE_OFFSET_PCT) + 0.00025):
-                piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
+                piso_be = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size, mfe_pct=pos.max_pnl_pct_alcanzado, v_l2=vacio_rat_l2)
                 pos.sl_interno = piso_be
                 pos.trinquete_be_activo = True
                 await self._actualizar_sl_bybit(exchange, pos, piso_be, tick_size=tick_size)
@@ -1236,44 +1242,3 @@ def imprimir_auditoria_forense_cli() -> None:
 
 
 GESTOR_POSICIONES = GestorPosicionesChronosTriz()
-def calcular_ajuste_elastico_posicion_en_vivo(
-    pos: Any,
-    edad_seg: float,
-    ofi_actual: float,
-    tick_size: float,
-) -> Dict[str, float]:
-    """Aplica en vivo Zero-Giveaway Elastic Scratch y el Trinquete Convexo de Wald sobre PosicionActiva(slots=True)."""
-    import config_parametros as _cfg_gp
-    from defensiva import micro_evacuador_scratch as _mes
-    from ofensiva import micro_motor_wald_exit as _mmwe
-    es_long = str(getattr(pos, "side", "LONG")).upper() in ("BUY", "LONG")
-    ofi_dir = float(ofi_actual) if es_long else -float(ofi_actual)
-    mfe_pct = float(getattr(pos, "max_pnl_pct_alcanzado", 0.0) or 0.0)
-    px_in = float(getattr(pos, "precio_entrada", 0.0) or 0.0)
-    ts_ord = float(getattr(pos, "ts_orden_salida", 0.0) or 0.0)
-    en_cierre = bool(getattr(pos, "en_proceso_cierre", False))
-    edad_ord = max(0.0, time.time() - ts_ord) if (en_cierre and ts_ord > 0.0) else 0.0
-    ticks_giveaway = _mes.calcular_concesion_ticks_scratch_elastica(
-        edad_posicion_seg=float(edad_seg),
-        delta_t_orden_salida=edad_ord,
-        ofi_dir=ofi_dir,
-        mfe_alcanzado_pct=mfe_pct,
-    )
-    piso_convexo = _mmwe.calcular_ratchet_convexo_mfe_elastico(
-        precio_entrada=px_in,
-        mfe_pct=mfe_pct,
-        v_l2=float(getattr(pos, "vacio_l2_entrada", 1.0) or 1.0),
-        eta_mfe_hist=0.50,
-        es_long=es_long,
-        tick_size=float(tick_size),
-    )
-    if not _cfg_gp.es_modo_test():
-        try:
-            pos.cota_ticks_scratch_elastica = int(ticks_giveaway)
-            pos.piso_wald_convexo_elastico = float(piso_convexo)
-        except AttributeError:
-            pass
-    return {
-        "ticks_scratch_giveaway": float(ticks_giveaway),
-        "piso_wald_convexo": float(piso_convexo),
-    }

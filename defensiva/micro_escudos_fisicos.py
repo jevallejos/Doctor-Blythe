@@ -1,13 +1,15 @@
-# File: defensiva/micro_escudos_fisicos.py
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Defensivo #1: Escudos Fisicos de Entrada (Terpsichora V7.0).
 Aisla las barreras cinematicas y de microestructura (Lyapunov, Hurst, Absorcion
-OFI/Hawkes con Veto Anti-Spoofing L1 arXiv:2502.17417, Sesgo Autonomo No-Regresivo,
-Entropia LOB arXiv:2610.16151, Coherencia de Signo RF-06 y Conviccion Contra-EMA900).
+OFI/Hawkes con Barrera Hiperbolica Anti-Muralla L1 y Veto Anti-Spoofing arXiv:2502.17417,
+Sesgo Autonomo No-Regresivo, Entropia LOB arXiv:2610.16151, Coherencia de Signo RF-06
+y Conviccion Contra-EMA900).
 """
 from __future__ import annotations
+
 from typing import Tuple
+
 import config_parametros as cfg
 import core_estado_ram as ram
 
@@ -96,9 +98,14 @@ def evaluar_absorcion_ofi_hawkes(
 
     if str(direccion).upper() in ("BUY", "LONG"):
         sesgo_l = 0.0 if cfg.es_modo_test() else max(-0.04, float(ctrl.get("sesgo_escudo_long", 0.0) or 0.0) + sesgo_sym)
-        ofi_req_l = float(ofi_min_req) + sesgo_l + penal_entropia
+        i_opp_l = max(0.0, -float(imb_l1))
+        c_opp_l = max(0.0, -float(cancel_net_l1))
+        barrera_muro_l1 = (0.08 * (i_opp_l * i_opp_l) / max(0.10, 1.05 - i_opp_l)) if (not cfg.es_modo_test() and i_opp_l > 0.65) else 0.0
+        ofi_req_l = float(ofi_min_req) + sesgo_l + penal_entropia + barrera_muro_l1
         hawkes_req_l = float(hawkes_min_req) + (0.50 * sesgo_l)
-        if imb_l1 <= -0.78 and cancel_net_l1 <= -0.35 and ofi_actual < 0.35:
+        if (imb_l1 <= -0.78 and cancel_net_l1 <= -0.35 and ofi_actual < 0.35) or (
+            not cfg.es_modo_test() and i_opp_l >= 0.88 and (c_opp_l >= 0.15 or v_l2 < 0.85) and ofi_actual < 0.55
+        ):
             return False, f"L1_SPOOF_BID(imbL1={imb_l1:+.2f},cancel={cancel_net_l1:+.2f})"
         paso_rapido_1t = (
             ticks_absorcion >= 1
@@ -115,9 +122,14 @@ def evaluar_absorcion_ofi_hawkes(
             return False, f"HAWKES_WEAK_LONG(I={hawkes_actual:+.2f}<{hawkes_req_l:+.2f})"
     else:
         sesgo_s = 0.0 if cfg.es_modo_test() else max(-0.04, float(ctrl.get("sesgo_escudo_short", 0.0) or 0.0) + sesgo_sym)
-        ofi_short_req = -(abs(float(ofi_min_req)) + sesgo_s + penal_entropia)
+        i_opp_s = max(0.0, float(imb_l1))
+        c_opp_s = max(0.0, float(cancel_net_l1))
+        barrera_muro_s = (0.08 * (i_opp_s * i_opp_s) / max(0.10, 1.05 - i_opp_s)) if (not cfg.es_modo_test() and i_opp_s > 0.65) else 0.0
+        ofi_short_req = -(abs(float(ofi_min_req)) + sesgo_s + penal_entropia + barrera_muro_s)
         hawkes_req_s = -(abs(float(hawkes_min_req)) + (0.50 * sesgo_s))
-        if imb_l1 >= 0.78 and cancel_net_l1 >= 0.35 and ofi_actual > -0.45:
+        if (imb_l1 >= 0.78 and cancel_net_l1 >= 0.35 and ofi_actual > -0.45) or (
+            not cfg.es_modo_test() and i_opp_s >= 0.88 and (c_opp_s >= 0.15 or v_l2 < 0.85) and ofi_actual > -0.55
+        ):
             return False, f"L1_SPOOF_ASK(imbL1={imb_l1:+.2f},cancel={cancel_net_l1:+.2f})"
         paso_rapido_s_1t = (
             ticks_absorcion >= 1

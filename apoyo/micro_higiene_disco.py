@@ -104,7 +104,7 @@ class _GestorRotacionEstratificada:
                 try:
                     obj = json.loads(s)
                     if isinstance(obj, dict):
-                        ts_val = obj.get("ts_epoch") or obj.get("timestamp_epoch") or 0.0
+                        ts_val = obj.get("timestamp") or obj.get("ts_epoch") or obj.get("timestamp_epoch") or 0.0
                         if isinstance(ts_val, (int, float)) and float(ts_val) > 0.0:
                             ts_reg = float(ts_val)
                 except Exception:
@@ -282,12 +282,12 @@ def ejecutar_ciclo_higiene_4_niveles(
     if (ahora_ts - _ESTADO_HIGIENE_4C["ts_ultima_rotacion_log"]) >= 1800.0:
         _ESTADO_HIGIENE_4C["ts_ultima_rotacion_log"] = ahora_ts
         try:
-            p_log = pathlib.Path(log_path)
+            p_log = cfg.obtener_ruta_archivo("ARCHIVO_LOG") if log_path == "bot_hft.log" else pathlib.Path(log_path)
             if p_log.exists() and p_log.stat().st_size > _LIMITE_BYTES_LOG:
                 ram.cerrar_descriptores_log()
                 lineas = p_log.read_text(encoding="utf-8", errors="replace").splitlines(True)
                 if len(lineas) > 2500:
-                    p_hist = pathlib.Path(hist_log_path)
+                    p_hist = cfg.obtener_ruta_archivo("ARCHIVO_LOG_HISTORICO") if hist_log_path == "bot_hft_h.log" else pathlib.Path(hist_log_path)
                     with p_hist.open("a", encoding="utf-8") as fh:
                         fh.writelines(lineas[:-2500])
                     _GestorRotacionEstratificada.reemplazar_lineas_atomico(p_log, lineas[-2500:])

@@ -5,8 +5,6 @@ Engine, 5-Pole Gaussian 24-Hour Elastic Seasonality Curve, Immutable SCAR_BASE
 SHORT-SNIPER Capture for HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 from __future__ import annotations
-from defensiva.micro_veto_macro_btc import evaluar_desbloqueo_dinamico_flujo_btc
-from ofensiva.micro_enganche_fase import confirmar_disparo_vertice_armado
 
 import collections
 import math
@@ -138,9 +136,6 @@ class RadarVolatilidadHFT:
 
     def _verificar_veto_macro_btc(self, direccion: str, ahora: float) -> Tuple[bool, str]:
         return mvb.verificar_veto_macro_btc_completo(direccion, ahora)
-
-    def _evaluar_choque_directo_btc(self, direccion: str, z_btc: float, ofi_btc: float) -> Tuple[bool, str]:
-        return mvb.evaluar_choque_directo_btc(direccion, z_btc, ofi_btc)
 
     def procesar_instantanea_libro(
         self,
@@ -302,8 +297,10 @@ class RadarVolatilidadHFT:
             metrica.cancel_net_l1 = cancel_net_l1
         if hasattr(metrica, "irrev_lob"):
             metrica.irrev_lob = irrev_lob
+        metrica.multiplicador_elastico = mep.obtener_multiplicador_dislocacion_par(metrica)
 
         if symbol == cfg.PAR_LIDER_MACRO:
+            mvb.evaluar_choque_directo_btc("LONG", z_score, ofi_inst, irrev_btc=irrev_lob)
             self._verificar_veto_macro_btc("LONG", ahora)
             self._verificar_veto_macro_btc("SHORT", ahora)
             return False, "MACRO_LEADER_UPDATED", None
@@ -414,12 +411,12 @@ class RadarVolatilidadHFT:
                 return False, mot_ct_l, None
 
             try:
-                vertice_ok_l = confirmar_disparo_vertice_armado(
+                vertice_ok_l = mep.confirmar_disparo_vertice_armado(
                     z_score, hurst, acel_lyap, ofi_inst, est.ofi_ema_5s, latch_long_vigente,
                     "LONG", ofi_min_long, vacio_l2_ratio=vacio_l_l2,
                 )
             except TypeError:
-                vertice_ok_l = confirmar_disparo_vertice_armado(
+                vertice_ok_l = mep.confirmar_disparo_vertice_armado(
                     z_score, hurst, acel_lyap, ofi_inst, est.ofi_ema_5s, latch_long_vigente, "LONG", ofi_min_long
                 )
             if (not ok_abs_l and not vertice_ok_l) and "WAIT_BID_ABSORPTION" in mot_abs_l:
@@ -445,7 +442,7 @@ class RadarVolatilidadHFT:
                             acel_lyap,
                             cfg.BTC_VETO_COOLDOWN_SEG,
                             vacio_l2_alt=vacio_l_l2,
-                        ) or evaluar_desbloqueo_dinamico_flujo_btc(
+                        ) or mvb.evaluar_desbloqueo_dinamico_flujo_btc(
                             m_b.z_score,
                             m_b.ofi_profundo,
                             m_b.dp_pct,
@@ -466,7 +463,7 @@ class RadarVolatilidadHFT:
                             hurst,
                             acel_lyap,
                             cfg.BTC_VETO_COOLDOWN_SEG,
-                        ) or evaluar_desbloqueo_dinamico_flujo_btc(
+                        ) or mvb.evaluar_desbloqueo_dinamico_flujo_btc(
                             m_b.z_score,
                             m_b.ofi_profundo,
                             m_b.dp_pct,

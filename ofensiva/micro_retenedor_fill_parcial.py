@@ -7,37 +7,32 @@ Irreversibilidad LOB (arXiv:2610.16151), y Guardian del Lote Minimo Ejecutado
 """
 import time
 from typing import Tuple
+
 import config_parametros as cfg
 import core_estado_ram as ram
 
 
-def _obtener_contexto_l2_en_vuelo(
-    vacio_l2_ratio: float,
-    cancel_net_l1: float,
-) -> Tuple[float, float, float]:
-    """
-    Resuelve en O(1) desde MetricaTick del par con lock pre-fill activo en RAM
-    las variables de orden superior (vacio_l2_ratio, cancel_net_l1, irrev_lob)
-    cuando el llamador invoca la firma posicional de 7 argumentos.
-    """
-    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
-    c_l1 = float(cancel_net_l1 or 0.0)
-    irrev = 0.0
-    if cfg.es_modo_test():
+class _ContextoL2EnVuelo:
+    @staticmethod
+    def resolver(vacio_l2_ratio: float, cancel_net_l1: float) -> Tuple[float, float, float]:
+        v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
+        c_l1 = float(cancel_net_l1 or 0.0)
+        irrev = 0.0
+        if cfg.es_modo_test():
+            return v_l2, c_l1, irrev
+        ahora = time.time()
+        locks = getattr(ram.ESTADO_GLOBAL, "locks_pre_fill", {}) or {}
+        for sym, exp_ts in locks.items():
+            if isinstance(exp_ts, (int, float)) and float(exp_ts) > ahora:
+                m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(sym)
+                if m_live is not None:
+                    if v_l2 == 1.0:
+                        v_l2 = float(getattr(m_live, "vacio_l2_ratio", 1.0) or 1.0)
+                    if c_l1 == 0.0:
+                        c_l1 = float(getattr(m_live, "cancel_net_l1", 0.0) or 0.0)
+                    irrev = float(getattr(m_live, "irrev_lob", 0.0) or 0.0)
+                break
         return v_l2, c_l1, irrev
-    ahora = time.time()
-    locks = getattr(ram.ESTADO_GLOBAL, "locks_pre_fill", {}) or {}
-    for sym, exp_ts in locks.items():
-        if isinstance(exp_ts, (int, float)) and float(exp_ts) > ahora:
-            m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(sym)
-            if m_live is not None:
-                if v_l2 == 1.0:
-                    v_l2 = float(getattr(m_live, "vacio_l2_ratio", 1.0) or 1.0)
-                if c_l1 == 0.0:
-                    c_l1 = float(getattr(m_live, "cancel_net_l1", 0.0) or 0.0)
-                irrev = float(getattr(m_live, "irrev_lob", 0.0) or 0.0)
-            break
-    return v_l2, c_l1, irrev
 
 
 def evaluar_extension_fill_parcial_en_cola(
@@ -51,21 +46,12 @@ def evaluar_extension_fill_parcial_en_cola(
     vacio_l2_ratio: float = 1.0,
     cancel_net_l1: float = 0.0,
 ) -> Tuple[bool, float]:
-    """
-    Si una orden PostOnly ya se lleno parcialmente (0 < filled < solicitados):
-    - Revoca cualquier extension si el soporte L2 colapsa (vacio_l2_ratio < 0.50),
-      hay retirada agresiva de liquidez en nuestra punta (cancel_dir <= -0.50),
-      o la entropia direccional indica ruptura irreversible en contra (irrev > 0.85).
-    - Concede entre +0.65s y +1.35s adicionales de retencion elastica cuando el
-      flujo OFI empuja a favor (umbral 0.22 en vacio L2 despejado >= 1.25, o 0.30 nominal)
-      y Hurst se mantiene anti-persistente (<= 0.485).
-    """
     if contratos_llenados <= 0.0 or contratos_llenados >= contratos_solicitados:
         return False, ttl_base_seg
     if hurst_actual > 0.485:
         return False, ttl_base_seg
 
-    v_l2, c_l1, irrev = _obtener_contexto_l2_en_vuelo(vacio_l2_ratio, cancel_net_l1)
+    v_l2, c_l1, irrev = _ContextoL2EnVuelo.resolver(vacio_l2_ratio, cancel_net_l1)
     signo_dir = 1.0 if str(direccion).upper() in ("BUY", "LONG") else -1.0
     ofi_dir = signo_dir * float(ofi_actual)
     cancel_dir = signo_dir * c_l1
@@ -88,15 +74,10 @@ def validar_lote_ejecutado_suficiente(
     contratos_llenados: float,
     vacio_l2_ratio: float = 1.0,
 ) -> bool:
-    """
-    Certifica SCAR-LOCK-18 (FRACCION_MINIMA_FILL_LOTE >= 15%):
-    Si el soporte profundo L2 se evapora severamente (vacio_l2_ratio < 0.45),
-    eleva el requisito minimo al 20% para no custodiar micro-lotes expuestos.
-    """
     if contratos_llenados <= 0.0:
         return False
     frac_base = float(getattr(cfg, "FRACCION_MINIMA_FILL_LOTE", 0.15))
-    v_l2, _, _ = _obtener_contexto_l2_en_vuelo(vacio_l2_ratio, 0.0)
+    v_l2, _, _ = _ContextoL2EnVuelo.resolver(vacio_l2_ratio, 0.0)
     frac_min = max(0.20, frac_base) if (v_l2 < 0.45 and not cfg.es_modo_test()) else max(0.05, frac_base)
     if contratos_solicitados <= 0.0:
         return True

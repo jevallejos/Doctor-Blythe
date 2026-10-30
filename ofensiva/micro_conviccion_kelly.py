@@ -7,16 +7,12 @@ Termodinamica por Entropia/Cancelacion L1 y Expansion Convexa de Outliers.
 import math
 import sys
 from typing import Tuple
+
 import config_parametros as cfg
 import core_estado_ram as ram
 
 
 def calcular_bono_house_money() -> float:
-    """
-    Calcula el bono de interes compuesto House-Money exclusivamente sobre ganancias
-    organicas de trading, descontando automaticamente cualquier inyeccion o retiro
-    de capital registrado por PARITY_SYNC en stats_tracker.GESTOR_ESTADISTICAS.
-    """
     total = float(getattr(ram.ESTADO_GLOBAL, "capital_total_uta", 0.0) or 0.0)
     base_depositada = float(cfg.CAPITAL_BASE_HISTORICO_USDT)
     if not cfg.es_modo_test():
@@ -35,6 +31,14 @@ def calcular_bono_house_money() -> float:
     return round(min(0.06, ganancia_pct * 0.45), 4)
 
 
+def obtener_multiplicador_kelly_par(symbol: str) -> float:
+    if cfg.es_modo_test() or not symbol:
+        return 1.0
+    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+    w = float(ctrl.get(f"w_kelly_{symbol}", 1.0) or 1.0)
+    return max(0.72, min(1.12, w))
+
+
 def calcular_fraccion_kelly_antifragil(
     z_score: float,
     ofi: float,
@@ -48,6 +52,7 @@ def calcular_fraccion_kelly_antifragil(
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
     dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
     es_t1 = bool(symbol and cfg.obtener_clase_activo(symbol) == cfg.CLASE_TIER1_LIQUIDO)
+
     if dir_norm == "SHORT":
         base_k = float(ctrl.get("w5_kelly_short", cfg.KELLY_SHORT_SNIPER_FRACCION))
         z_ref = float(cfg.Z_SCORE_SHORT_UMBRAL)
@@ -71,6 +76,7 @@ def calcular_fraccion_kelly_antifragil(
     z_abs = abs(float(z_score))
     ofi_abs = abs(float(ofi))
     h_val = max(0.15, min(0.80, float(hurst)))
+
     exceso_z = max(0.0, z_abs - max(1.80, z_ref))
     bono_conviccion = min(0.12, exceso_z * 0.028 + max(0.0, ofi_abs - 0.18) * 0.08)
     bono_hm = calcular_bono_house_money()
@@ -119,23 +125,10 @@ def calcular_dimension_kelly(
     gamma_outlier = 1.0
     if z_abs >= 6.0 and ofi_abs >= 0.25 and float(hurst) <= 0.485:
         gamma_outlier = 1.0 + (0.15 * math.tanh((z_abs - 6.0) / 5.0))
+
     cap_utilizable = max(0.0, float(capital_libre_usdt) * (1.0 - cfg.MARGEN_SEGURIDAD_LIQUIDACION))
     margen_usdt = round(float(capital_libre_usdt) * min(0.68, frac * gamma_outlier), 4)
     if cap_utilizable > 0.0:
         margen_usdt = min(margen_usdt, round(cap_utilizable, 4))
     nocional_usdt = round(margen_usdt * float(cfg.APALANCAMIENTO_OPERATIVO), 4)
     return frac, margen_usdt, nocional_usdt
-
-
-def obtener_multiplicador_kelly_par(symbol: str) -> float:
-    """
-    Retorna el multiplicador Bayesiano auto-aprendiz de conviccion Kelly por par
-    (w_kelly_{symbol} in [0.72, 1.12]) calculado cada 30s desde tribrain_stats_v1.jsonl.
-    """
-    import config_parametros as _cfg
-    import core_estado_ram as _ram
-    if _cfg.es_modo_test() or not symbol:
-        return 1.0
-    ctrl = getattr(_ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
-    w = float(ctrl.get(f"w_kelly_{symbol}", 1.0) or 1.0)
-    return max(0.72, min(1.12, w))
