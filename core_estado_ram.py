@@ -509,6 +509,8 @@ class EstadoGlobalRAM:
         for ev in self.cola_forense_15s:
             if ev.symbol == symbol and ev.escudo == escudo and (ahora_ev - ev.timestamp) < ventana_dedup:
                 return
+            if ev.symbol == symbol and ev.direccion == direccion and (ahora_ev - ev.timestamp) < 1.20:
+                return
         vec_completo = dict(vector_mercado or {})
         m_live = self.metricas_ticks.get(symbol)
         if m_live is not None:
@@ -572,7 +574,9 @@ class EstadoGlobalRAM:
             umbral_miss = 0.0014 if es_opsr else 0.0024
             piso_miss = -0.0008 if es_opsr else -0.0012
 
-            if exc_eval_save <= umbral_save:
+            if exc_eval_miss >= umbral_miss and excursion_pct >= (umbral_miss * 0.55) and exc_eval_save > -0.0032:
+                veredicto = "FALSE_REJECTION_OPPORTUNITY_LOST"
+            elif exc_eval_save <= umbral_save:
                 veredicto = "CAPITAL_SAVED_TRUE_SHIELD"
             elif exc_eval_miss >= umbral_miss and exc_eval_save > piso_miss:
                 veredicto = "FALSE_REJECTION_OPPORTUNITY_LOST"

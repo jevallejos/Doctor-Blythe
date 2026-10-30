@@ -97,11 +97,21 @@ def calcular_perfil_bayesiano_par(
     mfe_mean = sum(float(op.get("mfe_max_pnl_pct", 0.0)) for op in ultimas) / n
     mae_mean = sum(abs(float(op.get("mae_min_pnl_pct", 0.0))) for op in ultimas) / n
     wins = sum(1 for op in ultimas if float(op.get("pnl_usdt", 0.0)) > 0.0)
-    losses = sum(
-        1 for op in ultimas
-        if float(op.get("pnl_usdt", 0.0)) <= 0.0
-        and not (bool(op.get("es_scratch")) or "SCRATCH" in str(op.get("motivo_salida", "")).upper())
-    )
+    losses_pond = 0.0
+    for op in ultimas:
+        if float(op.get("pnl_usdt", 0.0)) <= 0.0:
+            es_sc = bool(op.get("es_scratch")) or ("SCRATCH" in str(op.get("motivo_salida", "")).upper())
+            if es_sc:
+                losses_pond += min(
+                    0.85,
+                    max(
+                        0.15,
+                        abs(float(op.get("pnl_pct", 0.0)) / 100.0)
+                        / max(0.0010, float(cfg.SL_INTERNO_PCT)),
+                    ),
+                )
+            else:
+                losses_pond += 1.0
     escapes = sum(1 for op in ultimas if "ESCAPE_TEMPORAL" in str(op.get("motivo_salida", "")).upper())
     taker_exits = sum(1 for op in ultimas if not bool(op.get("es_salida_maker", True)))
 
@@ -119,7 +129,7 @@ def calcular_perfil_bayesiano_par(
     taker_ratio = taker_exits / float(n)
 
     e_obs = min(2.50, mfe_mean / max(0.020, mae_mean))
-    w_obs = (wins / (wins + losses)) if (wins + losses) > 0 else 0.60
+    w_obs = (wins / (wins + losses_pond)) if (wins + losses_pond) > 0 else 0.60
 
     e_post = ((1.0 - lam) * 1.00) + (lam * e_obs)
     w_post = ((1.0 - lam) * 0.60) + (lam * w_obs)

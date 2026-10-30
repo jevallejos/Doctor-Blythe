@@ -493,12 +493,20 @@ class GestorPosicionesChronosTriz:
                 if (pos.trinquete_be_activo and pos.sl_interno > 0.0)
                 else calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
             )
-            if "TRINQUETE_BE" in motivo_up and pos.repeg_salida_count >= 2:
+            if "TRINQUETE_BE" in motivo_up and (
+                pos.repeg_salida_count >= 1
+                or edad_orden_act >= 4.5
+                or (ahora - pos.timestamp_apertura) >= 55.0
+            ):
                 t_sz = max(1e-8, float(tick_size))
+                banda_relax_pct = min(
+                    0.00090,
+                    0.00025 * max(1.0, float(pos.repeg_salida_count) + (edad_orden_act / 4.5)),
+                )
                 piso_relax = (
-                    eje.cuantizar_tick(pos.precio_entrada - t_sz, t_sz, modo="floor")
+                    eje.cuantizar_tick(pos.precio_entrada * (1.0 - banda_relax_pct), t_sz, modo="floor")
                     if pos.direccion == "LONG"
-                    else eje.cuantizar_tick(pos.precio_entrada + t_sz, t_sz, modo="ceil")
+                    else eje.cuantizar_tick(pos.precio_entrada * (1.0 + banda_relax_pct), t_sz, modo="ceil")
                 )
                 if pos.direccion == "LONG":
                     px_target = max(piso_relax, best_ask if best_ask > 0.0 else px_target)
@@ -746,11 +754,11 @@ class GestorPosicionesChronosTriz:
                     return res_be
                 edad_orden_be = max(0.0, ts_now - pos.ts_orden_salida) if pos.ts_orden_salida > 0.0 else 0.0
                 ruptura_profunda_be = (
-                    pnl_pct <= -0.0020
+                    pnl_pct <= -0.0011
                     or (
-                        edad_orden_be >= 6.0
-                        and pnl_pct <= -0.0012
-                        and (ofi_dir_live <= -0.25 or vacio_rat_l2 < 0.50 or pos.repeg_salida_count >= 3)
+                        edad_orden_be >= 4.0
+                        and pnl_pct <= -0.00085
+                        and (ofi_dir_live <= -0.18 or vacio_rat_l2 < 0.55 or pos.repeg_salida_count >= 2)
                     )
                 )
                 if not ruptura_profunda_be:
@@ -915,6 +923,23 @@ class GestorPosicionesChronosTriz:
                 exchange, pos, best_bid, best_ask, tick_size, "MAKER_UNWIND", ts_now,
                 ofi_5s=ofi_5s, precio_objetivo_custom=(px_diamante if diamante_ok else 0.0)
             )
+
+        if (
+            pos.en_proceso_cierre
+            and pos.orden_salida_id
+            and "SCRATCH" in str(pos.motivo_salida_pendiente).upper()
+            and pnl_pct >= (float(cfg.COMISION_MAKER_PCT) * 2.2)
+            and ofi_dir_live >= 0.12
+            and lambda_w >= 0.25
+        ):
+            try:
+                await exchange.cancel_order(pos.orden_salida_id, pos.symbol)
+            except Exception:
+                pass
+            pos.en_proceso_cierre = False
+            pos.orden_salida_id = ""
+            pos.motivo_salida_pendiente = ""
+            pos.repeg_salida_count = 0
 
         # === [KEEP-ALIVE-ACTIVE-MAKER-EXIT] ===
         if pos.orden_salida_id and not pos.cerrada:

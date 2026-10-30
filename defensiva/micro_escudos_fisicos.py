@@ -32,17 +32,23 @@ def evaluar_freno_lyapunov(
     umbral_freno_long: float = -0.00022,
     umbral_agotamiento_short: float = -0.00010,
     irrev_lob: float = 0.0,
+    symbol: str = "",
 ) -> Tuple[bool, str]:
     ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
     irrev = float(irrev_lob or 0.0)
+    sesgo_sym = (
+        max(-0.04, min(0.08, float(ctrl.get(f"sesgo_escudo_{symbol}", 0.0) or 0.0)))
+        if (not cfg.es_modo_test() and symbol)
+        else 0.0
+    )
     if str(direccion).upper() in ("BUY", "LONG"):
-        sesgo_l = 0.0 if cfg.es_modo_test() else max(0.0, float(ctrl.get("sesgo_escudo_long", 0.0) or 0.0))
+        sesgo_l = 0.0 if cfg.es_modo_test() else max(0.0, float(ctrl.get("sesgo_escudo_long", 0.0) or 0.0) + sesgo_sym)
         penal_irrev = 0.00004 * max(0.0, irrev - 0.75)
         u_long = float(umbral_freno_long) + (0.0008 * sesgo_l) + penal_irrev
         if aceleracion_lyapunov < u_long:
             return False, f"LYAPUNOV_REPULSOR(a={aceleracion_lyapunov:+.5f}<{u_long:+.5f})"
     else:
-        sesgo_s = 0.0 if cfg.es_modo_test() else max(0.0, float(ctrl.get("sesgo_escudo_short", 0.0) or 0.0))
+        sesgo_s = 0.0 if cfg.es_modo_test() else max(0.0, float(ctrl.get("sesgo_escudo_short", 0.0) or 0.0) + sesgo_sym)
         penal_irrev_s = 0.00004 * max(0.0, irrev - 0.75)
         u_short = float(umbral_agotamiento_short) - (0.0008 * sesgo_s) - penal_irrev_s
         if aceleracion_lyapunov > u_short:
@@ -76,14 +82,20 @@ def evaluar_absorcion_ofi_hawkes(
     cancel_net_l1: float = 0.0,
     irrev_lob: float = 0.0,
     vacio_l2_ratio: float = 1.0,
+    symbol: str = "",
 ) -> Tuple[bool, str]:
     ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
     irrev = float(irrev_lob or 0.0)
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
     penal_entropia = 0.06 * max(0.0, irrev - 0.72)
+    sesgo_sym = (
+        max(-0.04, min(0.08, float(ctrl.get(f"sesgo_escudo_{symbol}", 0.0) or 0.0)))
+        if (not cfg.es_modo_test() and symbol)
+        else 0.0
+    )
 
     if str(direccion).upper() in ("BUY", "LONG"):
-        sesgo_l = 0.0 if cfg.es_modo_test() else max(0.0, float(ctrl.get("sesgo_escudo_long", 0.0) or 0.0))
+        sesgo_l = 0.0 if cfg.es_modo_test() else max(-0.04, float(ctrl.get("sesgo_escudo_long", 0.0) or 0.0) + sesgo_sym)
         ofi_req_l = float(ofi_min_req) + sesgo_l + penal_entropia
         hawkes_req_l = float(hawkes_min_req) + (0.50 * sesgo_l)
         if imb_l1 <= -0.78 and cancel_net_l1 <= -0.35 and ofi_actual < 0.35:
@@ -102,7 +114,7 @@ def evaluar_absorcion_ofi_hawkes(
         if hawkes_actual < hawkes_req_l:
             return False, f"HAWKES_WEAK_LONG(I={hawkes_actual:+.2f}<{hawkes_req_l:+.2f})"
     else:
-        sesgo_s = 0.0 if cfg.es_modo_test() else max(0.0, float(ctrl.get("sesgo_escudo_short", 0.0) or 0.0))
+        sesgo_s = 0.0 if cfg.es_modo_test() else max(-0.04, float(ctrl.get("sesgo_escudo_short", 0.0) or 0.0) + sesgo_sym)
         ofi_short_req = -(abs(float(ofi_min_req)) + sesgo_s + penal_entropia)
         hawkes_req_s = -(abs(float(hawkes_min_req)) + (0.50 * sesgo_s))
         if imb_l1 >= 0.78 and cancel_net_l1 >= 0.35 and ofi_actual > -0.45:

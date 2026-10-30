@@ -227,7 +227,8 @@ def evaluar_sobreextension_y_rollover_short(
         ahora <= est.vigilancia_short_hasta_ts
         and est.max_z_pump_short >= z_short_req
         and ema900_dist_pct >= (ema_min_short * 0.88)
-        and dp_pct >= -0.0005
+        and z_score > 0.0
+        and dp_pct > 0.0
         and est.px_pico_pump_short > 0.0
         and mid <= (est.px_pico_pump_short * 0.9998)
         and ofi_inst <= (cfg.OFI_MAX_ENTRADA_SHORT - 0.06)

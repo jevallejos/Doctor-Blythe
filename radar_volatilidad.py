@@ -241,7 +241,7 @@ class RadarVolatilidadHFT:
         est.vpin_ema = round((0.08 * tox_inst) + (0.92 * est.vpin_ema), 4)
         try:
             freno_ok_l = mef.evaluar_freno_lyapunov(
-                "LONG", acel_lyap, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO, irrev_lob=irrev_lob
+                "LONG", acel_lyap, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO, irrev_lob=irrev_lob, symbol=symbol
             )[0]
         except TypeError:
             freno_ok_l = mef.evaluar_freno_lyapunov("LONG", acel_lyap, cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO)[0]
@@ -386,7 +386,7 @@ class RadarVolatilidadHFT:
                     ofi_min_req=ofi_min_long, ticks_min_req=cfg.OFI_TICKS_PERSISTENCIA_MIN,
                     hawkes_min_req=cfg.HAWKES_INTENSIDAD_MIN_LONG,
                     imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
-                    irrev_lob=irrev_lob, vacio_l2_ratio=vacio_l_l2,
+                    irrev_lob=irrev_lob, vacio_l2_ratio=vacio_l_l2, symbol=symbol,
                 )
             except TypeError:
                 ok_abs_l, mot_abs_l = mef.evaluar_absorcion_ofi_hawkes(
@@ -413,9 +413,15 @@ class RadarVolatilidadHFT:
             if not ok_ct_l:
                 return False, mot_ct_l, None
 
-            vertice_ok_l = confirmar_disparo_vertice_armado(
-                z_score, hurst, acel_lyap, ofi_inst, est.ofi_ema_5s, latch_long_vigente, "LONG", ofi_min_long
-            )
+            try:
+                vertice_ok_l = confirmar_disparo_vertice_armado(
+                    z_score, hurst, acel_lyap, ofi_inst, est.ofi_ema_5s, latch_long_vigente,
+                    "LONG", ofi_min_long, vacio_l2_ratio=vacio_l_l2,
+                )
+            except TypeError:
+                vertice_ok_l = confirmar_disparo_vertice_armado(
+                    z_score, hurst, acel_lyap, ofi_inst, est.ofi_ema_5s, latch_long_vigente, "LONG", ofi_min_long
+                )
             if (not ok_abs_l and not vertice_ok_l) and "WAIT_BID_ABSORPTION" in mot_abs_l:
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
                     est.ultimo_log_warn_ts = ahora
@@ -570,7 +576,10 @@ class RadarVolatilidadHFT:
             )
         )
 
-        if sobreextension_short or latch_short_vigente or rollover_techo_vigente:
+        if (
+            (sobreextension_short or latch_short_vigente or rollover_techo_vigente)
+            and mef.evaluar_coherencia_signo_rf06("SHORT", z_score, dp_pct)[0]
+        ):
             vector_snap_s = {
                 "z_entry": z_score,
                 "dp_pct": round(dp_pct * 100.0, 4),
@@ -591,7 +600,8 @@ class RadarVolatilidadHFT:
 
             try:
                 freno_s_ok = mef.evaluar_freno_lyapunov(
-                    "SHORT", acel_lyap, umbral_agotamiento_short=cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO, irrev_lob=irrev_lob
+                    "SHORT", acel_lyap, umbral_agotamiento_short=cfg.LYAPUNOV_ACEL_UMBRAL_FRENADO,
+                    irrev_lob=irrev_lob, symbol=symbol,
                 )[0]
             except TypeError:
                 freno_s_ok = mef.evaluar_freno_lyapunov(
@@ -606,7 +616,7 @@ class RadarVolatilidadHFT:
                     ofi_min_req=abs(cfg.OFI_MAX_ENTRADA_SHORT), ticks_min_req=cfg.OFI_TICKS_PERSISTENCIA_MIN,
                     hawkes_min_req=abs(cfg.HAWKES_INTENSIDAD_MAX_SHORT),
                     imb_l1=imb_l1, cancel_net_l1=cancel_net_l1,
-                    irrev_lob=irrev_lob, vacio_l2_ratio=vacio_s_l2,
+                    irrev_lob=irrev_lob, vacio_l2_ratio=vacio_s_l2, symbol=symbol,
                 )
             except TypeError:
                 ok_abs_s, _ = mef.evaluar_absorcion_ofi_hawkes(

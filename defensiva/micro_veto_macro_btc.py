@@ -33,14 +33,14 @@ def evaluar_choque_directo_btc(
     z_comp = max(0.25, abs(float(umbral_z_veto)))
 
     if str(direccion).upper() in ("BUY", "LONG"):
-        if z_btc <= z_caida:
+        if z_btc <= z_caida and ofi_btc < ofi_lim:
             return True, f"BTC_VETO_LONG(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
         if ofi_btc <= -ofi_lim and z_btc <= -0.15:
             return True, f"BTC_VETO_LONG(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
         if z_btc <= -max(0.35, z_comp) and ofi_btc <= -ofi_comp:
             return True, f"BTC_VETO_LONG(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
     else:
-        if z_btc >= z_subida:
+        if z_btc >= z_subida and ofi_btc > -ofi_lim:
             return True, f"BTC_VETO_SHORT(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
         if ofi_btc >= ofi_lim and z_btc >= 0.15:
             return True, f"BTC_VETO_SHORT(OFI={ofi_btc:+.2f},Z={z_btc:+.2f})"
@@ -71,11 +71,19 @@ def evaluar_desbloqueo_dinamico_flujo_btc(
     ofi_req_alt = 0.18 if v_l2 >= 1.35 else 0.22
     side_u = str(side).upper()
     if side_u in ("LONG", "BUY"):
-        btc_estable = (ofi_btc >= -0.10 and z_btc >= -0.25) or (abs(dp_btc_pct) < 0.0003 and ofi_btc >= -0.08)
+        btc_estable = (
+            (ofi_btc >= -0.10 and z_btc >= -0.25)
+            or (abs(dp_btc_pct) < 0.0003 and ofi_btc >= -0.08)
+            or (ofi_btc >= max(0.32, ofi_req_alt + 0.10) and z_btc >= -3.20)
+        )
         alt_absorbiendo = (ofi_alt >= ofi_req_alt and acel_lyap_alt >= -0.00022)
         return bool(btc_estable and alt_absorbiendo)
     else:
-        btc_estable = (ofi_btc <= 0.10 and z_btc <= 0.25) or (abs(dp_btc_pct) < 0.0003 and ofi_btc <= 0.08)
+        btc_estable = (
+            (ofi_btc <= 0.10 and z_btc <= 0.25)
+            or (abs(dp_btc_pct) < 0.0003 and ofi_btc <= 0.08)
+            or (ofi_btc <= -max(0.32, ofi_req_alt + 0.10) and z_btc <= 3.20)
+        )
         alt_absorbiendo = (ofi_alt <= -ofi_req_alt and acel_lyap_alt <= 0.00022)
         return bool(btc_estable and alt_absorbiendo)
 
@@ -102,11 +110,17 @@ def puede_liberar_cooldown_btc_en_giro_sincronizado(
         return False
     ofi_req_v = 0.21 if v_l2 >= 1.35 else 0.25
     if str(direccion).upper() in ("BUY", "LONG"):
-        btc_estabilizado = (z_btc >= -0.08) and (ofi_btc >= -0.05)
+        btc_estabilizado = (
+            ((z_btc >= -0.08) and (ofi_btc >= -0.05))
+            or (ofi_btc >= max(0.32, ofi_req_v + 0.10) and z_btc >= -3.20)
+        )
         alt_absorbiendo_piso = (ofi_alt >= ofi_req_v) and (lyapunov_alt >= -0.00035)
         return bool(btc_estabilizado and alt_absorbiendo_piso)
     else:
-        btc_estabilizado_short = (z_btc <= 0.08) and (ofi_btc <= 0.05)
+        btc_estabilizado_short = (
+            ((z_btc <= 0.08) and (ofi_btc <= 0.05))
+            or (ofi_btc <= -max(0.32, ofi_req_v + 0.10) and z_btc <= 3.20)
+        )
         alt_absorbiendo_techo = (ofi_alt <= -ofi_req_v) and (lyapunov_alt <= 0.00035)
         return bool(btc_estabilizado_short and alt_absorbiendo_techo)
 

@@ -219,19 +219,25 @@ def calcular_precio_scratch_acotado_un_tick(
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
     flujo_neutral = float(ofi_5s_dir) > -0.22
 
-    escalones_tiempo = int(max(0.0, float(edad_orden_salida_seg)) // 7.5)
-    escalones_repeg = n_rep // 2
-    escalon_vacio = 1 if (v_l2 < 0.60 and (edad_orden_salida_seg > 0.0 or n_rep > 0)) else 0
-
-    max_ticks_base = (1.0 if n_rep <= 1 else 2.0) if flujo_neutral else 3.0
-    ticks_permitidos = min(
-        5.0,
-        max_ticks_base + float(escalones_tiempo + escalones_repeg + escalon_vacio),
-    )
-    max_dist_precio = max(
-        ticks_permitidos * t_size,
-        float(entry_price) * min(0.00080, 0.00020 * ticks_permitidos),
-    )
+    if edad_orden_salida_seg <= 0.0 and n_rep == 0 and flujo_neutral and v_l2 >= 0.60:
+        ticks_permitidos = 1.0
+        max_dist_precio = max(
+            ticks_permitidos * t_size,
+            float(entry_price) * min(0.00080, 0.00020 * ticks_permitidos),
+        )
+    else:
+        escalones_tiempo = int(max(0.0, float(edad_orden_salida_seg)) // 4.5)
+        escalones_repeg = n_rep
+        escalon_vacio = 1 if v_l2 < 0.60 else 0
+        max_ticks_base = (2.0 if n_rep >= 1 else 1.5) if flujo_neutral else 3.0
+        ticks_permitidos = min(
+            6.0,
+            max_ticks_base + float(escalones_tiempo + escalones_repeg + escalon_vacio),
+        )
+        max_dist_precio = max(
+            ticks_permitidos * t_size,
+            float(entry_price) * min(0.00180, 0.00035 * ticks_permitidos),
+        )
 
     if side_u in ("LONG", "BUY"):
         piso_elastico = round(float(entry_price) - max_dist_precio, 8)

@@ -340,11 +340,15 @@ def sanitizar_controlador_autonomo(ctrl_raw: Dict[str, Any]) -> Dict[str, float]
             vmin, vmax = _limites_controlador_autonomo[k]
             limpio[k] = round(max(vmin, min(vmax, val)), 5)
         elif k.startswith("alpha_disloc_"):
-            limpio[k] = round(max(1.00, min(1.40, val)), 4)
+            limpio[k] = round(max(0.88, min(1.40, val)), 4)
         elif k.startswith("w_kelly_"):
             limpio[k] = round(max(0.72, min(1.12, val)), 4)
         elif k.startswith("edge_post_"):
             limpio[k] = round(max(0.50, min(2.50, val)), 4)
+        elif k.startswith("sesgo_escudo_"):
+            limpio[k] = round(max(-0.08, min(0.10, val)), 4)
+        elif k.startswith(("_adam_m_", "_adam_v_", "_adam_t_", "diag_v_l2_")):
+            limpio[k] = round(val, 6)
     return limpio
 
 
@@ -391,12 +395,7 @@ def recargar_calibracion_oos_si_cambio(ruta_json: str | pathlib.Path | None = No
                 ctrl_limpio = sanitizar_controlador_autonomo(ctrl_json_raw)
                 ram_ctrl = _ram_mod.ESTADO_GLOBAL.controlador_autonomo
                 for k_c, v_c in ctrl_limpio.items():
-                    if k_c.startswith("alpha_disloc_") and k_c in ram_ctrl:
-                        ram_ctrl[k_c] = round(max(float(ram_ctrl[k_c]), float(v_c)), 4)
-                    elif k_c in ("sesgo_escudo_long", "sesgo_escudo_short") and k_c in ram_ctrl:
-                        ram_ctrl[k_c] = round(max(float(ram_ctrl[k_c]), float(v_c)), 4)
-                    else:
-                        ram_ctrl[k_c] = float(v_c)
+                    ram_ctrl[k_c] = float(v_c)
             _ram_mod.ESTADO_GLOBAL.controlador_autonomo["w1_ofi_long"] = float(OFI_MIN_ENTRADA)
             _ram_mod.ESTADO_GLOBAL.controlador_autonomo["w3_tp_maker_pct"] = float(COSECHA_TRIZ_ACTIVACION_PCT)
         except Exception:
