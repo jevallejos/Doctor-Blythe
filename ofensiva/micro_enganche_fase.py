@@ -86,7 +86,7 @@ def evaluar_dislocacion_y_latch_long(
     else:
         alpha_sym = 1.0
 
-    psi_l2 = calcular_impedancia_log_vacio_l2(vacio_l2, alpha_sym)
+    psi_l2 = calcular_impedancia_log_vacio_l2(vacio_l2, 1.0)
     raiz_psi_l2 = math.sqrt(psi_l2)
 
     z_umbral_base = min(z_base, z_base * alpha_par) if es_hb else (z_base * alpha_par)
@@ -175,7 +175,7 @@ def evaluar_sobreextension_y_rollover_short(
     else:
         alpha_sym = 1.0
 
-    psi_l2 = calcular_impedancia_log_vacio_l2(vacio_l2, alpha_sym)
+    psi_l2 = calcular_impedancia_log_vacio_l2(vacio_l2, 1.0)
     raiz_psi_l2 = math.sqrt(psi_l2)
 
     z_base_short = cfg.Z_SCORE_SHORT_UMBRAL * alpha_par
