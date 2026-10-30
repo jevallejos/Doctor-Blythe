@@ -2,7 +2,8 @@
 """
 Micro-Modulo de Apoyo #7: Gobernador de Sensibilidad Autonoma en Tiempo Real
 con Colas Estratificadas, Deduplicacion Markoviana de Rafagas (dt > 15.0s),
-Retroalimentacion OPSR No Censurada (COLT 2026), Calibracion de los 8 Atributos
+Retroalimentacion OPSR No Censurada (COLT 2026), Gradiente de Impedancia de
+Vacio Profundo L2 (V_L2) con Doble Momento Adam, Calibracion de los 8 Atributos
 de Orden Superior y Memoria Bayesiana de Edge/Kelly por Par para
 HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
@@ -37,6 +38,27 @@ def _deduplicar_episodios_escudo_15s(
             dedup.append(ev)
             ultimo_ts_clave[clave] = ts
     return dedup
+
+
+def _extraer_vacio_l2_evento(op: Dict[str, Any]) -> float:
+    """
+    Extrae en O(1) el tensor vacio_l2_ratio (o vacio_l2_entry) de un cierre real,
+    operacion en RAM o evento forense de escudo 15s, inspeccionando tambien
+    vector_entrada / vector_sombra cuando esta anidado.
+    """
+    vacio_l2 = float(op.get("vacio_l2_ratio", op.get("vacio_l2_entry", 0.0)) or 0.0)
+    if vacio_l2 <= 0.0:
+        vec = (
+            op.get("vector_entrada")
+            if isinstance(op.get("vector_entrada"), dict)
+            else (
+                op.get("vector_sombra")
+                if isinstance(op.get("vector_sombra"), dict)
+                else {}
+            )
+        )
+        vacio_l2 = float(vec.get("vacio_l2_ratio", vec.get("vacio_l2_entry", 1.0)) or 1.0)
+    return max(0.12, min(3.00, vacio_l2))
 
 
 def calcular_perfil_bayesiano_par(
@@ -131,10 +153,21 @@ def calcular_perfil_bayesiano_par(
     }
 
 
-def auto_calibrar_sensibilidades_en_vivo(estado_ram: Any, ejecutor: Any) -> Dict[str, float]:
+def auto_calibrar_sensibilidades_en_vivo(
+    estado_ram: Any,
+    ejecutor: Any = None,
+    gestor_estadisticas: Any = None,
+) -> Dict[str, float]:
     ctrl = getattr(estado_ram, "controlador_autonomo", None)
     if not isinstance(ctrl, dict):
         return {}
+
+    if gestor_estadisticas is None and ejecutor is not None and hasattr(ejecutor, "operaciones"):
+        gestor_eff = ejecutor
+    elif gestor_estadisticas is not None:
+        gestor_eff = gestor_estadisticas
+    else:
+        gestor_eff = st.GESTOR_ESTADISTICAS
 
     intentados = int(getattr(ejecutor, "disparos_intentados", 0) or 0)
     abortados = int(getattr(ejecutor, "disparos_abortados_cola", 0) or 0)
@@ -254,20 +287,144 @@ def auto_calibrar_sensibilidades_en_vivo(estado_ram: Any, ejecutor: Any) -> Dict
         ctrl["sens_scratch_edad_rebote_seg"] = 30.0
 
     ahora_ts = time.time()
-    ops_hist = list(getattr(st.GESTOR_ESTADISTICAS, "operaciones", []) or [])
-    if not ops_hist and cierres_reales:
-        ops_hist = cierres_reales
+    ops_gestor = list(getattr(gestor_eff, "operaciones", []) or [])
+    ops_combinadas: List[Dict[str, Any]] = []
+    vistos_ids = set()
+    for op in cierres_reales + ops_gestor:
+        if not isinstance(op, dict):
+            continue
+        tid = str(op.get("trade_id", "") or "")
+        clave_op = tid if tid else f"{op.get('symbol', '')}|{round(float(op.get('timestamp', 0.0) or 0.0), 1)}"
+        if clave_op not in vistos_ids:
+            vistos_ids.add(clave_op)
+            ops_combinadas.append(op)
+
+    ops_hist = ops_combinadas if ops_combinadas else ops_gestor
     por_simbolo: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+    v2_wins_global: List[float] = []
+    v2_bad_global: List[float] = []
+    v2_scratches_recientes: List[float] = []
+
     for op in ops_hist:
         s_op = str(op.get("symbol", ""))
         if s_op:
             por_simbolo[s_op].append(op)
 
-    for par in cfg.PARES_CAMPEONES:
-        perf = calcular_perfil_bayesiano_par(por_simbolo.get(par, []), ahora_ts)
-        ctrl[f"alpha_disloc_{par}"] = perf["alpha_disloc"]
-        ctrl[f"w_kelly_{par}"] = perf["w_kelly"]
-        ctrl[f"edge_post_{par}"] = perf["edge_post"]
+    for op in ops_hist[-36:]:
+        vacio_l2 = float(op.get("vacio_l2_ratio", op.get("vacio_l2_entry", _extraer_vacio_l2_evento(op))) or 1.0)
+        pnl_op = float(op.get("pnl_usdt", 0.0) or 0.0)
+        mot_op = str(op.get("motivo_salida", "")).upper()
+        es_sc = bool(op.get("es_scratch")) or ("SCRATCH" in mot_op)
+        if es_sc:
+            v2_scratches_recientes.append(vacio_l2)
+            v2_bad_global.append(vacio_l2)
+        elif pnl_op > 0.0:
+            v2_wins_global.append(vacio_l2)
+        else:
+            v2_bad_global.append(vacio_l2)
+
+    v_l2_win_global = (sum(v2_wins_global) / len(v2_wins_global)) if v2_wins_global else 1.0
+    v_l2_bad_global = (sum(v2_bad_global) / len(v2_bad_global)) if v2_bad_global else 1.0
+    ratio_low_v2_global = (
+        (sum(1 for v in v2_bad_global if v < 0.60) / float(len(v2_bad_global)))
+        if v2_bad_global
+        else 0.0
+    )
+
+    esc_por_simbolo: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+    for ev in escudos_dedup:
+        s_ev = str(ev.get("symbol", ""))
+        if s_ev:
+            esc_por_simbolo[s_ev].append(ev)
+
+    alpha_elastico_por_par: Dict[str, float] = {}
+    sesgo_escudo_por_par: Dict[str, float] = {}
+    adam_estado: Dict[str, float] = {}
+
+    for sym in cfg.PARES_CAMPEONES:
+        ops_sym = por_simbolo.get(sym, [])
+        perf = calcular_perfil_bayesiano_par(ops_sym, ahora_ts)
+        ctrl[f"w_kelly_{sym}"] = perf["w_kelly"]
+        ctrl[f"edge_post_{sym}"] = perf["edge_post"]
+
+        rec_sym = ops_sym[-16:]
+        wins_sym_v2: List[float] = []
+        bad_sym_v2: List[float] = []
+        for op in rec_sym:
+            vacio_l2 = float(op.get("vacio_l2_ratio", op.get("vacio_l2_entry", _extraer_vacio_l2_evento(op))) or 1.0)
+            pnl_s = float(op.get("pnl_usdt", 0.0) or 0.0)
+            es_sc_s = bool(op.get("es_scratch")) or ("SCRATCH" in str(op.get("motivo_salida", "")).upper())
+            if pnl_s > 0.0 and not es_sc_s:
+                wins_sym_v2.append(vacio_l2)
+            else:
+                bad_sym_v2.append(vacio_l2)
+
+        v_l2_win_avg = (sum(wins_sym_v2) / len(wins_sym_v2)) if wins_sym_v2 else v_l2_win_global
+        v_l2_bad_avg = (sum(bad_sym_v2) / len(bad_sym_v2)) if bad_sym_v2 else v_l2_bad_global
+        ratio_low_v2 = (
+            (sum(1 for v in bad_sym_v2 if v < 0.60) / float(len(bad_sym_v2)))
+            if bad_sym_v2
+            else ratio_low_v2_global
+        )
+        n_rec_sym = len(rec_sym)
+        ratio_bad_sym = (
+            (len(bad_sym_v2) / float(n_rec_sym)) * (0.50 + 0.50 * ratio_low_v2)
+            if n_rec_sym > 0
+            else 0.0
+        )
+
+        esc_sym = esc_por_simbolo.get(sym, [])[-30:]
+        missed_sym_v2 = [
+            float(ev.get("vacio_l2_ratio", ev.get("vacio_l2_entry", _extraer_vacio_l2_evento(ev))) or 1.0)
+            for ev in esc_sym
+            if ev.get("veredicto_oraculo_15s") == "FALSE_REJECTION_OPPORTUNITY_LOST"
+        ]
+        v_l2_missed_avg = (sum(missed_sym_v2) / len(missed_sym_v2)) if missed_sym_v2 else 1.0
+        ratio_missed_sym = (len(missed_sym_v2) / float(len(esc_sym))) if esc_sym else 0.0
+
+        grad_v_l2 = (
+            ratio_bad_sym * (max(0.0, v_l2_win_avg - v_l2_bad_avg) + max(0.0, 0.72 - v_l2_bad_avg))
+            - 0.35 * ratio_missed_sym * max(0.0, v_l2_missed_avg - 1.10)
+        )
+
+        beta1, beta2, eps_adam = 0.80, 0.92, 1e-6
+        m_prev = float(ctrl.get(f"_adam_m_{sym}", 0.0) or 0.0)
+        v_prev = float(ctrl.get(f"_adam_v_{sym}", 0.0) or 0.0)
+        t_step = int(ctrl.get(f"_adam_t_{sym}", 0) or 0) + 1
+        m_curr = (beta1 * m_prev) + ((1.0 - beta1) * grad_v_l2)
+        v_curr = (beta2 * v_prev) + ((1.0 - beta2) * (grad_v_l2 * grad_v_l2))
+        m_hat = m_curr / (1.0 - (beta1 ** t_step))
+        v_hat = v_curr / (1.0 - (beta2 ** t_step))
+        paso_adam = (m_hat / (math.sqrt(max(0.0, v_hat)) + eps_adam)) if abs(grad_v_l2) > 1e-7 else 0.0
+
+        adam_estado[f"_adam_m_{sym}"] = round(m_curr, 6)
+        adam_estado[f"_adam_v_{sym}"] = round(v_curr, 6)
+        adam_estado[f"_adam_t_{sym}"] = float(min(1000, t_step))
+
+        alpha_base_sym = min(1.18, float(perf["alpha_disloc"]))
+        alpha_prev_sym = float(ctrl.get(f"alpha_disloc_{sym}", alpha_base_sym) or alpha_base_sym)
+        if abs(grad_v_l2) > 1e-7:
+            alpha_nuevo = (0.60 * alpha_base_sym) + (0.40 * alpha_prev_sym) + (0.045 * paso_adam)
+        else:
+            alpha_nuevo = alpha_base_sym
+        alpha_clamped = round(max(0.88, min(1.18, alpha_nuevo)), 4)
+        ctrl[f"alpha_disloc_{sym}"] = alpha_clamped
+        alpha_elastico_por_par[f"alpha_disloc_{sym}"] = alpha_clamped
+
+        sesgo_prev_sym = float(ctrl.get(f"sesgo_escudo_{sym}", 0.0) or 0.0)
+        sesgo_nuevo = (0.82 * sesgo_prev_sym) + (0.025 * paso_adam)
+        sesgo_clamped = round(max(-0.08, min(0.10, sesgo_nuevo)), 4)
+        ctrl[f"sesgo_escudo_{sym}"] = sesgo_clamped
+        sesgo_escudo_por_par[f"sesgo_escudo_{sym}"] = sesgo_clamped
+
+    w1_base = float(ctrl.get("w1_ofi_long", cfg.OFI_MIN_ENTRADA) or cfg.OFI_MIN_ENTRADA)
+    scratches_rec = v2_scratches_recientes[-12:]
+    v_l2_scratch_avg = (sum(scratches_rec) / len(scratches_rec)) if scratches_rec else v_l2_bad_global
+    if len(scratches_rec) >= 2 and v_l2_scratch_avg < 0.55:
+        inc_w1 = max(0.0, 0.60 - v_l2_bad_global) * 0.04
+        ctrl["w1_ofi_long"] = round(max(0.055, min(0.140, w1_base + inc_w1)), 4)
+    else:
+        ctrl["w1_ofi_long"] = round(max(0.055, min(0.140, w1_base)), 4)
 
     hurst_saves = sum(
         1 for e in escudos_dedup[-40:]
@@ -275,4 +432,14 @@ def auto_calibrar_sensibilidades_en_vivo(estado_ram: Any, ejecutor: Any) -> Dict
         and e.get("veredicto_oraculo_15s") == "CAPITAL_SAVED_TRUE_SHIELD"
     )
     ctrl["sens_climax_hurst_override"] = 0.0 if hurst_saves >= 1 else 0.0
+
+    ctrl["diag_v_l2_bad_avg"] = round(v_l2_bad_global, 4)
+    ctrl["diag_v_l2_win_avg"] = round(v_l2_win_global, 4)
+    ctrl_sanitizado = cfg.sanitizar_controlador_autonomo(ctrl)
+    ctrl.update(ctrl_sanitizado)
+    ctrl.update(alpha_elastico_por_par)
+    ctrl.update(sesgo_escudo_por_par)
+    ctrl.update(adam_estado)
+    ctrl["diag_v_l2_bad_avg"] = round(v_l2_bad_global, 4)
+    ctrl["diag_v_l2_win_avg"] = round(v_l2_win_global, 4)
     return dict(ctrl)
