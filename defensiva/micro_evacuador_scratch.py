@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Defensivo #4: Geometria MarkPrice Stop-Loss (SEI-02), Calculo de
-Niveles SL Iniciales, Ley 2 (RF-18) de Evacuacion Pasiva Maker-Scratch con
-Deriva Adimensional de DeLise (arXiv:2407.16527) y Cotizacion Directa BBO con
-Tope de 1 Re-Peg para HFT Doctor Blythe Terpsichora V7.0.
+Niveles SL Iniciales, Reloj Intrinseco de Variacion Cuadratica tau_QV (arXiv:2606.01477),
+Ley 2 (RF-18) de Evacuacion Pasiva Maker-Scratch con Deriva Adimensional de DeLise
+(arXiv:2407.16527) y Cotizacion Directa BBO con Tope de 1 Re-Peg (Terpsichora V7.0).
 """
 import math
 from typing import Dict, Optional, Tuple
@@ -50,6 +50,32 @@ def ajustar_geometria_sl_markprice(
     return sl_seguro
 
 
+def calcular_edad_intrinseca_qv(
+    edad_seg: float,
+    symbol: str = "",
+    volatilidad_bv_raw: float = 0.0,
+) -> float:
+    """
+    Reloj Intrinseco de Variacion Cuadratica tau_QV (arXiv:2606.01477):
+    Escala el tiempo cronologico por la actividad difusiva relativa del par
+    rho_QV = clip(sigma_bv_raw / sigma_ref, 0.65, 1.55).
+    """
+    t_wall = max(0.0, float(edad_seg))
+    if cfg.es_modo_test() or not symbol:
+        return t_wall
+    s_floor, s_ref, s_ceil = cfg.obtener_perfil_elasticidad_bv(symbol)
+    sigma_act = float(volatilidad_bv_raw or 0.0)
+    if sigma_act <= 0.0:
+        m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol)
+        if m_live is not None:
+            sigma_act = float(getattr(m_live, "volatilidad_bv_raw", m_live.volatilidad_bv) or s_ref)
+        else:
+            sigma_act = s_ref
+    sigma_clamped = max(s_floor, min(s_ceil, sigma_act))
+    rho_qv = max(0.65, min(1.55, sigma_clamped / max(1e-6, s_ref)))
+    return round(t_wall * rho_qv, 3)
+
+
 def calcular_pendiente_recuperacion_delise(
     pnl_pct: float,
     mae_pct: float,
@@ -91,7 +117,7 @@ def evaluar_gatillo_maker_scratch_18s(
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
 
     if fill_post_aborto and edad_seg >= 10.0 and not trinquete_be_activo:
-        if mfe_pct <= 0.00015 and pnl_pct <= -0.00055:
+        if mfe_pct <= 0.00032 and pnl_pct <= -0.00055:
             return True
 
     pendiente_delise = calcular_pendiente_recuperacion_delise(
@@ -109,10 +135,11 @@ def evaluar_gatillo_maker_scratch_18s(
         and v_l2 >= 0.50
     )
 
+    # 1. Regla Invariante RF-18 + Early Flat-Scratch sobre fills que no cubrieron comision RT (MFE <= +0.032%)
     sin_rebote_18s = (
         edad_seg >= 18.0
         and not trinquete_be_activo
-        and mfe_pct <= 0.00015
+        and mfe_pct <= 0.00032
         and pnl_pct <= -0.0007
         and not recuperacion_delise_activa
     )
@@ -184,11 +211,6 @@ def calcular_concesion_ticks_scratch_elastica(
     mfe_alcanzado_pct: float = 0.0,
     lvr_par: float = 0.002,
 ) -> int:
-    """
-    Calcula la cota elastica de ticks para evacuacion pasiva Maker-Scratch:
-    Permite cotizar directamente sobre la punta activa (1 a 2 ticks) sin colgar
-    la orden en entry_price ni perseguir el libro en caida libre (>2 ticks).
-    """
     if cfg.es_modo_test():
         return 1
     toxicidad = max(0.0, -float(ofi_dir) - 0.25) + max(0.0, float(lvr_par) - 0.002) * 10.0

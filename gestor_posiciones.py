@@ -987,9 +987,11 @@ class GestorPosicionesChronosTriz:
         hurst_live = m_live.hurst if m_live is not None else pos.hurst_entrada
         acel_live = m_live.aceleracion_lyapunov if m_live is not None else pos.lyapunov_entrada
         acel_dir_live = acel_live if pos.direccion == "LONG" else -acel_live
+        vol_raw_live = float(getattr(m_live, "volatilidad_bv_raw", pos.volatilidad_bv_raw_entrada) or pos.volatilidad_bv_entrada)
+        edad_qv = mes.calcular_edad_intrinseca_qv(edad, symbol=pos.symbol, volatilidad_bv_raw=vol_raw_live)
         try:
             ventana_28s_ok = mes.evaluar_ventana_elastica_scratch_28s(
-                edad,
+                edad_qv,
                 pos.max_pnl_pct_alcanzado,
                 pnl_pct,
                 ofi_dir_live,
@@ -998,7 +1000,7 @@ class GestorPosicionesChronosTriz:
             )
             wald_scratch_ready = ventana_28s_ok and mes.evaluar_gatillo_maker_scratch_18s(
                 pos.direccion,
-                edad,
+                edad_qv,
                 pnl_pct,
                 pos.max_pnl_pct_alcanzado,
                 ofi_5s,

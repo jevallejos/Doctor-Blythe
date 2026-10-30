@@ -62,7 +62,7 @@ def calcular_perfil_bayesiano_par(
 ) -> Dict[str, float]:
     ultimas = ops_par[-12:] if ops_par else []
     n = len(ultimas)
-    if n < 2:
+    if n < 1:
         return {
             "trades": float(n),
             "lambda_cred": 0.0,
@@ -205,10 +205,16 @@ def calcular_pesos_elasticos_antifalso_scratch(
         if not sym:
             continue
         por_par.setdefault(sym, {"mfe": [], "mae": [], "lvr": [], "pnl": []})
-        mfe_raw = abs(float(r.get("mfe_max_pnl_pct", r.get("mfe_pct", 0.08)) or 0.08))
-        mfe_dec = max(0.00005, mfe_raw / 100.0 if mfe_raw > 0.02 else mfe_raw)
-        mae_raw = abs(float(r.get("mae_min_pnl_pct", r.get("mae_pct", 0.08)) or 0.08))
-        mae_dec = max(0.00005, mae_raw / 100.0 if mae_raw > 0.02 else mae_raw)
+        if "mfe_max_pnl_pct" in r:
+            mfe_dec = max(0.00005, abs(float(r.get("mfe_max_pnl_pct", 0.0) or 0.0)) / 100.0)
+        else:
+            mfe_raw = abs(float(r.get("mfe_pct", 0.0008) or 0.0008))
+            mfe_dec = max(0.00005, mfe_raw / 100.0 if mfe_raw > 0.02 else mfe_raw)
+        if "mae_min_pnl_pct" in r:
+            mae_dec = max(0.00005, abs(float(r.get("mae_min_pnl_pct", 0.0) or 0.0)) / 100.0)
+        else:
+            mae_raw = abs(float(r.get("mae_pct", 0.0008) or 0.0008))
+            mae_dec = max(0.00005, mae_raw / 100.0 if mae_raw > 0.02 else mae_raw)
         por_par[sym]["mfe"].append(mfe_dec)
         por_par[sym]["mae"].append(mae_dec)
         por_par[sym]["lvr"].append(abs(float(r.get("lvr_bps", r.get("lvr", 0.002)) or 0.002)))
@@ -225,11 +231,13 @@ def calcular_pesos_elasticos_antifalso_scratch(
         fee_cover = avg_mfe / 0.0012
         penal_pnl = max(0.0, -net_pnl_sym * 0.10)
 
+        piso_disloc = 1.00 if (edge_p < 1.05 or net_pnl_sym <= 0.0) else 0.92
+        techo_kelly = 1.00 if (edge_p < 1.00 or net_pnl_sym < 0.0) else 1.12
         disloc_m = min(
             1.40,
-            max(0.90, 1.0 + 0.28 * (1.05 - edge_p) + 0.22 * max(0.0, 1.0 - fee_cover) + 12.0 * avg_lvr + penal_pnl),
+            max(piso_disloc, 1.0 + 0.28 * (1.05 - edge_p) + 0.22 * max(0.0, 1.0 - fee_cover) + 12.0 * avg_lvr + penal_pnl),
         )
-        kelly_m = min(1.12, max(0.72, math.tanh(edge_p) * min(1.08, max(0.68, fee_cover)) - min(0.18, penal_pnl * 0.5)))
+        kelly_m = min(techo_kelly, max(0.72, math.tanh(edge_p) * min(1.08, max(0.68, fee_cover)) - min(0.18, penal_pnl * 0.5)))
         pair_disloc[sym] = round(disloc_m, 3)
         pair_kelly[sym] = round(kelly_m, 3)
 
