@@ -205,10 +205,10 @@ def autorizar_repeg_con_derivada_ofi(
     es_long: bool,
     lvr_par: float = 0.002,
 ) -> bool:
-    """Bloquea Penny-Jump si el OFI se desacelera o la cola L1 se erosiona (Anti-Late-Fill Toxico)."""
+    """Bloquea Penny-Jump en cola si la primera derivada de OFI es negativa o la cola L1 se erosiona."""
     ofi_dir_now = float(ofi_actual) if es_long else -float(ofi_actual)
     ofi_dir_init = float(ofi_inicial) if es_long else -float(ofi_inicial)
     d_ofi_dt = (ofi_dir_now - ofi_dir_init) / max(0.10, float(dt_seg))
-    umbral_ofi = 0.48 + min(0.22, float(lvr_par) * 25.0)
-    umbral_q = 0.42 + min(0.20, float(lvr_par) * 20.0)
+    umbral_ofi = 0.45 + min(0.22, float(lvr_par) * 25.0)
+    umbral_q = 0.40 + min(0.20, float(lvr_par) * 20.0)
     return bool(ofi_dir_now >= umbral_ofi and d_ofi_dt >= -0.12 and float(q_ratio) >= umbral_q)

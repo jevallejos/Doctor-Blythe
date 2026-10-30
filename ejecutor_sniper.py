@@ -635,3 +635,27 @@ class EjecutorSniperBybit:
 
 
 EJECUTOR_GLOBAL = EjecutorSniperBybit()
+def validar_filtros_elasticos_disparo_y_repeg(
+    nocional_usdt: float,
+    liquidez_l1_usdt: float,
+    ofi_actual: float,
+    ofi_inicial: float,
+    dt_seg: float,
+    q_ratio: float,
+    es_long: bool,
+) -> Tuple[float, bool]:
+    """Conecta la cota de liquidez L1 y la guardia de derivada OFI en ejecutor_sniper.py."""
+    from ofensiva import micro_motor_maker as _mmm
+    from ofensiva import micro_sizing_kelly as _msk
+    noc_acotado = _msk.acotar_nocional_por_liquidez_l1_y_racha(
+        nocional_kelly_usdt=float(nocional_usdt),
+        liquidez_l1_usdt=float(liquidez_l1_usdt),
+    )
+    repeg_ok = _mmm.autorizar_repeg_con_derivada_ofi(
+        ofi_actual=float(ofi_actual),
+        ofi_inicial=float(ofi_inicial),
+        dt_seg=float(dt_seg),
+        q_ratio=float(q_ratio),
+        es_long=bool(es_long),
+    )
+    return noc_acotado, repeg_ok

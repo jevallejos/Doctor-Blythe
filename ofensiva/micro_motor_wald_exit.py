@@ -135,20 +135,23 @@ def calcular_ratchet_convexo_mfe_elastico(
     tick_size: float,
     fee_maker: float = 0.0002,
 ) -> float:
-    """Trinquete Convexo Elastico de Wald: bloquea fraccion continua del MFE sobre el piso SCAR-LOCK-14."""
+    """
+    Trinquete Convexo Elastico de Abraham Wald:
+    Bloquea una fraccion continua kappa_lock in [0.32, 0.78] del MFE por encima del piso libre de fees SCAR-LOCK-14.
+    """
     import math
     piso_fee_pct = 2.0 * float(fee_maker) + 0.00015
-    if float(mfe_pct) <= piso_fee_pct:
-        base = float(precio_entrada) * (1.0 + piso_fee_pct if es_long else 1.0 - piso_fee_pct)
-        return base
-    sig_mfe = 1.0 / (1.0 + math.exp(-((float(mfe_pct) - 0.0012) / 0.00035)))
+    mfe_dec = float(mfe_pct) / 100.0 if abs(float(mfe_pct)) > 0.05 else float(mfe_pct)
+    if mfe_dec <= piso_fee_pct:
+        return float(precio_entrada) * (1.0 + piso_fee_pct if es_long else 1.0 - piso_fee_pct)
+    sig_mfe = 1.0 / (1.0 + math.exp(-((mfe_dec - 0.0012) / 0.00035)))
     eta_clamped = max(0.0, min(1.0, float(eta_mfe_hist)))
     v_freno = math.tanh(max(0.0, float(v_l2)))
     kappa_lock = max(0.32, min(0.78, 0.38 + 0.30 * sig_mfe + 0.18 * (1.0 - eta_clamped) - 0.15 * v_freno))
-    ganancia_bloqueada_pct = max(piso_fee_pct, float(mfe_pct) * kappa_lock)
+    ganancia_bloqueada_pct = max(piso_fee_pct, mfe_dec * kappa_lock)
+    t_sz = float(tick_size) if float(tick_size) > 0.0 else 0.0
     if es_long:
         raw_p = float(precio_entrada) * (1.0 + ganancia_bloqueada_pct)
-        return math.ceil(raw_p / float(tick_size)) * float(tick_size) if tick_size > 0 else raw_p
-    else:
-        raw_p = float(precio_entrada) * (1.0 - ganancia_bloqueada_pct)
-        return math.floor(raw_p / float(tick_size)) * float(tick_size) if tick_size > 0 else raw_p
+        return round(math.ceil(raw_p / t_sz) * t_sz, 8) if t_sz > 0.0 else raw_p
+    raw_p = float(precio_entrada) * (1.0 - ganancia_bloqueada_pct)
+    return round(math.floor(raw_p / t_sz) * t_sz, 8) if t_sz > 0.0 else raw_p

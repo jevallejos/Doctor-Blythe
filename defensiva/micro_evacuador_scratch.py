@@ -295,14 +295,17 @@ def calcular_concesion_ticks_scratch_elastica(
     mfe_alcanzado_pct: float = 0.0,
     lvr_par: float = 0.002,
 ) -> int:
-    """Ley Elastica Zero-Giveaway: prohibe regalar ticks en scratch mientras no exista flujo toxico confirmado."""
+    """
+    Ley Elastica Zero-Giveaway (Anti-Falso-Scratch):
+    Prohibe regalar ticks bajo el precio de entrada antes de 64s salvo flujo toxico confirmado (ofi_dir <= -0.38).
+    """
     import math
-    toxicidad = max(0.0, -float(ofi_dir) - 0.35)
+    toxicidad = max(0.0, -float(ofi_dir) - 0.35) + max(0.0, float(lvr_par) - 0.002) * 10.0
     escudo_mfe = math.tanh(max(0.0, float(mfe_alcanzado_pct)) / 0.0008)
-    # Antes de 64s, si el flujo no es letal (ofi_dir > -0.38), 0 ticks de regalo bajo entrada
     if float(edad_posicion_seg) < 64.0 and float(ofi_dir) > -0.38:
         return 0
     if float(edad_posicion_seg) < 76.0 and toxicidad < 0.25:
-        return 1 if float(delta_t_orden_salida) >= 12.0 * (1.0 + 0.4 * escudo_mfe) else 0
+        umbral_espera = 12.0 * (1.0 + 0.40 * escudo_mfe)
+        return 1 if float(delta_t_orden_salida) >= umbral_espera else 0
     pasos_urgencia = int(max(0.0, float(edad_posicion_seg) - 76.0) // 7.0)
     return min(2, 1 + pasos_urgencia)

@@ -635,6 +635,7 @@ class GestorPosicionesChronosTriz:
             return None
         ts_now = float(ahora) if ahora is not None else time.time()
         edad = ts_now - pos.timestamp_apertura
+        _ = calcular_ajuste_elastico_posicion_en_vivo(pos, max(0.0, edad), ofi_5s, tick_size)
         pnl_pct = pos.actualizar_excursion(precio_actual, ts_now)
         ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
         m_live = ram.ESTADO_GLOBAL.metricas_ticks.get(pos.symbol)
@@ -1229,3 +1230,33 @@ def imprimir_auditoria_forense_cli() -> None:
 
 
 GESTOR_POSICIONES = GestorPosicionesChronosTriz()
+def calcular_ajuste_elastico_posicion_en_vivo(
+    pos: Any,
+    edad_seg: float,
+    ofi_actual: float,
+    tick_size: float,
+) -> Dict[str, float]:
+    """Enlaza Zero-Giveaway Elastic Scratch y el Trinquete Convexo de Wald en gestor_posiciones.py."""
+    from defensiva import micro_evacuador_scratch as _mes
+    from ofensiva import micro_motor_wald_exit as _mmwe
+    es_long = str(getattr(pos, "side", "LONG")).upper() in ("BUY", "LONG")
+    ofi_dir = float(ofi_actual) if es_long else -float(ofi_actual)
+    mfe_pct = float(getattr(pos, "mfe_max_pnl_pct", 0.0) or 0.0)
+    ticks_giveaway = _mes.calcular_concesion_ticks_scratch_elastica(
+        edad_posicion_seg=float(edad_seg),
+        delta_t_orden_salida=max(0.0, float(edad_seg) - 18.0),
+        ofi_dir=ofi_dir,
+        mfe_alcanzado_pct=mfe_pct / 100.0,
+    )
+    piso_convexo = _mmwe.calcular_ratchet_convexo_mfe_elastico(
+        precio_entrada=float(getattr(pos, "entry_price", 0.0) or 0.0),
+        mfe_pct=mfe_pct,
+        v_l2=float(getattr(pos, "vacio_l2_entrada", 1.0) or 1.0),
+        eta_mfe_hist=0.50,
+        es_long=es_long,
+        tick_size=float(tick_size),
+    )
+    return {
+        "ticks_scratch_giveaway": float(ticks_giveaway),
+        "piso_wald_convexo": float(piso_convexo),
+    }

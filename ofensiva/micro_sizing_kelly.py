@@ -134,10 +134,13 @@ def acotar_nocional_por_liquidez_l1_y_racha(
     pnl_neto_ultimos_10: float = 0.0,
     map_historico_usdt: float = 14.0,
 ) -> float:
-    """Acota elasticamente el nocional por profundidad L1 e inercia neta de comisiones."""
+    """Acota elasticamente el nocional de disparo segun la liquidez en punta L1 y el PnL neto reciente."""
     import math
-    factor_edge = math.tanh(max(0.25, float(edge_ratio_par)))
-    cota_l1 = max(8.0, 0.14 * float(liquidez_l1_usdt) * factor_edge) if float(liquidez_l1_usdt) > 0 else float(nocional_kelly_usdt)
+    noc_base = float(nocional_kelly_usdt)
+    if float(liquidez_l1_usdt) <= 0.0:
+        return noc_base
+    factor_edge = math.tanh(max(0.35, float(edge_ratio_par)))
+    cota_l1 = max(8.0, 0.18 * float(liquidez_l1_usdt) * factor_edge)
     sig_racha = 1.0 / (1.0 + math.exp(-float(pnl_neto_ultimos_10) / 0.05))
-    cota_transicion = max(12.0, float(map_historico_usdt) * (1.0 + 0.85 * sig_racha))
-    return float(min(float(nocional_kelly_usdt), cota_l1, cota_transicion))
+    cota_racha = max(12.0, float(map_historico_usdt) * (1.15 + 0.85 * sig_racha))
+    return round(min(noc_base, max(noc_base * 0.55, min(cota_l1, cota_racha))), 4)
