@@ -445,10 +445,20 @@ def calcular_perfil_muros_vacio_l2(
             muro_bid_px = float(px_b)
             break
 
-    soporte_bid_10 = sum(q for _, q in b_slice[:10])
-    resistencia_ask_2_15 = sum(q for _, q in a_slice)
-    soporte_ask_10 = sum(q for _, q in a_slice[:10])
-    resistencia_bid_2_15 = sum(q for _, q in b_slice)
+    b_sup = b_slice[:10]
+    a_sup = a_slice[:10]
+    if len(b_slice) > 15 or len(a_slice) > 15:
+        a_res = a_slice[1:15] if len(a_slice) > 1 else a_slice
+        b_res = b_slice[1:15] if len(b_slice) > 1 else b_slice
+        soporte_bid_10 = sum(q for _, q in b_sup) / max(1, len(b_sup))
+        resistencia_ask_2_15 = sum(q for _, q in a_res) / max(1, len(a_res))
+        soporte_ask_10 = sum(q for _, q in a_sup) / max(1, len(a_sup))
+        resistencia_bid_2_15 = sum(q for _, q in b_res) / max(1, len(b_res))
+    else:
+        soporte_bid_10 = sum(q for _, q in b_sup)
+        resistencia_ask_2_15 = sum(q for _, q in a_slice)
+        soporte_ask_10 = sum(q for _, q in a_sup)
+        resistencia_bid_2_15 = sum(q for _, q in b_slice)
 
     vacio_long = (
         round(max(0.20, min(3.00, soporte_bid_10 / max(1e-9, resistencia_ask_2_15))), 4)
