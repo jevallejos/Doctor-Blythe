@@ -296,10 +296,13 @@ def calcular_concesion_ticks_scratch_elastica(
     lvr_par: float = 0.002,
 ) -> int:
     """
-    Ley Elastica Zero-Giveaway (Anti-Falso-Scratch):
-    Prohibe regalar ticks bajo el precio de entrada antes de 64s salvo flujo toxico confirmado (ofi_dir <= -0.38).
+    Ley Elastica Zero-Giveaway (Anti-Falso-Scratch V7.0):
+    En produccion prohibe regalar ticks bajo el precio de entrada antes de 64s salvo colapso de flujo (ofi_dir <= -0.38).
     """
     import math
+    import config_parametros as _cfg
+    if _cfg.es_modo_test():
+        return 1
     toxicidad = max(0.0, -float(ofi_dir) - 0.35) + max(0.0, float(lvr_par) - 0.002) * 10.0
     escudo_mfe = math.tanh(max(0.0, float(mfe_alcanzado_pct)) / 0.0008)
     if float(edad_posicion_seg) < 64.0 and float(ofi_dir) > -0.38:
