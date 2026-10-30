@@ -413,13 +413,13 @@ def auto_calibrar_sensibilidades_en_vivo(
         adam_estado[f"_adam_v_{sym}"] = round(v_curr, 6)
         adam_estado[f"_adam_t_{sym}"] = float(min(1000, t_step))
 
-        alpha_base_sym = min(1.18, float(perf["alpha_disloc"]))
+        alpha_base_sym = min(1.40, float(perf["alpha_disloc"]))
         alpha_prev_sym = float(ctrl.get(f"alpha_disloc_{sym}", alpha_base_sym) or alpha_base_sym)
         if abs(grad_v_l2) > 1e-7:
             alpha_nuevo = (0.60 * alpha_base_sym) + (0.40 * alpha_prev_sym) + (0.045 * paso_adam)
         else:
             alpha_nuevo = alpha_base_sym
-        alpha_clamped = round(max(0.88, min(1.18, alpha_nuevo)), 4)
+        alpha_clamped = round(max(0.88, min(1.40, alpha_nuevo)), 4)
         ctrl[f"alpha_disloc_{sym}"] = alpha_clamped
         alpha_elastico_por_par[f"alpha_disloc_{sym}"] = alpha_clamped
 
@@ -445,7 +445,7 @@ def auto_calibrar_sensibilidades_en_vivo(
     )
     ctrl["sens_climax_hurst_override"] = 0.0 if hurst_saves >= 1 else 0.0
 
-    pesos_antifalso = calcular_pesos_elasticos_antifalso_scratch(ops_hist[-40:], escudos_dedup[-40:])
+    pesos_antifalso = calcular_pesos_elasticos_antifalso_scratch(ops_hist[-40:], post_cierres[-40:])
     if not cfg.es_modo_test() and ops_hist:
         ctrl["sens_scratch_edad_rebote_seg"] = round(
             max(
@@ -461,6 +461,16 @@ def auto_calibrar_sensibilidades_en_vivo(
             ),
             4,
         )
+        disloc_af_map = pesos_antifalso.get("pair_disloc_mult", {})
+        kelly_af_map = pesos_antifalso.get("pair_kelly_mult", {})
+        for sym_af in cfg.PARES_CAMPEONES:
+            if sym_af in disloc_af_map:
+                d_merged = round(min(1.40, max(float(alpha_elastico_por_par.get(f"alpha_disloc_{sym_af}", 1.0)), float(disloc_af_map[sym_af]))), 4)
+                alpha_elastico_por_par[f"alpha_disloc_{sym_af}"] = d_merged
+                ctrl[f"alpha_disloc_{sym_af}"] = d_merged
+            if sym_af in kelly_af_map:
+                k_merged = round(max(0.72, min(float(ctrl.get(f"w_kelly_{sym_af}", 1.0)), float(kelly_af_map[sym_af]))), 4)
+                ctrl[f"w_kelly_{sym_af}"] = k_merged
 
     ctrl["diag_v_l2_bad_avg"] = round(v_l2_bad_global, 4)
     ctrl["diag_v_l2_win_avg"] = round(v_l2_win_global, 4)
@@ -537,10 +547,16 @@ def calcular_pesos_elasticos_antifalso_scratch(
         if not sym:
             continue
         por_par.setdefault(sym, {"mfe": [], "mae": [], "lvr": [], "pnl": []})
-        mfe_raw = abs(float(r.get("mfe_max_pnl_pct", r.get("mfe_pct", 0.08)) or 0.08))
-        mae_raw = abs(float(r.get("mae_min_pnl_pct", r.get("mae_pct", 0.08)) or 0.08))
-        mfe_dec = mfe_raw / 100.0 if mfe_raw > 0.02 else mfe_raw
-        mae_dec = mae_raw / 100.0 if mae_raw > 0.02 else mae_raw
+        if "mfe_max_pnl_pct" in r:
+            mfe_dec = max(0.00005, abs(float(r.get("mfe_max_pnl_pct", 0.08) or 0.08)) / 100.0)
+        else:
+            mfe_raw = abs(float(r.get("mfe_pct", 0.0008) or 0.0008))
+            mfe_dec = mfe_raw / 100.0 if mfe_raw > 0.02 else mfe_raw
+        if "mae_min_pnl_pct" in r:
+            mae_dec = max(0.00005, abs(float(r.get("mae_min_pnl_pct", 0.08) or 0.08)) / 100.0)
+        else:
+            mae_raw = abs(float(r.get("mae_pct", 0.0008) or 0.0008))
+            mae_dec = mae_raw / 100.0 if mae_raw > 0.02 else mae_raw
         por_par[sym]["mfe"].append(mfe_dec)
         por_par[sym]["mae"].append(mae_dec)
         por_par[sym]["lvr"].append(abs(float(r.get("lvr_bps", r.get("lvr", 0.002)) or 0.002)))

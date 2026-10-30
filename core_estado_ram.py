@@ -212,6 +212,8 @@ class PosicionActiva:
     fpt_race_ratio: float = 0.0
     pendiente_delise: float = 0.0
     mfe_capture_ratio: float = 0.0
+    cota_ticks_scratch_elastica: int = 0
+    piso_wald_convexo_elastico: float = 0.0
 
     def __post_init__(self) -> None:
         if self.max_precio_favorable <= 0.0:

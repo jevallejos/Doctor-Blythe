@@ -44,8 +44,12 @@ def calcular_piso_be_maker(
     precio_entrada: float,
     side: str,
     tick_size: float = 0.0001,
+    mfe_pct: float = 0.0,
+    v_l2: float = 1.0,
 ) -> float:
-    return mmw.calcular_piso_cero_perdida(precio_entrada, side, tick_size=tick_size)
+    return mmw.calcular_piso_cero_perdida(
+        precio_entrada, side, tick_size=tick_size, mfe_pct=mfe_pct, v_l2=v_l2
+    )
 
 
 def calcular_kappa_convexo_wald(
@@ -467,6 +471,8 @@ class GestorPosicionesChronosTriz:
                     edad_orden_salida_seg=edad_orden_act,
                     repeg_salida_count=pos.repeg_salida_count,
                     vacio_l2_ratio=vacio_exit,
+                    edad_posicion_seg=max(0.0, ahora - pos.timestamp_apertura),
+                    mfe_alcanzado_pct=pos.max_pnl_pct_alcanzado,
                 )
             except TypeError:
                 px_target = mes.calcular_precio_scratch_acotado_un_tick(
@@ -491,7 +497,7 @@ class GestorPosicionesChronosTriz:
             piso_be = (
                 pos.sl_interno
                 if (pos.trinquete_be_activo and pos.sl_interno > 0.0)
-                else calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size)
+                else calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size, mfe_pct=pos.max_pnl_pct_alcanzado, v_l2=vacio_exit)
             )
             if "TRINQUETE_BE" in motivo_up and (
                 pos.repeg_salida_count >= 1
@@ -1236,21 +1242,25 @@ def calcular_ajuste_elastico_posicion_en_vivo(
     ofi_actual: float,
     tick_size: float,
 ) -> Dict[str, float]:
-    """Aplica en vivo Zero-Giveaway Elastic Scratch y el Trinquete Convexo de Wald sobre la posicion activa."""
+    """Aplica en vivo Zero-Giveaway Elastic Scratch y el Trinquete Convexo de Wald sobre PosicionActiva(slots=True)."""
     import config_parametros as _cfg_gp
     from defensiva import micro_evacuador_scratch as _mes
     from ofensiva import micro_motor_wald_exit as _mmwe
     es_long = str(getattr(pos, "side", "LONG")).upper() in ("BUY", "LONG")
     ofi_dir = float(ofi_actual) if es_long else -float(ofi_actual)
-    mfe_pct = float(getattr(pos, "mfe_max_pnl_pct", 0.0) or 0.0)
+    mfe_pct = float(getattr(pos, "max_pnl_pct_alcanzado", 0.0) or 0.0)
+    px_in = float(getattr(pos, "precio_entrada", 0.0) or 0.0)
+    ts_ord = float(getattr(pos, "ts_orden_salida", 0.0) or 0.0)
+    en_cierre = bool(getattr(pos, "en_proceso_cierre", False))
+    edad_ord = max(0.0, time.time() - ts_ord) if (en_cierre and ts_ord > 0.0) else 0.0
     ticks_giveaway = _mes.calcular_concesion_ticks_scratch_elastica(
         edad_posicion_seg=float(edad_seg),
-        delta_t_orden_salida=max(0.0, float(edad_seg) - 18.0),
+        delta_t_orden_salida=edad_ord,
         ofi_dir=ofi_dir,
-        mfe_alcanzado_pct=mfe_pct / 100.0,
+        mfe_alcanzado_pct=mfe_pct,
     )
     piso_convexo = _mmwe.calcular_ratchet_convexo_mfe_elastico(
-        precio_entrada=float(getattr(pos, "entry_price", 0.0) or 0.0),
+        precio_entrada=px_in,
         mfe_pct=mfe_pct,
         v_l2=float(getattr(pos, "vacio_l2_entrada", 1.0) or 1.0),
         eta_mfe_hist=0.50,
@@ -1258,8 +1268,11 @@ def calcular_ajuste_elastico_posicion_en_vivo(
         tick_size=float(tick_size),
     )
     if not _cfg_gp.es_modo_test():
-        setattr(pos, "cota_ticks_scratch_elastica", int(ticks_giveaway))
-        setattr(pos, "piso_wald_convexo_elastico", float(piso_convexo))
+        try:
+            pos.cota_ticks_scratch_elastica = int(ticks_giveaway)
+            pos.piso_wald_convexo_elastico = float(piso_convexo)
+        except AttributeError:
+            pass
     return {
         "ticks_scratch_giveaway": float(ticks_giveaway),
         "piso_wald_convexo": float(piso_convexo),

@@ -103,14 +103,28 @@ def calcular_dimension_kelly_uta(
             map_historico_usdt=max(float(nocional_u), 14.0),
         )
         if symbol_usado and not cfg.es_modo_test():
+            import sys as _sys_mk
             ctrl_ram = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
-            edge_par = max(0.25, 1.0 + float(ctrl_ram.get(f"edge_post_{symbol_usado}", 0.0) or 0.0))
+            edge_par = max(0.25, float(ctrl_ram.get(f"edge_post_{symbol_usado}", 1.0) or 1.0))
+            m_live_k = ram.ESTADO_GLOBAL.metricas_ticks.get(symbol_usado)
+            liq_l1_real = 0.0
+            if m_live_k is not None and float(getattr(m_live_k, "mid", 0.0) or 0.0) > 0.0:
+                q_punta = max(float(getattr(m_live_k, "bid_qty", 0.0) or 0.0), float(getattr(m_live_k, "ask_qty", 0.0) or 0.0))
+                liq_l1_real = float(m_live_k.mid) * q_punta
+            pnl_10_real = 0.0
+            map_hist_real = max(float(nocional_u), 14.0)
+            st_mod_k = _sys_mk.modules.get("stats_tracker")
+            if st_mod_k is not None and hasattr(st_mod_k, "GESTOR_ESTADISTICAS"):
+                ops_k = list(getattr(st_mod_k.GESTOR_ESTADISTICAS, "operaciones", []) or [])[-10:]
+                if ops_k:
+                    pnl_10_real = sum(float(x.get("pnl_usdt", 0.0) or 0.0) for x in ops_k)
+                    map_hist_real = max(12.0, sum(float(x.get("map_usdt", 14.0) or 14.0) for x in ops_k) / len(ops_k))
             cota_l1_racha = acotar_nocional_por_liquidez_l1_y_racha(
                 float(nocional_u),
-                0.0,
+                liq_l1_real,
                 edge_ratio_par=edge_par,
-                pnl_neto_ultimos_10=0.0,
-                map_historico_usdt=max(float(nocional_u), 14.0),
+                pnl_neto_ultimos_10=pnl_10_real,
+                map_historico_usdt=map_hist_real,
             )
             nocional_u = round(max(min_ord, min(float(nocional_u), cota_l1_racha)), 4)
             margen_u = round(nocional_u / lev, 4)

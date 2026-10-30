@@ -237,7 +237,10 @@ def calcular_precio_scratch_acotado_un_tick(
         max_ticks_base + float(escalones_tiempo + escalones_repeg + escalon_vacio),
     )
     if not cfg.es_modo_test():
-        ticks_permitidos = min(5.0, float(max(concesion_zg, escalones_repeg + escalon_vacio)))
+        if float(edad_posicion_seg) < 64.0 and float(ofi_5s_dir) > -0.38 and v_l2 >= 0.48:
+            ticks_permitidos = float(concesion_zg)
+        else:
+            ticks_permitidos = min(4.0, float(max(concesion_zg, escalones_repeg + escalon_vacio)))
     max_dist_precio = (
         0.0
         if ticks_permitidos <= 0.0

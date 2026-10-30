@@ -405,6 +405,8 @@ class EjecutorSniperBybit:
                                 edad_en_nivel_seg=elapsed - ultimo_repeg_elapsed,
                                 ofi_ticks_racha=m_live.ofi_ticks_consecutivos,
                                 vacio_l2_ratio=vacio_live,
+                                ofi_inicial=ofi_val,
+                                q_ratio=q_l1_ratio_last,
                             )
                         except TypeError:
                             salto_ok, px_penny = mmm.evaluar_salto_punta_penny(

@@ -35,7 +35,7 @@ def calcular_impedancia_log_vacio_l2(
         ),
     )
     l_v2 = math.tanh(math.log(v_clip))
-    alpha = max(0.88, min(1.18, float(alpha_disloc or 1.0)))
+    alpha = max(0.88, min(1.40, float(alpha_disloc or 1.0)))
     if l_v2 < 0.0:
         psi = 1.0 - (0.26 * alpha) * l_v2
     else:
