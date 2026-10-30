@@ -151,6 +151,9 @@ def evaluar_salto_punta_penny(
     edad_en_nivel_seg: float = 1.0,
     ofi_ticks_racha: int = 0,
     vacio_l2_ratio: float = 1.0,
+    ofi_inicial: float = 0.0,
+    q_ratio: float = 1.0,
+    lvr_par: float = 0.002,
 ) -> Tuple[bool, float]:
     if not bool(getattr(cfg, "PENNY_JUMP_HABILITADO", True)):
         return False, precio_orden
@@ -170,7 +173,18 @@ def evaluar_salto_punta_penny(
     spread = ask_actual - bid_actual
     if spread <= 0.0:
         return False, precio_orden
-    if str(direccion).upper() in ("BUY", "LONG"):
+    es_long_dir = str(direccion).upper() in ("BUY", "LONG")
+    ok_deriv_ofi = autorizar_repeg_con_derivada_ofi(
+        ofi_actual,
+        ofi_inicial if ofi_inicial != 0.0 else ofi_actual,
+        edad_en_nivel_seg,
+        q_ratio,
+        es_long_dir,
+        lvr_par=lvr_par,
+    )
+    if not cfg.es_modo_test() and not ok_deriv_ofi:
+        return False, precio_orden
+    if es_long_dir:
         if bid_actual > (precio_orden + 0.5 * tick_size) and ofi_actual >= 0.35:
             candidato = min(bid_actual, ask_actual - tick_size, precio_orden + tick_size)
             if candidato > precio_orden:
@@ -181,3 +195,20 @@ def evaluar_salto_punta_penny(
             if candidato < precio_orden:
                 return True, round(candidato, 8)
     return False, precio_orden
+
+
+def autorizar_repeg_con_derivada_ofi(
+    ofi_actual: float,
+    ofi_inicial: float,
+    dt_seg: float,
+    q_ratio: float,
+    es_long: bool,
+    lvr_par: float = 0.002,
+) -> bool:
+    """Bloquea Penny-Jump si el OFI se desacelera o la cola L1 se erosiona (Anti-Late-Fill Toxico)."""
+    ofi_dir_now = float(ofi_actual) if es_long else -float(ofi_actual)
+    ofi_dir_init = float(ofi_inicial) if es_long else -float(ofi_inicial)
+    d_ofi_dt = (ofi_dir_now - ofi_dir_init) / max(0.10, float(dt_seg))
+    umbral_ofi = 0.48 + min(0.22, float(lvr_par) * 25.0)
+    umbral_q = 0.42 + min(0.20, float(lvr_par) * 20.0)
+    return bool(ofi_dir_now >= umbral_ofi and d_ofi_dt >= -0.12 and float(q_ratio) >= umbral_q)

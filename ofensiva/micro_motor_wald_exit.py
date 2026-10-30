@@ -13,6 +13,9 @@ def calcular_piso_cero_perdida(
     precio_entrada: float,
     direccion: str,
     tick_size: float = 0.0001,
+    mfe_pct: float = 0.0,
+    v_l2: float = 1.0,
+    eta_mfe_hist: float = 0.45,
 ) -> float:
     offset_min = max(
         float(cfg.TRINQUETE_BE_OFFSET_PCT),
@@ -21,17 +24,30 @@ def calcular_piso_cero_perdida(
     dir_norm = "LONG" if str(direccion).upper() in ("BUY", "LONG") else "SHORT"
     t_size = max(1e-8, float(tick_size))
     decimales = max(0, int(round(-math.log10(t_size)))) if t_size < 1.0 else 2
+    piso_ratchet = calcular_ratchet_convexo_mfe_elastico(
+        precio_entrada,
+        mfe_pct,
+        v_l2,
+        eta_mfe_hist,
+        dir_norm == "LONG",
+        t_size,
+        fee_maker=float(cfg.COMISION_MAKER_PCT),
+    )
     if dir_norm == "LONG":
         raw = precio_entrada * (1.0 + offset_min)
         piso = round(math.ceil((raw / t_size) - 1e-9) * t_size, decimales)
         if piso <= precio_entrada:
             piso = round(precio_entrada + max(t_size, 1e-6), 6)
+        if not cfg.es_modo_test() and mfe_pct > 0.00055:
+            piso = max(piso, round(piso_ratchet, decimales))
         return piso
     else:
         raw = precio_entrada * (1.0 - offset_min)
         techo = round(math.floor((raw / t_size) + 1e-9) * t_size, decimales)
         if techo >= precio_entrada:
             techo = round(precio_entrada - max(t_size, 1e-6), 6)
+        if not cfg.es_modo_test() and mfe_pct > 0.00055:
+            techo = min(techo, round(piso_ratchet, decimales))
         return techo
 
 
@@ -108,3 +124,31 @@ def debe_inhibir_maker_unwind_en_rally(
     if pnl_pct < 0.0011:
         return False
     return bool(retroceso <= tol_retroceso and ofi_dir >= 0.10)
+
+
+def calcular_ratchet_convexo_mfe_elastico(
+    precio_entrada: float,
+    mfe_pct: float,
+    v_l2: float,
+    eta_mfe_hist: float,
+    es_long: bool,
+    tick_size: float,
+    fee_maker: float = 0.0002,
+) -> float:
+    """Trinquete Convexo Elastico de Wald: bloquea fraccion continua del MFE sobre el piso SCAR-LOCK-14."""
+    import math
+    piso_fee_pct = 2.0 * float(fee_maker) + 0.00015
+    if float(mfe_pct) <= piso_fee_pct:
+        base = float(precio_entrada) * (1.0 + piso_fee_pct if es_long else 1.0 - piso_fee_pct)
+        return base
+    sig_mfe = 1.0 / (1.0 + math.exp(-((float(mfe_pct) - 0.0012) / 0.00035)))
+    eta_clamped = max(0.0, min(1.0, float(eta_mfe_hist)))
+    v_freno = math.tanh(max(0.0, float(v_l2)))
+    kappa_lock = max(0.32, min(0.78, 0.38 + 0.30 * sig_mfe + 0.18 * (1.0 - eta_clamped) - 0.15 * v_freno))
+    ganancia_bloqueada_pct = max(piso_fee_pct, float(mfe_pct) * kappa_lock)
+    if es_long:
+        raw_p = float(precio_entrada) * (1.0 + ganancia_bloqueada_pct)
+        return math.ceil(raw_p / float(tick_size)) * float(tick_size) if tick_size > 0 else raw_p
+    else:
+        raw_p = float(precio_entrada) * (1.0 - ganancia_bloqueada_pct)
+        return math.floor(raw_p / float(tick_size)) * float(tick_size) if tick_size > 0 else raw_p

@@ -95,6 +95,26 @@ def calcular_dimension_kelly_uta(
             nocional_u = round(max(min_ord, min(float(nocional_u), nocional_amortiguado)), 4)
             margen_u = round(nocional_u / lev, 4)
 
+        cota_l1_racha = acotar_nocional_por_liquidez_l1_y_racha(
+            float(nocional_u),
+            0.0,
+            edge_ratio_par=1.0,
+            pnl_neto_ultimos_10=0.0,
+            map_historico_usdt=max(float(nocional_u), 14.0),
+        )
+        if symbol_usado and not cfg.es_modo_test():
+            ctrl_ram = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+            edge_par = max(0.25, 1.0 + float(ctrl_ram.get(f"edge_post_{symbol_usado}", 0.0) or 0.0))
+            cota_l1_racha = acotar_nocional_por_liquidez_l1_y_racha(
+                float(nocional_u),
+                0.0,
+                edge_ratio_par=edge_par,
+                pnl_neto_ultimos_10=0.0,
+                map_historico_usdt=max(float(nocional_u), 14.0),
+            )
+            nocional_u = round(max(min_ord, min(float(nocional_u), cota_l1_racha)), 4)
+            margen_u = round(nocional_u / lev, 4)
+
         if balance_usado > 0.0 and not bool(getattr(cfg, "MODO_PAPER_TRADING", False)):
             max_nocional_seguro = round(balance_usado * 0.75 * lev, 4)
             if max_nocional_seguro >= min_ord:
@@ -105,3 +125,19 @@ def calcular_dimension_kelly_uta(
         return float(kelly_f), float(margen_u), float(nocional_u)
     except Exception:
         return fn(*args, **kwargs)
+
+
+def acotar_nocional_por_liquidez_l1_y_racha(
+    nocional_kelly_usdt: float,
+    liquidez_l1_usdt: float,
+    edge_ratio_par: float = 1.0,
+    pnl_neto_ultimos_10: float = 0.0,
+    map_historico_usdt: float = 14.0,
+) -> float:
+    """Acota elasticamente el nocional por profundidad L1 e inercia neta de comisiones."""
+    import math
+    factor_edge = math.tanh(max(0.25, float(edge_ratio_par)))
+    cota_l1 = max(8.0, 0.14 * float(liquidez_l1_usdt) * factor_edge) if float(liquidez_l1_usdt) > 0 else float(nocional_kelly_usdt)
+    sig_racha = 1.0 / (1.0 + math.exp(-float(pnl_neto_ultimos_10) / 0.05))
+    cota_transicion = max(12.0, float(map_historico_usdt) * (1.0 + 0.85 * sig_racha))
+    return float(min(float(nocional_kelly_usdt), cota_l1, cota_transicion))

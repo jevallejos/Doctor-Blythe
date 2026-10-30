@@ -443,6 +443,23 @@ def auto_calibrar_sensibilidades_en_vivo(
     )
     ctrl["sens_climax_hurst_override"] = 0.0 if hurst_saves >= 1 else 0.0
 
+    pesos_antifalso = calcular_pesos_elasticos_antifalso_scratch(ops_hist[-40:], escudos_dedup[-40:])
+    if not cfg.es_modo_test() and ops_hist:
+        ctrl["sens_scratch_edad_rebote_seg"] = round(
+            max(
+                float(ctrl.get("sens_scratch_edad_rebote_seg", 28.0)),
+                float(pesos_antifalso.get("tau_scratch_seg", 34.0)),
+            ),
+            2,
+        )
+        ctrl["sens_q_ratio_floor"] = round(
+            max(
+                float(ctrl.get("sens_q_ratio_floor", 0.22)),
+                float(pesos_antifalso.get("q_hold_abort", 0.24)),
+            ),
+            4,
+        )
+
     ctrl["diag_v_l2_bad_avg"] = round(v_l2_bad_global, 4)
     ctrl["diag_v_l2_win_avg"] = round(v_l2_win_global, 4)
     ctrl_sanitizado = cfg.sanitizar_controlador_autonomo(ctrl)
@@ -453,3 +470,67 @@ def auto_calibrar_sensibilidades_en_vivo(
     ctrl["diag_v_l2_bad_avg"] = round(v_l2_bad_global, 4)
     ctrl["diag_v_l2_win_avg"] = round(v_l2_win_global, 4)
     return dict(ctrl)
+
+
+def calcular_pesos_elasticos_antifalso_scratch(registros_cierres: list, registros_markout: list = None) -> dict:
+    """Auto-aprendizaje continuo sobre Falso Scratch, Fee-Drag, ETA_MFE y Edge Ratio por par."""
+    import math
+    if not registros_cierres:
+        return {
+            "tau_scratch_seg": 34.0,
+            "kappa_wald_base": 0.45,
+            "q_hold_abort": 0.24,
+            "pair_disloc_mult": {},
+            "pair_kelly_mult": {},
+        }
+    scratches = [r for r in registros_cierres if "SCRATCH" in str(r.get("exit_reason", ""))]
+    unwinds = [r for r in registros_cierres if str(r.get("exit_reason", "")) in ("MAKER_UNWIND", "TRINQUETE_BE_MAKER")]
+    eta_vals = [float(r.get("eta_mfe", 0.35)) for r in unwinds if r.get("eta_mfe") is not None]
+    eta_mean = sum(eta_vals) / len(eta_vals) if eta_vals else 0.45
+
+    rebounds = 0
+    saved_dumps = 0
+    if registros_markout:
+        for m in registros_markout:
+            verdict = str(m.get("veredicto_markout", ""))
+            if "EARLY_REBOUND" in verdict:
+                rebounds += 1
+            elif "SAVED_DUMP" in verdict:
+                saved_dumps += 1
+    rho_rebound = (rebounds + 1.0) / (rebounds + saved_dumps + 2.0)
+    # Dilata el horizonte de scratch si estamos cortando trades sanos que rebotan o si el scratch pierde por fees
+    scratch_loss_rate = sum(1 for s in scratches if float(s.get("pnl_usdt", 0.0)) < 0.0) / max(1, len(scratches))
+    tau_scratch = min(48.0, max(24.0, 28.0 * (1.0 + 0.40 * rho_rebound + 0.25 * scratch_loss_rate)))
+    kappa_wald = min(0.75, max(0.35, 0.40 + 0.25 * max(0.0, 0.65 - eta_mean)))
+
+    por_par = {}
+    for r in registros_cierres:
+        sym = str(r.get("symbol", ""))
+        if not sym:
+            continue
+        por_par.setdefault(sym, {"mfe": [], "mae": [], "lvr": [], "pnl": []})
+        por_par[sym]["mfe"].append(abs(float(r.get("mfe_pct", 0.0008))))
+        por_par[sym]["mae"].append(abs(float(r.get("mae_pct", 0.0008))))
+        por_par[sym]["lvr"].append(abs(float(r.get("lvr", 0.002))))
+        por_par[sym]["pnl"].append(float(r.get("pnl_usdt", 0.0)))
+
+    pair_disloc = {}
+    pair_kelly = {}
+    for sym, d in por_par.items():
+        avg_mfe = sum(d["mfe"]) / len(d["mfe"])
+        avg_mae = max(0.0004, sum(d["mae"]) / len(d["mae"]))
+        avg_lvr = sum(d["lvr"]) / len(d["lvr"])
+        edge_p = avg_mfe / avg_mae
+        fee_cover = avg_mfe / 0.0012  # 3x Maker round-trip fee (0.04%)
+        disloc_m = min(1.48, max(0.92, 1.0 + 0.35 * max(0.0, 1.15 - edge_p) + 0.30 * max(0.0, 1.0 - fee_cover) + 22.0 * avg_lvr))
+        kelly_m = min(1.12, max(0.62, math.tanh(edge_p) * min(1.10, max(0.65, fee_cover))))
+        pair_disloc[sym] = round(disloc_m, 3)
+        pair_kelly[sym] = round(kelly_m, 3)
+
+    return {
+        "tau_scratch_seg": round(tau_scratch, 2),
+        "kappa_wald_base": round(kappa_wald, 3),
+        "q_hold_abort": round(min(0.38, max(0.20, 0.20 + 0.12 * scratch_loss_rate)), 3),
+        "pair_disloc_mult": pair_disloc,
+        "pair_kelly_mult": pair_kelly,
+    }

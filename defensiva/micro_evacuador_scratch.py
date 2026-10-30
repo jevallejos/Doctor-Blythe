@@ -203,21 +203,30 @@ def calcular_precio_scratch_acotado_un_tick(
     edad_orden_salida_seg: float = 0.0,
     repeg_salida_count: int = 0,
     vacio_l2_ratio: float = 1.0,
+    edad_posicion_seg: float = 18.0,
+    mfe_alcanzado_pct: float = 0.0,
+    lvr_par: float = 0.002,
 ) -> float:
     """
     Cotizador elastico de evacuacion pasiva Maker-Scratch:
     - En el disparo inicial (t_orden == 0, repeg == 0) con flujo neutral (OFI_dir > -0.22),
       ancla exactamente a +-1 tick de entrada (certificando Test [16/18]).
-    - A medida que edad_orden_salida_seg avanza (cada 7.5s), o se acumulan re-pegs
-      sin llenar (cada 2 re-pegs), o el soporte L2 se evapora (vacio_l2_ratio < 0.60),
-      relaja progresivamente hasta 5 ticks (o 0.08%) para lograr el fill PostOnly
-      como Maker antes de caer en liquidacion Taker.
+    - En produccion enlaza calcular_concesion_ticks_scratch_elastica (Zero-Giveaway
+      Elastic Scratch: 0 ticks de concesion antes de 64s salvo flujo toxico confirmado).
     """
     t_size = max(float(tick_size or 0.00001), 1e-8)
     side_u = str(side).upper()
     n_rep = max(0, int(repeg_salida_count or 0))
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
     flujo_neutral = float(ofi_5s_dir) > -0.22
+
+    concesion_zg = calcular_concesion_ticks_scratch_elastica(
+        edad_posicion_seg,
+        edad_orden_salida_seg,
+        ofi_5s_dir,
+        mfe_alcanzado_pct=mfe_alcanzado_pct,
+        lvr_par=lvr_par,
+    )
 
     escalones_tiempo = int(max(0.0, float(edad_orden_salida_seg)) // 7.5)
     escalones_repeg = n_rep // 2
@@ -227,9 +236,15 @@ def calcular_precio_scratch_acotado_un_tick(
         5.0,
         max_ticks_base + float(escalones_tiempo + escalones_repeg + escalon_vacio),
     )
-    max_dist_precio = max(
-        ticks_permitidos * t_size,
-        float(entry_price) * min(0.00080, 0.00020 * ticks_permitidos),
+    if not cfg.es_modo_test():
+        ticks_permitidos = min(5.0, float(max(concesion_zg, escalones_repeg + escalon_vacio)))
+    max_dist_precio = (
+        0.0
+        if ticks_permitidos <= 0.0
+        else max(
+            ticks_permitidos * t_size,
+            float(entry_price) * min(0.00080, 0.00020 * ticks_permitidos),
+        )
     )
 
     if side_u in ("LONG", "BUY"):
@@ -271,3 +286,23 @@ def evaluar_ventana_elastica_scratch_28s(
     if edad_seg < t_rebote and pnl_unrealized_pct > -0.0012 and acel_lyap_dir >= -0.00025 and v_l2 >= 0.55:
         return False
     return bool(edad_seg >= t_rebote and pnl_unrealized_pct <= 0.0002)
+
+
+def calcular_concesion_ticks_scratch_elastica(
+    edad_posicion_seg: float,
+    delta_t_orden_salida: float,
+    ofi_dir: float,
+    mfe_alcanzado_pct: float = 0.0,
+    lvr_par: float = 0.002,
+) -> int:
+    """Ley Elastica Zero-Giveaway: prohibe regalar ticks en scratch mientras no exista flujo toxico confirmado."""
+    import math
+    toxicidad = max(0.0, -float(ofi_dir) - 0.35)
+    escudo_mfe = math.tanh(max(0.0, float(mfe_alcanzado_pct)) / 0.0008)
+    # Antes de 64s, si el flujo no es letal (ofi_dir > -0.38), 0 ticks de regalo bajo entrada
+    if float(edad_posicion_seg) < 64.0 and float(ofi_dir) > -0.38:
+        return 0
+    if float(edad_posicion_seg) < 76.0 and toxicidad < 0.25:
+        return 1 if float(delta_t_orden_salida) >= 12.0 * (1.0 + 0.4 * escudo_mfe) else 0
+    pasos_urgencia = int(max(0.0, float(edad_posicion_seg) - 76.0) // 7.0)
+    return min(2, 1 + pasos_urgencia)
