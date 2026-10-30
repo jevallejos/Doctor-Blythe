@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Defensivo #4: Geometria MarkPrice Stop-Loss (SEI-02), Calculo de
-Niveles SL Iniciales, Reloj Intrinseco de Variacion Cuadratica tau_QV (arXiv:2606.01477),
-Ley 2 (RF-18) de Evacuacion Pasiva Maker-Scratch con Deriva Adimensional de DeLise
-(arXiv:2407.16527) y Cotizacion Directa BBO con Tope de 1 Re-Peg (Terpsichora V7.0).
+Niveles SL Iniciales, Reloj Intrinseco de Variacion Cuadratica Asimetrico tau_QV
+(arXiv:2606.01477), Doble Frontera de Parada de Leung-Li (arXiv:1701.00875),
+Deriva Adimensional de DeLise (arXiv:2407.16527) y Scratch en 1 Solo Paso BBO
+(arXiv:2610.34787) para HFT Doctor Blythe Terpsichora V7.0.
 """
 import math
 from typing import Dict, Optional, Tuple
@@ -54,11 +55,17 @@ def calcular_edad_intrinseca_qv(
     edad_seg: float,
     symbol: str = "",
     volatilidad_bv_raw: float = 0.0,
+    mfe_pct: float = 0.0,
+    pendiente_delise: float = 0.0,
 ) -> float:
     """
-    Reloj Intrinseco de Variacion Cuadratica tau_QV (arXiv:2606.01477):
-    Escala el tiempo cronologico por la actividad difusiva relativa del par
-    rho_QV = clip(sigma_bv_raw / sigma_ref, 0.65, 1.55).
+    Reloj Intrinseco de Variacion Cuadratica tau_QV (arXiv:2606.01477) con
+    Bifurcacion de Doble Frontera de Leung-Li (arXiv:1701.00875):
+    - Si la posicion tiene traccion inicial (MFE > +0.020%) o deriva de DeLise
+      positiva (pendiente_delise > 0), permite desacelerar el reloj (rho_QV < 1)
+      en calma microestructural para evitar SCRATCH_EARLY_REBOUND.
+    - Si es un fill muerto (MFE <= +0.020% y pendiente_delise <= 0), prohibe
+      desacelerar el reloj (rho_eff = max(1.0, rho_QV)) para evacuar a tiempo.
     """
     t_wall = max(0.0, float(edad_seg))
     if cfg.es_modo_test() or not symbol:
@@ -72,7 +79,9 @@ def calcular_edad_intrinseca_qv(
         else:
             sigma_act = s_ref
     sigma_clamped = max(s_floor, min(s_ceil, sigma_act))
-    rho_qv = max(0.65, min(1.55, sigma_clamped / max(1e-6, s_ref)))
+    rho_qv = max(0.65, min(1.65, sigma_clamped / max(1e-6, s_ref)))
+    if float(mfe_pct) <= 0.00020 and float(pendiente_delise) <= 0.0:
+        rho_qv = max(1.0, rho_qv)
     return round(t_wall * rho_qv, 3)
 
 
@@ -135,12 +144,26 @@ def evaluar_gatillo_maker_scratch_18s(
         and v_l2 >= 0.50
     )
 
-    # 1. Regla Invariante RF-18 + Early Flat-Scratch sobre fills que no cubrieron comision RT (MFE <= +0.032%)
+    # 1. Early Flat-Scratch de Leung-Li (arXiv:1701.00875) en fills muertos con techo L2 aplastado
+    early_flat_scratch_12s = (
+        not cfg.es_modo_test()
+        and edad_seg >= 12.0
+        and not trinquete_be_activo
+        and mfe_pct <= 0.00018
+        and pendiente_delise <= 0.0
+        and pnl_pct <= -0.00045
+        and v_l2 <= 0.45
+        and ofi_dir <= -0.10
+    )
+    if early_flat_scratch_12s:
+        return True
+
+    # 2. Regla Invariante RF-18 sobre fills muertos (MFE <= +0.032%) a los 18.0s
     sin_rebote_18s = (
         edad_seg >= 18.0
         and not trinquete_be_activo
         and mfe_pct <= 0.00032
-        and pnl_pct <= -0.0007
+        and pnl_pct <= -0.00065
         and not recuperacion_delise_activa
     )
     if sin_rebote_18s:
@@ -278,6 +301,8 @@ def evaluar_ventana_elastica_scratch_28s(
     ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
     t_rebote = max(float(tiempo_rebote_seg), float(ctrl.get("sens_scratch_edad_rebote_seg", 32.0)))
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
+    if not cfg.es_modo_test() and edad_seg >= 12.0 and mfe_pct <= 0.00018 and pnl_unrealized_pct <= -0.00045 and v_l2 <= 0.45 and ofi_dir <= -0.10:
+        return True
     if edad_seg < tiempo_base_seg:
         return False
     if mfe_pct > 0.0008:

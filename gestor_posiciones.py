@@ -499,21 +499,34 @@ class GestorPosicionesChronosTriz:
                 if (pos.trinquete_be_activo and pos.sl_interno > 0.0)
                 else calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size, mfe_pct=pos.max_pnl_pct_alcanzado, v_l2=vacio_exit)
             )
+            edad_pos_be = max(0.0, ahora - pos.timestamp_apertura)
+            p_delise_be = float(getattr(pos, "pendiente_delise", 0.0) or 0.0)
             if "TRINQUETE_BE" in motivo_up and (
-                pos.repeg_salida_count >= 1
-                or edad_orden_act >= 4.5
-                or (ahora - pos.timestamp_apertura) >= 55.0
+                edad_pos_be >= 72.0
+                or (
+                    (pos.repeg_salida_count >= 2 or edad_orden_act >= 8.0 or edad_pos_be >= 58.0)
+                    and p_delise_be <= 0.0
+                    and (ofi_5s < 0.0 if pos.direccion == "LONG" else ofi_5s > 0.0)
+                )
             ):
                 t_sz = max(1e-8, float(tick_size))
-                banda_relax_pct = min(
-                    0.00090,
-                    0.00025 * max(1.0, float(pos.repeg_salida_count) + (edad_orden_act / 4.5)),
-                )
-                piso_relax = (
-                    eje.cuantizar_tick(pos.precio_entrada * (1.0 - banda_relax_pct), t_sz, modo="floor")
-                    if pos.direccion == "LONG"
-                    else eje.cuantizar_tick(pos.precio_entrada * (1.0 + banda_relax_pct), t_sz, modo="ceil")
-                )
+                if edad_pos_be < 72.0 and p_delise_be >= -0.000010:
+                    fee_rt_mkr = (2.0 * float(cfg.COMISION_MAKER_PCT)) + 0.00015
+                    piso_relax = (
+                        eje.cuantizar_tick(pos.precio_entrada * (1.0 + fee_rt_mkr), t_sz, modo="ceil")
+                        if pos.direccion == "LONG"
+                        else eje.cuantizar_tick(pos.precio_entrada * (1.0 - fee_rt_mkr), t_sz, modo="floor")
+                    )
+                else:
+                    banda_relax_pct = min(
+                        0.00080,
+                        0.00022 * max(1.0, float(pos.repeg_salida_count) + (edad_orden_act / 5.0)),
+                    )
+                    piso_relax = (
+                        eje.cuantizar_tick(pos.precio_entrada * (1.0 - banda_relax_pct), t_sz, modo="floor")
+                        if pos.direccion == "LONG"
+                        else eje.cuantizar_tick(pos.precio_entrada * (1.0 + banda_relax_pct), t_sz, modo="ceil")
+                    )
                 if pos.direccion == "LONG":
                     px_target = max(piso_relax, best_ask if best_ask > 0.0 else px_target)
                 else:
@@ -988,7 +1001,7 @@ class GestorPosicionesChronosTriz:
         acel_live = m_live.aceleracion_lyapunov if m_live is not None else pos.lyapunov_entrada
         acel_dir_live = acel_live if pos.direccion == "LONG" else -acel_live
         vol_raw_live = float(getattr(m_live, "volatilidad_bv_raw", pos.volatilidad_bv_raw_entrada) or pos.volatilidad_bv_entrada)
-        edad_qv = mes.calcular_edad_intrinseca_qv(edad, symbol=pos.symbol, volatilidad_bv_raw=vol_raw_live)
+        edad_qv = mes.calcular_edad_intrinseca_qv(edad, symbol=pos.symbol, volatilidad_bv_raw=vol_raw_live, mfe_pct=pos.max_pnl_pct_alcanzado, pendiente_delise=float(getattr(pos, "pendiente_delise", 0.0) or 0.0))
         try:
             ventana_28s_ok = mes.evaluar_ventana_elastica_scratch_28s(
                 edad_qv,

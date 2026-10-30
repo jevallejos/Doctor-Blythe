@@ -169,6 +169,7 @@ class GestorEstadisticasHFT:
         es_scratch = (
             "SCRATCH" in motivo_salida.upper()
             or ("UNWIND" in motivo_salida.upper() and abs(pnl_pct) <= 0.0014 and pnl_usdt <= 0.0)
+            or ("TRINQUETE_BE" in motivo_salida.upper() and abs(pnl_pct) <= 0.0005 and pnl_usdt <= 0.0)
         )
         resultado = "WIN" if pnl_usdt > 0.0 else ("SCRATCH" if es_scratch else "LOSS")
 

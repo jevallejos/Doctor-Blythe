@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Defensivo #1: Escudos Fisicos de Entrada (Terpsichora V7.0).
-Aisla las barreras cinematicas y de microestructura (Lyapunov, Hurst, Absorcion
-OFI/Hawkes con Barrera Hiperbolica Anti-Muralla L1 y Veto Anti-Spoofing arXiv:2502.17417,
-Sesgo Autonomo No-Regresivo, Entropia LOB arXiv:2610.16151, Coherencia de Signo RF-06
-y Conviccion Contra-EMA900).
+Integra Freno de Lyapunov, Hurst Direccional, Absorcion OFI/Hawkes con Tasa de
+Escape de Kramers (PMC10813935 / arXiv:2510.01814), Relajacion del Propagador de
+Bouchaud (arXiv:2610.27100), Veto Anti-Spoofing L1 (arXiv:2502.17417), Entropia
+LOB (arXiv:2610.16151) y Coherencia de Signo RF-06.
 """
 from __future__ import annotations
 
@@ -100,12 +100,21 @@ def evaluar_absorcion_ofi_hawkes(
         sesgo_l = 0.0 if cfg.es_modo_test() else max(-0.04, float(ctrl.get("sesgo_escudo_long", 0.0) or 0.0) + sesgo_sym)
         i_opp_l = max(0.0, -float(imb_l1))
         c_opp_l = max(0.0, -float(cancel_net_l1))
-        barrera_muro_l1 = (0.08 * (i_opp_l * i_opp_l) / max(0.10, 1.05 - i_opp_l)) if (not cfg.es_modo_test() and i_opp_l > 0.65) else 0.0
-        ofi_req_l = float(ofi_min_req) + sesgo_l + penal_entropia + barrera_muro_l1
+        barrera_kramers_l = (
+            (0.08 * (i_opp_l * i_opp_l) / max(0.10, 1.05 - i_opp_l))
+            + (0.12 * max(0.0, 0.50 - v_l2))
+            + (0.06 * i_opp_l * c_opp_l)
+        ) if (not cfg.es_modo_test() and (i_opp_l > 0.60 or v_l2 < 0.50)) else 0.0
+        ofi_req_l = float(ofi_min_req) + sesgo_l + penal_entropia + barrera_kramers_l
         hawkes_req_l = float(hawkes_min_req) + (0.50 * sesgo_l)
-        if (imb_l1 <= -0.78 and cancel_net_l1 <= -0.35 and ofi_actual < 0.35) or (
-            not cfg.es_modo_test() and i_opp_l >= 0.88 and (c_opp_l >= 0.15 or v_l2 < 0.85) and ofi_actual < 0.55
-        ):
+        trampa_kramers_bouchaud_l = (
+            not cfg.es_modo_test()
+            and (
+                (i_opp_l >= 0.88 and (c_opp_l >= 0.12 or v_l2 < 0.85) and ofi_actual < 0.58)
+                or (v_l2 < 0.36 and (i_opp_l >= 0.65 or c_opp_l >= 0.20) and ofi_actual < 0.62)
+            )
+        )
+        if (imb_l1 <= -0.78 and cancel_net_l1 <= -0.35 and ofi_actual < 0.35) or trampa_kramers_bouchaud_l:
             return False, f"L1_SPOOF_BID(imbL1={imb_l1:+.2f},cancel={cancel_net_l1:+.2f})"
         paso_rapido_1t = (
             ticks_absorcion >= 1
@@ -124,12 +133,21 @@ def evaluar_absorcion_ofi_hawkes(
         sesgo_s = 0.0 if cfg.es_modo_test() else max(-0.04, float(ctrl.get("sesgo_escudo_short", 0.0) or 0.0) + sesgo_sym)
         i_opp_s = max(0.0, float(imb_l1))
         c_opp_s = max(0.0, float(cancel_net_l1))
-        barrera_muro_s = (0.08 * (i_opp_s * i_opp_s) / max(0.10, 1.05 - i_opp_s)) if (not cfg.es_modo_test() and i_opp_s > 0.65) else 0.0
-        ofi_short_req = -(abs(float(ofi_min_req)) + sesgo_s + penal_entropia + barrera_muro_s)
+        barrera_kramers_s = (
+            (0.08 * (i_opp_s * i_opp_s) / max(0.10, 1.05 - i_opp_s))
+            + (0.12 * max(0.0, 0.50 - v_l2))
+            + (0.06 * i_opp_s * c_opp_s)
+        ) if (not cfg.es_modo_test() and (i_opp_s > 0.60 or v_l2 < 0.50)) else 0.0
+        ofi_short_req = -(abs(float(ofi_min_req)) + sesgo_s + penal_entropia + barrera_kramers_s)
         hawkes_req_s = -(abs(float(hawkes_min_req)) + (0.50 * sesgo_s))
-        if (imb_l1 >= 0.78 and cancel_net_l1 >= 0.35 and ofi_actual > -0.45) or (
-            not cfg.es_modo_test() and i_opp_s >= 0.88 and (c_opp_s >= 0.15 or v_l2 < 0.85) and ofi_actual > -0.55
-        ):
+        trampa_kramers_bouchaud_s = (
+            not cfg.es_modo_test()
+            and (
+                (i_opp_s >= 0.88 and (c_opp_s >= 0.12 or v_l2 < 0.85) and ofi_actual > -0.58)
+                or (v_l2 < 0.36 and (i_opp_s >= 0.65 or c_opp_s >= 0.20) and ofi_actual > -0.62)
+            )
+        )
+        if (imb_l1 >= 0.78 and cancel_net_l1 >= 0.35 and ofi_actual > -0.45) or trampa_kramers_bouchaud_s:
             return False, f"L1_SPOOF_ASK(imbL1={imb_l1:+.2f},cancel={cancel_net_l1:+.2f})"
         paso_rapido_s_1t = (
             ticks_absorcion >= 1

@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 Micro-Modulo Ofensivo #1: Supervivencia en Cola L1 Moallemi & Yuan (2017),
-Carrera Normalizada de Tiempos de Primer Paso (arXiv:2403.02572v2), Pulso de
-Cancelacion Agresiva L1 (arXiv:2502.17417) y Salto Pasivo Penny-Jump
-para HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
+Probabilidad Markoviana de Primer Paso de Cont & de Larrard (arXiv:1104.4596),
+Densidad de Reposicion de Cola (arXiv:2610.34787), Carrera FPT (arXiv:2403.02572v2)
+y Salto Pasivo Penny-Jump para HFT Doctor Blythe Terpsichora V7.0.
 """
 from typing import Tuple
+
 import config_parametros as cfg
 import core_estado_ram as ram
 
@@ -17,12 +18,6 @@ def debe_proteger_orden_en_cola_por_flujo_favorable(
     min_q_floor: float = 0.22,
     vacio_l2_ratio: float = 1.0,
 ) -> bool:
-    """
-    Inhibe Early Queue Abort cuando el OFI direccional es fuertemente favorable
-    (>= +0.10), el Hurst se mantiene anti-persistente (<= 0.495) y el soporte
-    profundo L2 no ha colapsado (vacio_l2_ratio >= 0.50), evitando cancelar
-    tiros ganadores en < 2.5s por oscilaciones normales de L1.
-    """
     if hurst > 0.495 or float(vacio_l2_ratio or 1.0) < 0.50:
         return False
     if ofi_dir >= 0.10 and q_ratio >= max(0.28, min_q_floor):
@@ -45,15 +40,30 @@ def evaluar_aborto_cola_moallemi(
     vacio_l2_ratio: float = 1.0,
 ) -> Tuple[bool, bool]:
     """
-    Evalua si una orden PostOnly descansando en L1 sufre seleccion adversa real.
-    Integra:
-    1. Carrera normalizada de tiempos de primer paso rho_FPT = nu_own / nu_opp (arXiv:2403.02572v2).
-    2. Pulso de cancelacion agresiva L1 (cancel_net_l1, imb_l1 - arXiv:2502.17417).
-    3. Deplecion de soporte L2 (vacio_l2_ratio).
-    Retorna (cola_toxica: bool, erosion_adversa: bool).
+    Evalua si una orden PostOnly descansando en L1 sufre seleccion adversa real:
+    1. En presencia de veto_btc_activo, preserva la orden si ya gano prioridad
+       con reposicion institucional fuerte (q_ratio >= 1.15, ofi_dir >= 0.60, arXiv:2610.34787).
+    2. Evalua la probabilidad Markoviana de Cont-de Larrard P_Cont = q_own / (q_own + q_opp)
+       (arXiv:1104.4596) acoplada a la compresion de vacio profundo L2.
+    3. Evalua carrera FPT (arXiv:2403.02572v2) y retirada agresiva L1 (arXiv:2502.17417).
     """
+    ratio_cola = (q_l1_actual / q_l1_inicial) if q_l1_inicial > 0.0 else 1.0
+    dir_norm = "LONG" if str(direccion).upper() in ("BUY", "LONG") else "SHORT"
+    signo_dir = 1.0 if dir_norm == "LONG" else -1.0
+    ofi_dir = signo_dir * float(ofi_actual)
+    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
+
     if veto_btc_activo:
-        return True, False
+        cola_blindada_reposicion = (
+            not cfg.es_modo_test()
+            and ratio_cola >= 1.15
+            and ofi_dir >= 0.60
+            and h_actual <= 0.42
+            and v_l2 >= 0.70
+        )
+        if not cola_blindada_reposicion:
+            return True, False
+
     grace_seg = float(getattr(cfg, "MOALLEMI_MIN_AGE_ABORT_SEG", 0.35))
     if edad_orden_seg < grace_seg:
         return False, False
@@ -65,15 +75,9 @@ def evaluar_aborto_cola_moallemi(
     ratio_min = float(getattr(cfg, "MOALLEMI_QUEUE_DEPLETION_ABORT_RATIO", 0.30))
     ofi_flip_base = max(0.22, min(0.42, ofi_abort_dyn * 0.70))
     h_abort = float(getattr(cfg, "MOALLEMI_HURST_ABORT_THRESHOLD", 0.54))
-
-    ratio_cola = (q_l1_actual / q_l1_inicial) if q_l1_inicial > 0.0 else 1.0
     dt_eff = max(0.05, float(edad_orden_seg))
-    dir_norm = "LONG" if str(direccion).upper() in ("BUY", "LONG") else "SHORT"
-    signo_dir = 1.0 if dir_norm == "LONG" else -1.0
-    ofi_dir = signo_dir * float(ofi_actual)
     presion_contra_leve = ofi_dir < -0.05
 
-    # 1. Carrera Normalizada de Tiempos de Primer Paso (arXiv:2403.02572v2):
     carrera_primer_paso_adversa = False
     if q_l1_inicial > 0.0 and q_opp_inicial > 0.0 and ratio_cola <= max(0.65, hold_ratio_dyn):
         merma_rel_own = max(0.0, q_l1_inicial - q_l1_actual) / q_l1_inicial
@@ -89,7 +93,19 @@ def evaluar_aborto_cola_moallemi(
         ):
             carrera_primer_paso_adversa = True
 
-    # 2. Retirada agresiva de liquidez L1 (arXiv:2502.17417):
+    prob_cont_larrard = (
+        (q_l1_actual / max(1e-9, q_l1_actual + q_opp_actual))
+        if (q_l1_actual > 0.0 and q_opp_actual > 0.0)
+        else 0.50
+    )
+    compresion_cont_l2 = (
+        not cfg.es_modo_test()
+        and edad_orden_seg >= 1.10
+        and v_l2 < 0.36
+        and prob_cont_larrard < 0.22
+        and ofi_dir < 0.08
+    )
+
     cancel_dir = signo_dir * float(cancel_net_l1 or 0.0)
     imb_dir = signo_dir * float(imb_l1 or 0.0)
     retirada_l1_adversa = (
@@ -104,8 +120,8 @@ def evaluar_aborto_cola_moallemi(
         or (q_l1_inicial >= 1000.0 and ratio_cola < 0.12 and ofi_dir <= 0.0)
         or carrera_primer_paso_adversa
         or retirada_l1_adversa
+        or compresion_cont_l2
     )
-
     umbral_ofi_efectivo = max(ofi_flip_base, 0.28) if ratio_cola >= 0.95 else max(ofi_flip_base, 0.22)
     ofi_adverso = ofi_dir < -umbral_ofi_efectivo
     flujo_a_favor = ofi_dir >= 0.08
@@ -115,7 +131,7 @@ def evaluar_aborto_cola_moallemi(
     )
 
     if not cola_erosionada and not hurst_toxico and debe_proteger_orden_en_cola_por_flujo_favorable(
-        ratio_cola, ofi_dir, h_actual, min_q_floor=hold_ratio_dyn, vacio_l2_ratio=vacio_l2_ratio
+        ratio_cola, ofi_dir, h_actual, min_q_floor=hold_ratio_dyn, vacio_l2_ratio=v_l2
     ):
         return False, False
 
@@ -170,9 +186,11 @@ def evaluar_salto_punta_penny(
     h_max = float(getattr(cfg, "MOALLEMI_HURST_ABORT_THRESHOLD", 0.485))
     if h_actual >= h_max:
         return False, precio_orden
+
     spread = ask_actual - bid_actual
     if spread <= 0.0:
         return False, precio_orden
+
     es_long_dir = str(direccion).upper() in ("BUY", "LONG")
     ok_deriv_ofi = autorizar_repeg_con_derivada_ofi(
         ofi_actual,
@@ -184,6 +202,7 @@ def evaluar_salto_punta_penny(
     )
     if not cfg.es_modo_test() and not ok_deriv_ofi:
         return False, precio_orden
+
     if es_long_dir:
         if bid_actual > (precio_orden + 0.5 * tick_size) and ofi_actual >= 0.35:
             candidato = min(bid_actual, ask_actual - tick_size, precio_orden + tick_size)
@@ -205,7 +224,6 @@ def autorizar_repeg_con_derivada_ofi(
     es_long: bool,
     lvr_par: float = 0.002,
 ) -> bool:
-    """Bloquea Penny-Jump en cola si la primera derivada de OFI es negativa o la cola L1 se erosiona."""
     ofi_dir_now = float(ofi_actual) if es_long else -float(ofi_actual)
     ofi_dir_init = float(ofi_inicial) if es_long else -float(ofi_inicial)
     d_ofi_dt = (ofi_dir_now - ofi_dir_init) / max(0.10, float(dt_seg))
