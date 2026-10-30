@@ -1236,7 +1236,8 @@ def calcular_ajuste_elastico_posicion_en_vivo(
     ofi_actual: float,
     tick_size: float,
 ) -> Dict[str, float]:
-    """Enlaza Zero-Giveaway Elastic Scratch y el Trinquete Convexo de Wald en gestor_posiciones.py."""
+    """Aplica en vivo Zero-Giveaway Elastic Scratch y el Trinquete Convexo de Wald sobre la posicion activa."""
+    import config_parametros as _cfg_gp
     from defensiva import micro_evacuador_scratch as _mes
     from ofensiva import micro_motor_wald_exit as _mmwe
     es_long = str(getattr(pos, "side", "LONG")).upper() in ("BUY", "LONG")
@@ -1256,6 +1257,9 @@ def calcular_ajuste_elastico_posicion_en_vivo(
         es_long=es_long,
         tick_size=float(tick_size),
     )
+    if not _cfg_gp.es_modo_test():
+        setattr(pos, "cota_ticks_scratch_elastica", int(ticks_giveaway))
+        setattr(pos, "piso_wald_convexo_elastico", float(piso_convexo))
     return {
         "ticks_scratch_giveaway": float(ticks_giveaway),
         "piso_wald_convexo": float(piso_convexo),

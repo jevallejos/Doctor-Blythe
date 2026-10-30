@@ -393,7 +393,7 @@ def imprimir_auditoria_forense_cli() -> None:
             f"TauScratch={_el_w['tau_scratch_seg']:.1f}s | "
             f"ZeroGiveaway<{_el_w['zero_giveaway_seg']:.0f}s (0 ticks) | "
             f"KappaWald={_el_w['kappa_wald_base']:.2f} | "
-            f"Q_HoldAbort={_el_w['q_hold_abort']:.2f}"
+            f"Q_HoldAbort={_el_w['q_hold_abort']:.2f} | EdgeFilter: AVAX={_el_w.get('pair_disloc_mult', {}).get('AVAX/USDT:USDT', 1.0):.2f}x/{_el_w.get('pair_kelly_mult', {}).get('AVAX/USDT:USDT', 1.0):.2f}x ARB={_el_w.get('pair_disloc_mult', {}).get('ARB/USDT:USDT', 1.0):.2f}x WAL={_el_w.get('pair_disloc_mult', {}).get('WAL/USDT:USDT', 1.0):.2f}x"
         )
     except Exception:
         pass

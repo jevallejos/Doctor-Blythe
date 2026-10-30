@@ -152,15 +152,17 @@ def calcular_perfil_bayesiano_par(
         4,
     )
 
-    return {
-        "trades": float(n),
-        "lambda_cred": round(lam, 4),
-        "edge_post": round(e_post, 3),
-        "wr_post": round(w_post, 3),
-        "mfe_post_pct": round(mfe_mean, 4),
-        "alpha_disloc": alpha_disloc,
-        "w_kelly": w_kelly,
-    }
+    return calcular_pesos_elasticos_antifalso_scratch(
+        memoria_pares_base={
+            "trades": float(n),
+            "lambda_cred": round(lam, 4),
+            "edge_post": round(e_post, 3),
+            "wr_post": round(w_post, 3),
+            "mfe_post_pct": round(mfe_mean, 4),
+            "alpha_disloc": alpha_disloc,
+            "w_kelly": w_kelly,
+        }
+    )
 
 
 def auto_calibrar_sensibilidades_en_vivo(
@@ -473,13 +475,23 @@ def auto_calibrar_sensibilidades_en_vivo(
 
 
 def calcular_pesos_elasticos_antifalso_scratch(
-    registros_cierres: list,
+    registros_cierres: list = None,
     registros_markout: list = None,
+    memoria_pares_base: dict = None,
 ) -> dict:
-    """Calcula en vivo TauScratch, KappaWald, Q_HoldAbort y los multiplicadores de Fee-Cover por par."""
+    """Calcula y aplica en vivo TauScratch, KappaWald, Q_HoldAbort y la penalizacion Fee-Cover/Edge por par."""
     import math
+    if registros_cierres is None:
+        try:
+            import stats_tracker as _st
+            if not _st.GESTOR_ESTADISTICAS.operaciones:
+                _st.GESTOR_ESTADISTICAS.cargar_historial_disco()
+            registros_cierres = list(_st.GESTOR_ESTADISTICAS.operaciones)
+        except Exception:
+            registros_cierres = []
+
     if not registros_cierres:
-        return {
+        base_res = {
             "tau_scratch_seg": 32.0,
             "zero_giveaway_seg": 64.0,
             "kappa_wald_base": 0.45,
@@ -487,6 +499,8 @@ def calcular_pesos_elasticos_antifalso_scratch(
             "pair_disloc_mult": {},
             "pair_kelly_mult": {},
         }
+        return memoria_pares_base if isinstance(memoria_pares_base, dict) else base_res
+
     scratches = [
         r for r in registros_cierres
         if bool(r.get("es_scratch")) or "SCRATCH" in str(r.get("motivo_salida", r.get("exit_reason", ""))).upper()
@@ -522,7 +536,7 @@ def calcular_pesos_elasticos_antifalso_scratch(
         sym = str(r.get("symbol", ""))
         if not sym:
             continue
-        por_par.setdefault(sym, {"mfe": [], "mae": [], "lvr": []})
+        por_par.setdefault(sym, {"mfe": [], "mae": [], "lvr": [], "pnl": []})
         mfe_raw = abs(float(r.get("mfe_max_pnl_pct", r.get("mfe_pct", 0.08)) or 0.08))
         mae_raw = abs(float(r.get("mae_min_pnl_pct", r.get("mae_pct", 0.08)) or 0.08))
         mfe_dec = mfe_raw / 100.0 if mfe_raw > 0.02 else mfe_raw
@@ -530,6 +544,7 @@ def calcular_pesos_elasticos_antifalso_scratch(
         por_par[sym]["mfe"].append(mfe_dec)
         por_par[sym]["mae"].append(mae_dec)
         por_par[sym]["lvr"].append(abs(float(r.get("lvr_bps", r.get("lvr", 0.002)) or 0.002)))
+        por_par[sym]["pnl"].append(float(r.get("pnl_usdt", 0.0) or 0.0))
 
     pair_disloc = {}
     pair_kelly = {}
@@ -537,12 +552,30 @@ def calcular_pesos_elasticos_antifalso_scratch(
         avg_mfe = sum(d["mfe"]) / len(d["mfe"])
         avg_mae = max(0.0004, sum(d["mae"]) / len(d["mae"]))
         avg_lvr = sum(d["lvr"]) / len(d["lvr"])
+        net_pnl_sym = sum(d["pnl"])
         edge_p = avg_mfe / avg_mae
         fee_cover = avg_mfe / 0.0012
-        disloc_m = min(1.48, max(0.92, 1.0 + 0.35 * max(0.0, 1.15 - edge_p) + 0.30 * max(0.0, 1.0 - fee_cover) + 22.0 * avg_lvr))
-        kelly_m = min(1.12, max(0.62, math.tanh(edge_p) * min(1.10, max(0.65, fee_cover))))
+        penal_pnl = max(0.0, -net_pnl_sym * 0.12)
+        disloc_m = min(
+            1.48,
+            max(0.94, 1.0 + 0.35 * max(0.0, 1.15 - edge_p) + 0.30 * max(0.0, 1.0 - fee_cover) + 18.0 * avg_lvr + penal_pnl),
+        )
+        kelly_m = min(1.10, max(0.60, math.tanh(edge_p) * min(1.08, max(0.62, fee_cover)) - min(0.22, penal_pnl * 0.6)))
         pair_disloc[sym] = round(disloc_m, 3)
         pair_kelly[sym] = round(kelly_m, 3)
+
+    if isinstance(memoria_pares_base, dict):
+        import config_parametros as _cfg_sa
+        if not _cfg_sa.es_modo_test():
+            for sym_k, val_v in list(memoria_pares_base.items()):
+                if sym_k in pair_disloc and isinstance(val_v, dict):
+                    for k_sub in list(val_v.keys()):
+                        kl = k_sub.lower()
+                        if "disloc" in kl:
+                            val_v[k_sub] = round(max(float(val_v[k_sub]), pair_disloc[sym_k]), 4)
+                        elif "kelly" in kl:
+                            val_v[k_sub] = round(min(float(val_v[k_sub]), pair_kelly[sym_k]), 4)
+        return memoria_pares_base
 
     return {
         "tau_scratch_seg": round(tau_scratch, 2),

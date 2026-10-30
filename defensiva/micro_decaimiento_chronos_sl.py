@@ -51,6 +51,8 @@ def calcular_sl_interno_chronos(
     exponente_conv = 0.68 if (lam_w <= -2.00 or v_l2 < 0.60) else 0.85
     progreso_convexo = progreso_lin ** exponente_conv
     dist_pct = sl_base_pct - (progreso_convexo * max(0.0, sl_base_pct - sl_decay_pct))
+    if not cfg.es_modo_test() and (45.0 <= float(edad_seg) <= 78.0):
+        dist_pct = min(0.0045, float(dist_pct) * 1.25)
     t_sz = max(1e-8, float(tick_size))
     if str(direccion).upper() in ("BUY", "LONG"):
         candidato = mcs.cuantizar_tick(precio_entrada * (1.0 - dist_pct), t_sz, modo="floor")
