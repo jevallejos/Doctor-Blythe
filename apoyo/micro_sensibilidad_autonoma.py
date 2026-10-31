@@ -376,6 +376,8 @@ def auto_calibrar_sensibilidades_en_vivo(
     ratio_stall_din = 0.78 - (0.025 * min(3, escapes_con_mfe_alto)) + (0.020 * min(3, scratches_con_rebote_posterior))
     stall_din = max(piso_colchon_be, min(tp_auto - 0.00020, tp_auto * ratio_stall_din))
     ctrl["mfe_stall_harvest_pct"] = round(max(0.00105, min(0.00140, stall_din)), 5)
+    delta_part = (0.025 * min(3, escapes_con_mfe_alto)) - (0.020 * min(3, runners_continuados))
+    ctrl["w6_harvest_part_frac"] = round(max(0.45, min(0.60, 0.50 + delta_part)), 4)
 
     ctrl["sesgo_escudo_long"] = round(min(0.04, 0.01 * max(0, perdidas_long - 1)), 4)
     ctrl["sesgo_escudo_short"] = round(min(0.04, 0.01 * max(0, perdidas_short - 1)), 4)

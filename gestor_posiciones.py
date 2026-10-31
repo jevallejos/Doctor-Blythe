@@ -387,15 +387,18 @@ class GestorPosicionesChronosTriz:
         best_ask: float,
         tick_size: float,
         step_size: float,
+        fraccion_lote: float = 0.50,
+        precio_objetivo: float = 0.0,
     ) -> bool:
         if pos.cosecha_50_ejecutada or pos.cerrada:
             return False
-        lote_50 = eje.cuantizar_lote(pos.contratos * 0.50, step_size)
+        frac_eff = max(0.35, min(0.65, float(fraccion_lote or 0.50)))
+        lote_50 = eje.cuantizar_lote(pos.contratos * frac_eff, step_size)
         if lote_50 <= 0.0 or (pos.contratos - lote_50) <= 0.0:
             return False
         side_close = "sell" if pos.direccion == "LONG" else "buy"
-        px_harvest = best_ask if pos.direccion == "LONG" else best_bid
-        px_harvest = eje.cuantizar_tick(px_harvest, tick_size)
+        px_base = precio_objetivo if precio_objetivo > 0.0 else (best_ask if pos.direccion == "LONG" else best_bid)
+        px_harvest = eje.cuantizar_tick(px_base, tick_size)
         try:
             orden = await exchange.create_order(
                 pos.symbol,
@@ -409,8 +412,21 @@ class GestorPosicionesChronosTriz:
             st_ord = str(orden.get("status", "")).lower()
             filled = float(orden.get("filled", 0.0) or 0.0)
             if st_ord not in ("closed", "filled") and filled < lote_50 and oid:
+                if not cfg.es_modo_test():
+                    await asyncio.sleep(0.35)
                 estado_f = await eje.consultar_orden_segura(exchange, oid, pos.symbol, px_harvest)
-                filled = float(estado_f.get("filled", lote_50) or lote_50)
+                st_f = str(estado_f.get("status", "")).lower()
+                if cfg.es_modo_test():
+                    filled = float(estado_f.get("filled", lote_50) or lote_50)
+                else:
+                    filled = float(estado_f.get("filled", 0.0) or 0.0)
+                    if st_f not in ("closed", "filled") and filled < lote_50:
+                        try:
+                            await exchange.cancel_order(oid, pos.symbol)
+                        except Exception:
+                            pass
+                        est_post = await eje.consultar_orden_segura(exchange, oid, pos.symbol, px_harvest)
+                        filled = max(filled, float(est_post.get("filled", 0.0) or 0.0))
                 px_harvest = float(estado_f.get("average") or estado_f.get("price") or px_harvest)
             if filled > 0.0:
                 pnl_pct_tramo = pos.calcular_pnl_bruto_pct(px_harvest)
@@ -422,6 +438,19 @@ class GestorPosicionesChronosTriz:
                 pos.fees_acumulados_usdt = round(pos.fees_acumulados_usdt + fee_tramo, 6)
                 pos.cosecha_50_ejecutada = True
                 self.cosechas_50_ejecutadas += 1
+                piso_sub = medf.calcular_piso_subsidiado_runner(
+                    pos.precio_entrada,
+                    pos.direccion,
+                    tick_size,
+                    pos.pnl_realizado_parcial_usdt,
+                    pos.nocional_actual_usdt,
+                )
+                if pos.direccion == "LONG":
+                    pos.sl_interno = max(pos.sl_interno, piso_sub)
+                else:
+                    pos.sl_interno = min(pos.sl_interno, piso_sub) if pos.sl_interno > 0.0 else piso_sub
+                pos.trinquete_be_activo = True
+                await self._actualizar_sl_bybit(exchange, pos, pos.sl_interno, tick_size=tick_size)
                 ram.log_operativo(
                     f"[SNIPER] [DIAMOND] {pos.symbol} 50% TRIZ PostOnly Harvest executed: "
                     f"{filled} @ {px_harvest} ({pnl_pct_tramo * 100:+.2f}% | {neto_tramo:+.4f} USDT). "
@@ -699,6 +728,7 @@ class GestorPosicionesChronosTriz:
                 pos.en_proceso_cierre,
                 lambda_wald=lambda_w,
                 vacio_l2_ratio=vacio_rat_l2,
+                cosecha_parcial_ejecutada=pos.cosecha_50_ejecutada,
             )
         except TypeError:
             forzar_90s, activar_pre_escape_72s, motivo_esc = mer.evaluar_escape_temporal_posicion(
@@ -722,6 +752,7 @@ class GestorPosicionesChronosTriz:
                 pos.trinquete_be_activo,
                 lambda_wald=lambda_w,
                 vacio_l2_ratio=vacio_rat_l2,
+                cosecha_parcial_ejecutada=pos.cosecha_50_ejecutada,
             )
         except TypeError:
             pos.sl_interno = mdcs.calcular_sl_interno_chronos(
@@ -740,6 +771,8 @@ class GestorPosicionesChronosTriz:
             pos.precio_entrada,
             precio_actual,
             be_offset_pct=float(cfg.TRINQUETE_BE_OFFSET_PCT),
+            pnl_realizado_parcial_usdt=pos.pnl_realizado_parcial_usdt,
+            nocional_restante_usdt=pos.nocional_actual_usdt,
         )
         if pos.trinquete_be_activo and sl_be_efectivo > 0.0:
             pos.sl_interno = sl_be_efectivo
@@ -804,6 +837,39 @@ class GestorPosicionesChronosTriz:
             vol_raw_st = float(getattr(m_live, "volatilidad_bv_raw", pos.volatilidad_bv_raw_entrada) or 0.00035)
             colchon_vivo = float(cfg.TRINQUETE_BE_OFFSET_PCT) + max(0.00038, spread_live * 1.25, 0.40 * vol_raw_st)
             umbral_stall_eff = min(umbral_cosecha - 0.00015, max(umbral_stall, colchon_vivo))
+
+        # 1A. Cosecha Parcial Singular Condicionada theta*(t) (arXiv:2602.05025)
+        cosechar_parcial_ok, frac_parcial, px_parcial = medf.evaluar_cosecha_parcial_singular_hawkes(
+            pos.direccion,
+            pos.contratos,
+            pos.precio_entrada,
+            precio_actual,
+            best_bid,
+            best_ask,
+            edad,
+            pnl_pct,
+            pos.max_pnl_pct_alcanzado,
+            ofi_5s,
+            lambda_w,
+            tick_size,
+            step_size,
+            cosecha_50_ya_ejecutada=pos.cosecha_50_ejecutada,
+            en_proceso_cierre=pos.en_proceso_cierre,
+            vacio_l2_ratio=vacio_rat_l2,
+        )
+        if cosechar_parcial_ok:
+            ejecutada_p = await self._ejecutar_cosecha_50_triz(
+                exchange,
+                pos,
+                best_bid,
+                best_ask,
+                tick_size,
+                step_size,
+                fraccion_lote=frac_parcial,
+                precio_objetivo=px_parcial,
+            )
+            if ejecutada_p:
+                return None
 
         # 1. Early Break-Even Shield con Colchon Microestructural Dinamico
         if pos.max_pnl_pct_alcanzado >= umbral_stall_eff and not pos.trinquete_be_activo and pnl_pct < umbral_cosecha:
@@ -929,6 +995,7 @@ class GestorPosicionesChronosTriz:
                 ofi_5s,
                 pos.symbol,
                 vacio_l2_ratio=vacio_rat_l2,
+                cosecha_parcial_ejecutada=pos.cosecha_50_ejecutada,
             )
 
         if (
@@ -1017,6 +1084,7 @@ class GestorPosicionesChronosTriz:
                 ofi_dir_live,
                 acel_lyap_dir=acel_dir_live,
                 vacio_l2_ratio=vacio_rat_l2,
+                cosecha_parcial_ejecutada=pos.cosecha_50_ejecutada,
             )
             wald_scratch_ready = ventana_28s_ok and mes.evaluar_gatillo_maker_scratch_18s(
                 pos.direccion,
@@ -1031,6 +1099,7 @@ class GestorPosicionesChronosTriz:
                 mae_pct=pos.min_pnl_pct_alcanzado,
                 trayectoria_pnl=pos.trayectoria_pnl,
                 vacio_l2_ratio=vacio_rat_l2,
+                cosecha_parcial_ejecutada=pos.cosecha_50_ejecutada,
             )
             escalar_sc_tk = pos.en_proceso_cierre and mes.debe_escalar_scratch_colgado_a_taker(
                 pos.direccion,
@@ -1040,6 +1109,7 @@ class GestorPosicionesChronosTriz:
                 pos.motivo_salida_pendiente,
                 repeg_salida_count=pos.repeg_salida_count,
                 vacio_l2_ratio=vacio_rat_l2,
+                cosecha_parcial_ejecutada=pos.cosecha_50_ejecutada,
             )
         except TypeError:
             ventana_28s_ok = mes.evaluar_ventana_elastica_scratch_28s(
@@ -1090,6 +1160,7 @@ class GestorPosicionesChronosTriz:
                 pos.direccion,
                 repeg_salida_count=pos.repeg_salida_count,
                 vacio_l2_ratio=vacio_rat_l2,
+                cosecha_parcial_ejecutada=pos.cosecha_50_ejecutada,
             )
         except TypeError:
             forzar_sc_est = pos.en_proceso_cierre and mir.debe_forzar_evacuacion_scratch_estancado(

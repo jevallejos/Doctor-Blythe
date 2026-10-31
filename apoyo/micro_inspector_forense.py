@@ -342,6 +342,7 @@ def imprimir_auditoria_forense_cli() -> None:
     print(
         f"   -> Active Autonomous Weights: TP={ctrl.get('w3_tp_maker_pct', 0.0014)*100:.2f}% | "
         f"StallBE={ctrl.get('mfe_stall_harvest_pct', 0.0011)*100:.2f}% | "
+        f"Part50={ctrl.get('w6_harvest_part_frac', 0.50)*100:.0f}% | "
         f"Unwind={ctrl.get('w4_unwind_seg', 42.0):.0f}s | "
         f"ScratchRebound={ctrl.get('sens_scratch_edad_rebote_seg', 30.0):.0f}s | "
         f"Q_Hold={ctrl.get('sens_q_l1_hold_ratio', 0.25):.2f} | "

@@ -349,6 +349,7 @@ class EstadoGlobalRAM:
             "w4_sl_decay_pct": 0.0032,
             "w5_kelly_short": cfg.KELLY_SHORT_SNIPER_FRACCION,
             "w5_kelly_long": cfg.KELLY_LONG_TIER1_FRACCION,
+            "w6_harvest_part_frac": 0.50,
             "hurst_cap_short_mod": cfg.HURST_MAX_ENTRADA_SHORT,
             "mfe_stall_harvest_pct": cfg.COSECHA_ESTANCAMIENTO_MFE_PCT,
             "sesgo_escudo_long": 0.0,

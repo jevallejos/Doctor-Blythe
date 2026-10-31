@@ -211,6 +211,7 @@ _limites_controlador_autonomo: Dict[str, Tuple[float, float]] = {
     "w4_sl_decay_pct": (0.0028, 0.0042),
     "w5_kelly_short": (0.35, 0.62),
     "w5_kelly_long": (0.35, 0.58),
+    "w6_harvest_part_frac": (0.45, 0.60),
     "hurst_cap_short_mod": (0.450, 0.485),
     "mfe_stall_harvest_pct": (0.00085, 0.00150),
     "sesgo_escudo_long": (0.00, 0.05),
