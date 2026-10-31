@@ -19,8 +19,9 @@ def calcular_sl_interno_chronos(
     trinquete_be_activo: bool = False,
     lambda_wald: float = 0.0,
     vacio_l2_ratio: float = 1.0,
+    cosecha_parcial_ejecutada: bool = False,
 ) -> float:
-    if trinquete_be_activo or precio_entrada <= 0.0:
+    if trinquete_be_activo or cosecha_parcial_ejecutada or precio_entrada <= 0.0:
         return sl_actual
 
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo

@@ -128,8 +128,10 @@ def debe_inhibir_maker_unwind_en_rally(
     symbol: str = "",
     vacio_l2_ratio: float = 1.0,
     lambda_wald: float = 0.0,
+    cosecha_parcial_ejecutada: bool = False,
 ) -> bool:
-    if pnl_pct < 0.00095:
+    piso_rally = 0.00060 if cosecha_parcial_ejecutada else 0.00095
+    if pnl_pct < piso_rally:
         return False
 
     es_hb = cfg.obtener_clase_activo(symbol) == cfg.CLASE_HIGH_BETA if symbol else True
@@ -146,6 +148,8 @@ def debe_inhibir_maker_unwind_en_rally(
     retroceso = max(0.0, mfe_actual - pnl_pct)
     es_long = str(direccion).upper() in ("BUY", "LONG")
     ofi_dir = float(ofi_5s) if es_long else -float(ofi_5s)
+    if cosecha_parcial_ejecutada and ofi_dir >= 0.02 and lambda_wald >= 0.15 and retroceso <= (tol_retroceso * 1.35):
+        return True
     if v_l2 >= 1.45 and ofi_dir >= 0.06 and retroceso <= (tol_retroceso * 1.25):
         return True
     if pnl_pct < 0.0011:

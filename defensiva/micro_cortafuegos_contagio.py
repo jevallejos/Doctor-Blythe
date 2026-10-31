@@ -42,8 +42,12 @@ def evaluar_matriz_direccional_cuantitativa(
         if m_live is not None:
             irrev = float(getattr(m_live, "irrev_lob", 0.0) or 0.0)
 
-    cascada_bajista_entropica = (irrev >= 0.82 and dp_pct <= -0.014 and ofi <= -0.50 and hurst >= 0.53)
-    cascada_alcista_entropica = (irrev >= 0.82 and dp_pct >= 0.014 and ofi >= 0.50 and hurst >= 0.53)
+    cascada_bajista_entropica = (
+        (irrev >= 0.82 or z_score <= -3.50) and dp_pct <= -0.014 and ofi <= -0.50 and hurst >= 0.53
+    )
+    cascada_alcista_entropica = (
+        (irrev >= 0.82 or z_score >= 3.50) and dp_pct >= 0.014 and ofi >= 0.50 and hurst >= 0.53
+    )
 
     if (dp_pct <= -0.018 and ofi <= -0.55 and hurst >= 0.56) or cascada_bajista_entropica:
         modo = ram.MODO_DIRECCIONAL_SOLO_SHORT

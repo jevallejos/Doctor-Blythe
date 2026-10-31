@@ -18,12 +18,15 @@ def evaluar_cosecha_estancamiento_mfe(
     piso_ganancia_neta_pct: float = 0.00065,
     vacio_l2_ratio: float = 1.0,
     lambda_wald: float = 0.0,
+    cosecha_parcial_ejecutada: bool = False,
 ) -> bool:
     """
     Si la operacion ya alcanzo el umbral mfe_stall_harvest_pct y sigue en ganancia
     neta pero el flujo OFI perdio traccion, autoriza cobrar como Maker antes de que
     el precio regrese a la entrada.
     """
+    if cosecha_parcial_ejecutada and not cfg.es_modo_test():
+        return False
     ctrl = ram.ESTADO_GLOBAL.controlador_autonomo
     umbral_stall = float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT))
     piso_efectivo = max(float(cfg.TRINQUETE_BE_OFFSET_PCT), float(piso_ganancia_neta_pct))

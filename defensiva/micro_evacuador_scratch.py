@@ -109,7 +109,10 @@ def evaluar_gatillo_maker_scratch_18s(
     mae_pct: float = 0.0,
     trayectoria_pnl: Optional[Dict[str, float]] = None,
     vacio_l2_ratio: float = 1.0,
+    cosecha_parcial_ejecutada: bool = False,
 ) -> bool:
+    if cosecha_parcial_ejecutada or trinquete_be_activo:
+        return False
     t_scratch = float(cfg.obtener_aux("MAKER_SCRATCH_TIEMPO_SEG", 18.0))
     ofi_adv = float(cfg.obtener_aux("MAKER_SCRATCH_OFI_ADVERSO", -0.15))
     dir_norm = "LONG" if str(direccion).upper() in ("BUY", "LONG") else "SHORT"
@@ -225,6 +228,7 @@ def debe_escalar_scratch_colgado_a_taker(
     motivo_pendiente: str,
     repeg_salida_count: int = 0,
     vacio_l2_ratio: float = 1.0,
+    cosecha_parcial_ejecutada: bool = False,
 ) -> bool:
     return mir.debe_forzar_evacuacion_scratch_estancado(
         True,
@@ -235,6 +239,7 @@ def debe_escalar_scratch_colgado_a_taker(
         direccion,
         repeg_salida_count=repeg_salida_count,
         vacio_l2_ratio=vacio_l2_ratio,
+        cosecha_parcial_ejecutada=cosecha_parcial_ejecutada,
     )
 
 
@@ -314,7 +319,10 @@ def evaluar_ventana_elastica_scratch_28s(
     tiempo_base_seg: float = 18.0,
     tiempo_rebote_seg: float = 28.0,
     vacio_l2_ratio: float = 1.0,
+    cosecha_parcial_ejecutada: bool = False,
 ) -> bool:
+    if cosecha_parcial_ejecutada:
+        return False
     ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
     t_rebote = max(float(tiempo_rebote_seg), float(ctrl.get("sens_scratch_edad_rebote_seg", 32.0)))
     m_stall = max(0.00100, float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT)))

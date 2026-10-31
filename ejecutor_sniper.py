@@ -231,6 +231,9 @@ class EjecutorSniperBybit:
             ofi_val = float(senal.get("ofi", 0.0))
             hurst_val = float(senal.get("hurst", 0.42))
 
+            irrev_sig = float(senal.get("irrev_lob", getattr(m_snap, "irrev_lob", 0.0)) or 0.0)
+            cancel_sig = float(senal.get("cancel_net_l1", getattr(m_snap, "cancel_net_l1", 0.0)) or 0.0)
+            vacio_sig = float(senal.get("vacio_l2_ratio", getattr(m_snap, "vacio_l2_ratio", 1.0)) or 1.0)
             kelly_frac, _, nocional_usdt = msk.calcular_dimension_kelly_uta(
                 tri,
                 capital_libre_usdt=msk.resolver_capital_base_uta(ram.ESTADO_GLOBAL.free_usdt),
@@ -239,10 +242,18 @@ class EjecutorSniperBybit:
                 hurst=hurst_val,
                 side=dir_norm,
                 symbol=symbol,
+                irrev_lob=irrev_sig,
+                cancel_net_l1=cancel_sig,
+                vacio_l2_ratio=vacio_sig,
             )
             if not cfg.es_modo_test():
+                ctrl_s = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+                edge_s = max(0.35, float(ctrl_s.get(f"edge_post_{symbol}", 1.0) or 1.0))
                 nocional_usdt = msk.acotar_nocional_por_liquidez_l1_y_racha(
-                    nocional_usdt, precio_orden * q_l1_init
+                    nocional_usdt,
+                    precio_orden * q_l1_init,
+                    edge_ratio_par=edge_s,
+                    map_historico_usdt=14.5,
                 )
             if nocional_usdt < cfg.ORDEN_MINIMA_BYBIT_USDT:
                 nocional_usdt = cfg.ORDEN_MINIMA_BYBIT_USDT
@@ -320,6 +331,8 @@ class EjecutorSniperBybit:
                         m_part.hurst,
                         elapsed,
                         ttl_max,
+                        vacio_l2_ratio=float(getattr(m_part, "vacio_l2_ratio", 1.0) or 1.0),
+                        cancel_net_l1=float(getattr(m_part, "cancel_net_l1", 0.0) or 0.0),
                     )
                 if permitir_repeg and filled_actual <= 0.0 and elapsed >= 0.25:
                     await self._refrescar_punta_libro_en_cola(exchange, symbol)
@@ -544,7 +557,7 @@ class EjecutorSniperBybit:
                     )
                 return None
 
-            if not mrfp.validar_lote_ejecutado_suficiente(contratos, filled_final):
+            if not mrfp.validar_lote_ejecutado_suficiente(contratos, filled_final, vacio_l2_ratio=vacio_l2_in):
                 side_dust = "sell" if dir_norm == "LONG" else "buy"
                 try:
                     await exchange.create_order(

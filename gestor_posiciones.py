@@ -126,7 +126,13 @@ def _construir_vector_forense_cierre(
 ) -> Dict[str, Any]:
     m_close = ram.ESTADO_GLOBAL.metricas_ticks.get(pos.symbol)
     vacio_out = round(float(getattr(m_close, "vacio_l2_ratio", 1.0) or 1.0), 3) if m_close is not None else 1.0
-    mfe_cap = _calcular_mfe_capture_seguro(pos, precio_salida, pnl_bruto_pct)
+    if pos.cosecha_50_ejecutada and pos.nocional_entrada_usdt > 0.0:
+        bruto_tot_u = float(pos.pnl_realizado_parcial_usdt) + (abs(pos.contratos * pos.precio_entrada) * pnl_bruto_pct)
+        pnl_eval_cap = bruto_tot_u / pos.nocional_entrada_usdt
+        mfe_b = max(0.0008, float(pos.max_pnl_pct_alcanzado))
+        mfe_cap = round(max(-1.50, min(1.50, pnl_eval_cap / mfe_b)), 4)
+    else:
+        mfe_cap = _calcular_mfe_capture_seguro(pos, precio_salida, pnl_bruto_pct)
     return {
         "z_entry": pos.z_entrada,
         "dp_pct": round(pos.dp_entrada_pct * 100.0, 4),
@@ -434,7 +440,7 @@ class GestorPosicionesChronosTriz:
                 fee_tramo = abs(filled * px_harvest) * cfg.COMISION_MAKER_PCT
                 neto_tramo = round(bruto_tramo - fee_tramo, 4)
                 pos.contratos = round(max(0.0, pos.contratos - filled), 6)
-                pos.pnl_realizado_parcial_usdt = round(pos.pnl_realizado_parcial_usdt + neto_tramo, 6)
+                pos.pnl_realizado_parcial_usdt = round(pos.pnl_realizado_parcial_usdt + bruto_tramo, 6)
                 pos.fees_acumulados_usdt = round(pos.fees_acumulados_usdt + fee_tramo, 6)
                 pos.cosecha_50_ejecutada = True
                 self.cosechas_50_ejecutadas += 1
@@ -442,13 +448,13 @@ class GestorPosicionesChronosTriz:
                     pos.precio_entrada,
                     pos.direccion,
                     tick_size,
-                    pos.pnl_realizado_parcial_usdt,
+                    max(0.0, neto_tramo),
                     pos.nocional_actual_usdt,
                 )
                 if pos.direccion == "LONG":
-                    pos.sl_interno = max(pos.sl_interno, piso_sub)
+                    pos.sl_interno = piso_sub if (not cfg.es_modo_test() and not pos.trailing_activo) else max(pos.sl_interno, piso_sub)
                 else:
-                    pos.sl_interno = min(pos.sl_interno, piso_sub) if pos.sl_interno > 0.0 else piso_sub
+                    pos.sl_interno = piso_sub if ((not cfg.es_modo_test() and not pos.trailing_activo) or pos.sl_interno <= 0.0) else min(pos.sl_interno, piso_sub)
                 pos.trinquete_be_activo = True
                 await self._actualizar_sl_bybit(exchange, pos, pos.sl_interno, tick_size=tick_size)
                 ram.log_operativo(
@@ -958,6 +964,7 @@ class GestorPosicionesChronosTriz:
                 umbral_stall,
                 vacio_l2_ratio=vacio_rat_l2,
                 lambda_wald=lambda_w,
+                cosecha_parcial_ejecutada=pos.cosecha_50_ejecutada,
             )
             unwind_42_ok = mdup.evaluar_desarme_maker_unwind_42s(
                 pos.direccion,
@@ -986,6 +993,7 @@ class GestorPosicionesChronosTriz:
                 pos.symbol,
                 vacio_l2_ratio=vacio_rat_l2,
                 lambda_wald=lambda_w,
+                cosecha_parcial_ejecutada=pos.cosecha_50_ejecutada,
             )
         except TypeError:
             inhibir_rally = mmw.debe_inhibir_maker_unwind_en_rally(
@@ -1003,7 +1011,7 @@ class GestorPosicionesChronosTriz:
                 diamante_ok
                 or stall_ok
                 or unwind_42_ok
-                or (edad >= 16.0 and pnl_pct >= umbral_stall and (lambda_w <= 0.15 or ofi_dir_live <= 0.08))
+                or (not pos.cosecha_50_ejecutada and edad >= 16.0 and pnl_pct >= umbral_stall and (lambda_w <= 0.15 or ofi_dir_live <= 0.08))
             )
             and (not inhibir_rally)
         ):

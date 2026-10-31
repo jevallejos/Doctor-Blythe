@@ -489,7 +489,7 @@ class RadarVolatilidadHFT:
             if (
                 not mef.evaluar_filtro_hurst_direccional("LONG", hurst, h_cap_long, h_cap_long)[0]
                 and not mir.evaluar_override_climax_hurst(
-                    "LONG", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst, irreversibilidad_lob=irrev_lob
+                    "LONG", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst, irreversibilidad_lob=irrev_lob, cancel_net_l1=cancel_net_l1
                 )
             ):
                 if not cfg.es_modo_test() and (ahora - est.ultimo_log_warn_ts) >= 1.0:
@@ -681,7 +681,7 @@ class RadarVolatilidadHFT:
             if (
                 not mef.evaluar_filtro_hurst_direccional("SHORT", hurst, h_cap_short, h_cap_short)[0]
                 and not mir.evaluar_override_climax_hurst(
-                    "SHORT", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst, irreversibilidad_lob=irrev_lob
+                    "SHORT", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst, irreversibilidad_lob=irrev_lob, cancel_net_l1=cancel_net_l1
                 )
             ):
                 est.ultimo_hurst_alto_short_ts = ahora

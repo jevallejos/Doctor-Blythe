@@ -112,24 +112,9 @@ def calcular_dimension_kelly_uta(
                 escala_hb = 32.0 * (0.85 + 0.15 * min(1.5, vacio_r))
                 nocional_u = round(escala_hb * math.tanh(float(nocional_u) / escala_hb), 4) if float(nocional_u) > escala_hb else float(nocional_u)
 
-            pnl_10_real = 0.0
-            map_hist_real = max(float(nocional_u), 12.0)
-            st_mod_k = sys.modules.get("stats_tracker")
-            if st_mod_k is not None and hasattr(st_mod_k, "GESTOR_ESTADISTICAS"):
-                ops_k = list(getattr(st_mod_k.GESTOR_ESTADISTICAS, "operaciones", []) or [])[-10:]
-                if ops_k:
-                    pnl_10_real = sum(float(x.get("pnl_usdt", 0.0) or 0.0) for x in ops_k)
-                    map_hist_real = max(min_ord, sum(float(x.get("map_usdt", 12.0) or 12.0) for x in ops_k) / len(ops_k))
-
-            cota_l1_racha = acotar_nocional_por_liquidez_l1_y_racha(
-                float(nocional_u),
-                liq_l1_real,
-                edge_ratio_par=edge_par,
-                pnl_neto_ultimos_10=pnl_10_real,
-                map_historico_usdt=map_hist_real,
-            )
-            nocional_u = round(max(min_ord, min(float(nocional_u), cota_l1_racha)), 4)
-            margen_u = round(nocional_u / lev, 4)
+            if liq_l1_real > 0.0 and edge_par < 0.85:
+                nocional_u = round(max(min_ord, float(nocional_u) * max(0.75, math.tanh(edge_par))), 4)
+                margen_u = round(nocional_u / lev, 4)
 
         if balance_usado > 0.0 and not bool(getattr(cfg, "MODO_PAPER_TRADING", False)):
             max_nocional_seguro = round(balance_usado * 0.75 * lev, 4)

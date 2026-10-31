@@ -18,6 +18,7 @@ def evaluar_override_climax_hurst(
     hurst_actual: float,
     hurst_cap_base: float = 0.485,
     irreversibilidad_lob: float = 0.0,
+    cancel_net_l1: float = 0.0,
 ) -> bool:
     if hurst_actual <= hurst_cap_base:
         return True
@@ -35,6 +36,7 @@ def evaluar_override_climax_hurst(
             hurst_cap_base=hurst_cap_base,
             techo_duro_absoluto=0.515,
             irreversibilidad_lob=irrev,
+            cancel_net_l1=float(cancel_net_l1 or 0.0),
         )
         return bool(ok_s and hawkes_actual <= -0.35)
 
@@ -59,13 +61,6 @@ def proteger_semilla_ganadora_de_scratch(
     vacio_l2_ratio: float = 1.0,
     pendiente_delise: float = 0.0,
 ) -> bool:
-    """
-    Protege posiciones con excursion inicial positiva (MFE >= +0.045%) contra
-    un scratch prematuro a los 18s, modulando la ventana por vacio_l2_ratio y
-    la pendiente de recuperacion post-fill de DeLise.
-    Si el soporte L2 colapsa (vacio_l2_ratio < 0.45 con PnL <= -0.06%), revoca
-    la proteccion inmediatamente para evacuar como Maker antes de caer a Taker.
-    """
     if mfe_pct < 0.00045:
         return False
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
@@ -97,13 +92,9 @@ def debe_forzar_evacuacion_scratch_estancado(
     direccion: str,
     repeg_salida_count: int = 0,
     vacio_l2_ratio: float = 1.0,
+    cosecha_parcial_ejecutada: bool = False,
 ) -> bool:
-    """
-    Gobierna la escalada de emergencia de un Maker-Scratch estancado a cierre Taker:
-    - Exige >= 11.0s de orden colgada (o >= 8.0s si ya acumula >= 5 repegs fallidos
-      con soporte L2 evaporado vacio_l2_ratio < 0.55) y flujo adverso confirmado.
-    """
-    if not en_proceso_cierre or "SCRATCH" not in str(motivo_pendiente).upper():
+    if cosecha_parcial_ejecutada or not en_proceso_cierre or "SCRATCH" not in str(motivo_pendiente).upper():
         return False
     n_rep = max(0, int(repeg_salida_count or 0))
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
