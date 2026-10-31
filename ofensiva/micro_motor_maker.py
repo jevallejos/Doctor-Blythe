@@ -2,9 +2,11 @@
 """
 Micro-Modulo Ofensivo #1: Supervivencia en Cola L1 Moallemi & Yuan (2017),
 Probabilidad Markoviana de Primer Paso de Cont & de Larrard (arXiv:1104.4596),
-Densidad de Reposicion de Cola (arXiv:2610.34787), Carrera FPT (arXiv:2403.02572v2)
-y Salto Pasivo Penny-Jump para HFT Doctor Blythe Terpsichora V7.0.
+Densidad de Reposicion de Cola (arXiv:2610.34787), Carrera FPT (arXiv:2403.02572v2),
+Blindaje de Climax de Frenado (imb_dir > -0.55, Lyap_dir > 0, FPT < 1.0) y
+Salto Pasivo Penny-Jump Sincronizado en Fase para HFT Doctor Blythe Terpsichora V7.0.
 """
+import math
 from typing import Tuple
 
 import config_parametros as cfg
@@ -38,11 +40,17 @@ def evaluar_aborto_cola_moallemi(
     cancel_net_l1: float = 0.0,
     imb_l1: float = 0.0,
     vacio_l2_ratio: float = 1.0,
+    z_score_actual: float = 0.0,
+    aceleracion_lyapunov: float = 0.0,
+    hawkes_actual: float = 0.0,
 ) -> Tuple[bool, bool]:
     """
     Evalua si una orden PostOnly descansando en L1 sufre seleccion adversa real:
-    1. En presencia de veto_btc_activo, preserva la orden si ya gano prioridad
-       con reposicion institucional fuerte (q_ratio >= 1.15, ofi_dir >= 0.60, arXiv:2610.34787).
+    1. En presencia de veto_btc_activo, preserva la orden si:
+       a) Ya gano prioridad con reposicion institucional fuerte (q_ratio >= 1.02, fpt < 0.50), o
+       b) Esta en Climax de Frenado en V (|Z| >= 3.20, ofi_dir >= 0.75, lyap_dir > 0,
+          imb_dir > -0.55, fpt < 1.0, q_ratio >= 0.50), evitando abortar rebotes explosivos
+          como el de ZEREBRO +0.4984% sin comprometer los salvamentos reales (imb_dir <= -0.55).
     2. Evalua la probabilidad Markoviana de Cont-de Larrard P_Cont = q_own / (q_own + q_opp)
        (arXiv:1104.4596) acoplada a la compresion de vacio profundo L2.
     3. Evalua carrera FPT (arXiv:2403.02572v2) y retirada agresiva L1 (arXiv:2502.17417).
@@ -52,20 +60,64 @@ def evaluar_aborto_cola_moallemi(
     signo_dir = 1.0 if dir_norm == "LONG" else -1.0
     ofi_dir = signo_dir * float(ofi_actual)
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
+    dt_eff = max(0.05, float(edad_orden_seg))
+
+    merma_rel_own = (max(0.0, q_l1_inicial - q_l1_actual) / q_l1_inicial) if q_l1_inicial > 0.0 else 0.0
+    drain_rel_opp = (max(0.0, q_opp_inicial - q_opp_actual) / q_opp_inicial) if q_opp_inicial > 0.0 else 0.0
+    fpt_race_ratio = (
+        min(10.0, (merma_rel_own / dt_eff) / max(0.02, drain_rel_opp / dt_eff))
+        if (q_l1_inicial > 0.0 and q_opp_inicial > 0.0)
+        else 1.0
+    )
+
+    cancel_dir = signo_dir * float(cancel_net_l1 or 0.0)
+    imb_dir = signo_dir * float(imb_l1 or 0.0)
+    z_dir = -float(z_score_actual or 0.0) if dir_norm == "LONG" else float(z_score_actual or 0.0)
+    lyap_dir = signo_dir * float(aceleracion_lyapunov or 0.0)
+    hawkes_dir = signo_dir * float(hawkes_actual or 0.0)
+
+    punta_sana = (imb_dir > -0.55) and (cancel_dir > -0.35)
+    climax_frenado_v = (
+        not cfg.es_modo_test()
+        and punta_sana
+        and z_dir >= 3.20
+        and ofi_dir >= 0.75
+        and hawkes_dir >= 0.50
+        and lyap_dir > 0.00005
+        and h_actual <= 0.45
+        and v_l2 >= 0.58
+        and ratio_cola >= 0.50
+        and fpt_race_ratio < 1.0
+    )
+    reposicion_fpt_favorable = (
+        not cfg.es_modo_test()
+        and punta_sana
+        and ratio_cola >= 1.02
+        and fpt_race_ratio < 0.50
+        and ofi_dir >= 0.30
+        and hawkes_dir >= 0.12
+        and lyap_dir > 0.00005
+        and h_actual <= 0.44
+        and v_l2 >= 0.60
+    )
 
     if veto_btc_activo:
         cola_blindada_reposicion = (
             not cfg.es_modo_test()
-            and ratio_cola >= 1.15
-            and ofi_dir >= 0.60
-            and h_actual <= 0.42
-            and v_l2 >= 0.70
+            and (
+                (ratio_cola >= 1.15 and ofi_dir >= 0.60 and h_actual <= 0.42 and v_l2 >= 0.70 and punta_sana)
+                or climax_frenado_v
+                or reposicion_fpt_favorable
+            )
         )
         if not cola_blindada_reposicion:
             return True, False
 
     grace_seg = float(getattr(cfg, "MOALLEMI_MIN_AGE_ABORT_SEG", 0.35))
     if edad_orden_seg < grace_seg:
+        return False, False
+
+    if climax_frenado_v or reposicion_fpt_favorable:
         return False, False
 
     ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
@@ -75,16 +127,11 @@ def evaluar_aborto_cola_moallemi(
     ratio_min = float(getattr(cfg, "MOALLEMI_QUEUE_DEPLETION_ABORT_RATIO", 0.30))
     ofi_flip_base = max(0.22, min(0.42, ofi_abort_dyn * 0.70))
     h_abort = float(getattr(cfg, "MOALLEMI_HURST_ABORT_THRESHOLD", 0.54))
-    dt_eff = max(0.05, float(edad_orden_seg))
     presion_contra_leve = ofi_dir < -0.05
 
     carrera_primer_paso_adversa = False
     if q_l1_inicial > 0.0 and q_opp_inicial > 0.0 and ratio_cola <= max(0.65, hold_ratio_dyn):
-        merma_rel_own = max(0.0, q_l1_inicial - q_l1_actual) / q_l1_inicial
         crec_rel_opp = (q_opp_actual - q_opp_inicial) / q_opp_inicial
-        nu_own = merma_rel_own / dt_eff
-        nu_opp_drain = max(0.0, q_opp_inicial - q_opp_actual) / (q_opp_inicial * dt_eff)
-        fpt_race_ratio = min(10.0, nu_own / max(0.02, nu_opp_drain))
         if (
             merma_rel_own >= 0.30
             and crec_rel_opp >= 0.05
@@ -106,8 +153,6 @@ def evaluar_aborto_cola_moallemi(
         and ofi_dir < 0.08
     )
 
-    cancel_dir = signo_dir * float(cancel_net_l1 or 0.0)
-    imb_dir = signo_dir * float(imb_l1 or 0.0)
     retirada_l1_adversa = (
         ratio_cola <= 0.72
         and cancel_dir <= -0.52
@@ -175,13 +220,19 @@ def evaluar_salto_punta_penny(
         return False, precio_orden
     if re_pegs_realizados >= 1 or tick_size <= 0.0 or precio_orden <= 0.0:
         return False, precio_orden
-    if edad_en_nivel_seg < 0.85:
+    v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
+    edad_min_penny = (
+        0.85
+        if cfg.es_modo_test()
+        else max(0.45, min(0.65, float(getattr(cfg, "REPEG_PASIVO_ENTRADA_SEG", 0.65)) * (0.85 if v_l2 >= 1.25 else 0.95)))
+    )
+    if edad_en_nivel_seg < edad_min_penny:
         return False, precio_orden
     if ofi_ticks_racha >= 8:
         return False, precio_orden
     if (tick_size / precio_orden) > 0.00045:
         return False, precio_orden
-    if float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0) < 0.55:
+    if v_l2 < 0.55:
         return False, precio_orden
     h_max = float(getattr(cfg, "MOALLEMI_HURST_ABORT_THRESHOLD", 0.485))
     if h_actual >= h_max:
@@ -226,7 +277,14 @@ def autorizar_repeg_con_derivada_ofi(
 ) -> bool:
     ofi_dir_now = float(ofi_actual) if es_long else -float(ofi_actual)
     ofi_dir_init = float(ofi_inicial) if es_long else -float(ofi_inicial)
-    d_ofi_dt = (ofi_dir_now - ofi_dir_init) / max(0.10, float(dt_seg))
+    dt_clean = max(0.10, float(dt_seg))
     umbral_ofi = 0.45 + min(0.22, float(lvr_par) * 25.0)
     umbral_q = 0.40 + min(0.20, float(lvr_par) * 20.0)
+    if not cfg.es_modo_test() and ofi_dir_init >= 0.70:
+        ref_init = max(umbral_ofi, ofi_dir_init * math.exp(-dt_clean / 1.25))
+        d_ofi_dt = (ofi_dir_now - min(ofi_dir_init, ref_init)) / dt_clean
+        if ofi_dir_now >= max(0.65, umbral_ofi + 0.15):
+            umbral_q = min(umbral_q, 0.24)
+    else:
+        d_ofi_dt = (ofi_dir_now - ofi_dir_init) / dt_clean
     return bool(ofi_dir_now >= umbral_ofi and d_ofi_dt >= -0.12 and float(q_ratio) >= umbral_q)

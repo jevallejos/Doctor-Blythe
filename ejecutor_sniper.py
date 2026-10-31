@@ -375,6 +375,9 @@ class EjecutorSniperBybit:
                             cancel_net_l1=cancel_live,
                             imb_l1=imb_live,
                             vacio_l2_ratio=vacio_live,
+                            z_score_actual=m_live.z_score,
+                            aceleracion_lyapunov=m_live.aceleracion_lyapunov,
+                            hawkes_actual=m_live.intensidad_hawkes,
                         )
                     except TypeError:
                         cola_toxica, erosion_adversa = mmm.evaluar_aborto_cola_moallemi(
