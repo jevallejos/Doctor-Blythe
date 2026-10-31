@@ -212,6 +212,7 @@ _limites_controlador_autonomo: Dict[str, Tuple[float, float]] = {
     "w5_kelly_short": (0.35, 0.62),
     "w5_kelly_long": (0.35, 0.58),
     "w6_harvest_part_frac": (0.45, 0.60),
+    "w7_volterra_tp_exp": (0.08, 0.38),
     "hurst_cap_short_mod": (0.450, 0.485),
     "mfe_stall_harvest_pct": (0.00085, 0.00150),
     "sesgo_escudo_long": (0.00, 0.05),
@@ -346,6 +347,8 @@ def sanitizar_controlador_autonomo(ctrl_raw: Dict[str, Any]) -> Dict[str, float]
             limpio[k] = round(max(0.72, min(1.12, val)), 4)
         elif k.startswith("edge_post_"):
             limpio[k] = round(max(0.50, min(2.50, val)), 4)
+        elif k.startswith("psi_informed_"):
+            limpio[k] = round(max(0.05, min(0.95, val)), 4)
         elif k.startswith("sesgo_escudo_"):
             limpio[k] = round(max(-0.08, min(0.10, val)), 4)
         elif k.startswith(("_adam_m_", "_adam_v_", "_adam_t_", "_adam_last_ts_", "diag_v_l2_")):

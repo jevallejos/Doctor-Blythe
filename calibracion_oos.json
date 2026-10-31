@@ -41,6 +41,7 @@
     "sens_q_l1_hold_ratio": 0.25,
     "sens_scratch_edad_rebote_seg": 32.0,
     "sens_climax_hurst_override": 1.0,
-    "w6_harvest_part_frac": 0.5
+    "w6_harvest_part_frac": 0.5,
+    "w7_volterra_tp_exp": 0.22
   }
 }

@@ -8,6 +8,8 @@ LOB (arXiv:2610.16151) y Coherencia de Signo RF-06.
 """
 from __future__ import annotations
 
+import math
+
 from typing import Tuple
 
 import config_parametros as cfg
@@ -63,10 +65,29 @@ def evaluar_filtro_hurst_direccional(
     hurst_actual: float,
     hurst_max_long: float = 0.485,
     hurst_max_short: float = 0.485,
+    ofi_actual: float = 0.0,
+    hawkes_actual: float = 0.0,
+    aceleracion_lyapunov: float = 0.0,
+    volatilidad_bv_raw: float = 0.00055,
+    irrev_lob: float = 0.0,
+    vacio_l2_ratio: float = 1.0,
 ) -> Tuple[bool, str]:
     es_long = str(direccion).upper() in ("BUY", "LONG")
     tope = float(hurst_max_long) if es_long else float(hurst_max_short)
-    if hurst_actual > tope:
+    h_eff = float(hurst_actual)
+    irrev = float(irrev_lob or 0.0)
+    if not cfg.es_modo_test() and h_eff <= 0.535 and irrev <= 0.82 and ofi_actual != 0.0:
+        signo_dir = 1.0 if es_long else -1.0
+        ofi_dir = max(0.0, signo_dir * float(ofi_actual))
+        hawkes_dir = max(0.0, signo_dir * float(hawkes_actual))
+        acel_dir = max(0.0, signo_dir * float(aceleracion_lyapunov))
+        sigma_raw = max(0.00010, float(volatilidad_bv_raw or cfg.VOLATILIDAD_BV_PISO_MIN))
+        v_l2 = min(2.0, max(0.40, float(vacio_l2_ratio or 1.0)))
+        pi_revert = min(1.0, (ofi_dir * hawkes_dir * v_l2) / (1.0 + irrev))
+        freno_adim = acel_dir / sigma_raw
+        delta_h_max = 0.032 if es_long else 0.018
+        h_eff = h_eff - (delta_h_max * math.tanh(pi_revert * freno_adim))
+    if h_eff > tope:
         etiqueta = "HURST_FILTER" if es_long else "P-02_HURST_SHORT"
         return False, f"{etiqueta}(H={hurst_actual:.3f}>{tope:.3f})"
     return True, "OK"

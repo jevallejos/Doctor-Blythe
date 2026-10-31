@@ -71,6 +71,7 @@ def calcular_perfil_bayesiano_par(
             "mfe_post_pct": 0.110,
             "alpha_disloc": 1.00,
             "w_kelly": 1.00,
+            "psi_informed": 0.35,
         }
 
     ultimo_ts = float(ultimas[-1].get("timestamp", ahora_ts) or ahora_ts)
@@ -136,6 +137,9 @@ def calcular_perfil_bayesiano_par(
         max(0.72, min(1.12, (0.55 + (0.45 * score_q)) - (0.03 * min(3, escapes) if score_q < 1.05 else 0.0))),
         4,
     )
+    lvr_mean = sum(abs(float(op.get("lvr_bps", 0.002) or 0.002)) for op in ultimas) / n
+    psi_obs = min(0.95, max(0.05, 0.45 * min(1.0, lvr_mean / 0.0080) + 0.55 * (mae_mean / max(0.010, mfe_mean + mae_mean))))
+    psi_post = round(((1.0 - lam) * 0.35) + (lam * psi_obs), 4)
     return {
         "trades": float(n),
         "lambda_cred": round(lam, 4),
@@ -144,6 +148,7 @@ def calcular_perfil_bayesiano_par(
         "mfe_post_pct": round(mfe_mean, 4),
         "alpha_disloc": alpha_disloc,
         "w_kelly": w_kelly,
+        "psi_informed": psi_post,
     }
 
 
@@ -379,6 +384,28 @@ def auto_calibrar_sensibilidades_en_vivo(
     delta_part = (0.025 * min(3, escapes_con_mfe_alto)) - (0.020 * min(3, runners_continuados))
     ctrl["w6_harvest_part_frac"] = round(max(0.45, min(0.60, 0.50 + delta_part)), 4)
 
+    markout_por_tid = {
+        int(e.get("trade_id", -1) or -1): float(e.get("mejor_excursion_60s_pct", 0.0) or 0.0)
+        for e in post_cierres[-20:]
+        if int(e.get("trade_id", -1) or -1) > 0
+    }
+    regrets_volterra: List[float] = []
+    for c in ultimos_cierres:
+        mfe_c = float(c.get("mfe_max_pnl_pct", 0.0) or 0.0)
+        pnl_c = float(c.get("pnl_pct", 0.0) or 0.0)
+        tid_c = int(c.get("trade_id", -1) or -1)
+        cont_60 = max(0.0, markout_por_tid.get(tid_c, 0.0))
+        mfe_hindsight = max(mfe_c, max(0.0, pnl_c) + cont_60)
+        if mfe_hindsight >= 0.080:
+            regrets_volterra.append(min(1.0, max(0.0, (mfe_hindsight - max(0.0, pnl_c)) / max(0.080, mfe_hindsight))))
+    if regrets_volterra:
+        mean_regret = sum(regrets_volterra) / len(regrets_volterra)
+        eta_reg = 0.18 / math.sqrt(max(1.0, float(len(regrets_volterra))))
+        volterra_exp = 0.22 + (eta_reg * (mean_regret - 0.35)) + (0.025 * min(3, runners_continuados)) - (0.020 * min(3, escapes_con_mfe_alto))
+        ctrl["w7_volterra_tp_exp"] = round(max(0.08, min(0.38, volterra_exp)), 4)
+    else:
+        ctrl["w7_volterra_tp_exp"] = 0.22
+
     ctrl["sesgo_escudo_long"] = round(min(0.04, 0.01 * max(0, perdidas_long - 1)), 4)
     ctrl["sesgo_escudo_short"] = round(min(0.04, 0.01 * max(0, perdidas_short - 1)), 4)
 
@@ -453,6 +480,7 @@ def auto_calibrar_sensibilidades_en_vivo(
         perf = calcular_perfil_bayesiano_par(ops_sym, ahora_ts)
         ctrl[f"w_kelly_{sym}"] = perf["w_kelly"]
         ctrl[f"edge_post_{sym}"] = perf["edge_post"]
+        ctrl[f"psi_informed_{sym}"] = perf.get("psi_informed", 0.35)
 
         rec_sym = ops_sym[-16:]
         esc_sym = esc_por_simbolo.get(sym, [])[-30:]

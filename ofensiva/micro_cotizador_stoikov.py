@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Micro-Modulo Ofensivo #4: Cotizador Zero-RTT Stoikov Micro-Price, Penny-Jump
-Quoting con Filtro de Seleccion Adversa, Cuantizacion Exacta de Ticks y Lotes,
-y Objetivo de Cosecha Elastico Acoplado al Percentil Intradia 24h y Vacio L2 (Terpsichora V7.0).
+Micro-Modulo Ofensivo #4: Cotizador Zero-RTT Stoikov Micro-Price, Penny-Jump Quoting
+con Control de Impacto Pasivo Propio (arXiv:2607.28323), Cuantizacion Exacta de Ticks
+y Lotes, y Objetivo de Cosecha de Volterra-Riccati bajo Procesos de Hawkes (arXiv:2608.02002)
+para HFT Doctor Blythe Engine - Production Baseline Terpsichora V7.0.
 """
 import math
 
 import config_parametros as cfg
+import core_estado_ram as ram
 from ofensiva import micro_enganche_fase as mep
 
 
@@ -51,23 +53,24 @@ def calcular_precio_penny_jump(
     tick_size: float,
     side: str,
     micro_price: float = 0.0,
+    huella_l1_propia: float = 0.0,
 ) -> float:
     t_size = max(1e-8, float(tick_size))
     spread = best_ask - best_bid
     mid = 0.5 * (best_bid + best_ask)
     dir_norm = "LONG" if str(side).upper() in ("BUY", "LONG") else "SHORT"
+    exceso_huella = (not cfg.es_modo_test()) and (float(huella_l1_propia or 0.0) > 0.38)
     if dir_norm == "LONG":
         sesgo_adverso = (micro_price > 0.0) and (micro_price < (mid - 0.30 * spread))
         pre_lead = (micro_price > (mid + 0.15 * spread)) if micro_price > 0.0 else False
-        if not sesgo_adverso and (spread >= (t_size * 1.95) or (pre_lead and spread >= (t_size * 1.50))):
+        if not sesgo_adverso and (not exceso_huella or pre_lead) and (spread >= (t_size * 1.95) or (pre_lead and spread >= (t_size * 1.50))):
             candidato = min(best_ask - t_size, best_bid + (cfg.OFFSET_PENNY_JUMP_TICKS * t_size))
         else:
             candidato = best_bid
         return cuantizar_tick(candidato, t_size, modo="floor")
-
     sesgo_adverso_s = (micro_price > 0.0) and (micro_price > (mid + 0.30 * spread))
     pre_lead_s = (micro_price < (mid - 0.15 * spread)) if micro_price > 0.0 else False
-    if not sesgo_adverso_s and (spread >= (t_size * 1.95) or (pre_lead_s and spread >= (t_size * 1.50))):
+    if not sesgo_adverso_s and (not exceso_huella or pre_lead_s) and (spread >= (t_size * 1.95) or (pre_lead_s and spread >= (t_size * 1.50))):
         candidato = max(best_bid + t_size, best_ask - (cfg.OFFSET_PENNY_JUMP_TICKS * t_size))
     else:
         candidato = best_ask
@@ -79,10 +82,12 @@ def calcular_tp_dinamico_volatilidad(
     percentil_24h: float = 0.50,
     vacio_l2_ratio: float = 1.0,
     symbol: str = "",
+    hawkes_dir: float = 0.0,
 ) -> float:
     """
-    Objetivo de cosecha elastico acoplado a la volatilidad Bipower del par,
-    al percentil intradia de 24h (P_24h) y a la impedancia de vacio profundo L2.
+    Objetivo de cosecha elastico de Volterra-Riccati (arXiv:2608.02002) acoplado
+    a la volatilidad Bipower del par, al percentil intradia de 24h (P_24h), a la
+    impedancia de vacio profundo L2 y a la intensidad auto-excitada de Hawkes.
     """
     vol_limpia = max(float(cfg.VOLATILIDAD_BV_PISO_MIN), float(volatilidad_bv))
     piso_elastico = max(
@@ -92,11 +97,20 @@ def calcular_tp_dinamico_volatilidad(
     tp_base_bv = max(piso_elastico, vol_limpia * 2.65)
     p_24 = max(cfg.PERCENTIL_DIA_MIN, min(cfg.PERCENTIL_DIA_MAX, float(percentil_24h or 0.50)))
     v_l2 = max(0.20, min(3.00, float(vacio_l2_ratio or 1.0)))
+
     psi_inv = 2.0 - mep.calcular_impedancia_log_vacio_l2(v_l2, 1.0)
     mod_percentil = 1.0 + max(-0.06, 0.48 * (p_24 - 0.50))
     mod_vacio = max(0.92, min(1.22, 0.50 * psi_inv + 0.50 * (1.0 + 0.25 * (v_l2 - 1.0))))
-    if symbol and cfg.obtener_clase_activo(symbol) == cfg.CLASE_TIER1_LIQUIDO:
-        tp_candidato = max(piso_elastico, tp_base_bv * mod_percentil * mod_vacio)
+
+    if not cfg.es_modo_test() and float(hawkes_dir or 0.0) > 0.0:
+        ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+        gamma_v = max(0.08, min(0.38, float(ctrl.get("w7_volterra_tp_exp", 0.22) or 0.22)))
+        mod_volterra = 1.0 + (gamma_v * math.tanh(max(0.0, float(hawkes_dir)) * math.sqrt(v_l2)))
     else:
-        tp_candidato = max(piso_elastico, tp_base_bv * (0.50 + 0.50 * mod_percentil) * mod_vacio)
-    return round(max(piso_elastico, min(0.0032, tp_candidato)), 5)
+        mod_volterra = 1.0
+
+    if symbol and cfg.obtener_clase_activo(symbol) == cfg.CLASE_TIER1_LIQUIDO:
+        tp_candidato = max(piso_elastico, tp_base_bv * mod_percentil * mod_vacio * mod_volterra)
+    else:
+        tp_candidato = max(piso_elastico, tp_base_bv * (0.50 + 0.50 * mod_percentil) * mod_vacio * mod_volterra)
+    return round(max(piso_elastico, min(0.0035, tp_candidato)), 5)

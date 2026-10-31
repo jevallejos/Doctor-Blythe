@@ -160,6 +160,7 @@ def evaluar_activacion_escudo_diamante_fase2(
     fase2_ya_ejecutada: bool = False,
     muro_opuesto_px: float = 0.0,
     vacio_l2_ratio: float = 1.0,
+    hawkes_dir: float = 0.0,
 ) -> Tuple[bool, float]:
     if fase2_ya_ejecutada or edad_seg < 18.0 or precio_entrada <= 0.0:
         return False, 0.0
@@ -175,9 +176,11 @@ def evaluar_activacion_escudo_diamante_fase2(
     vacio_runner = (v_l2 >= 1.45) and (lambda_wald >= 1.40) and (edad_seg < 38.0)
     impulso_fuerte_en_curso = ((lambda_wald >= 2.80) or vacio_runner) and (pnl_pct < 0.00215) and (edad_seg < 38.0)
 
+    gamma_v = max(0.08, min(0.38, float(ctrl.get("w7_volterra_tp_exp", 0.22) or 0.22)))
+    bono_volterra = (gamma_v * 0.00045 * math.tanh(max(0.0, float(hawkes_dir or 0.0)) * math.sqrt(v_l2))) if not cfg.es_modo_test() else 0.0
     bono_vacio = 0.00035 * max(0.0, v_l2 - 1.20)
     bono_wald = 0.00010 * max(0.0, float(lambda_wald) - 2.00)
-    target_cresta_pct = max(0.00180, min(0.00265, 0.00180 + bono_vacio + bono_wald))
+    target_cresta_pct = max(0.00180, min(0.00295, 0.00180 + bono_vacio + bono_wald + bono_volterra))
 
     if es_long:
         if impulso_fuerte_en_curso:

@@ -927,8 +927,11 @@ class GestorPosicionesChronosTriz:
                 await self._actualizar_sl_bybit(exchange, pos, pos.sl_interno, tick_size=tick_size)
             if pos.max_pnl_pct_alcanzado >= 0.0042 and pnl_pct >= 0.0042:
                 ram.log_operativo(f"[SNIPER] {pos.symbol} Trailing Stop activated (PnL {pnl_pct * 100:+.2f}%)")
+            hawkes_live = m_live.intensidad_hawkes if m_live is not None else pos.hawkes_entrada
+            hawkes_dir_live = hawkes_live if pos.direccion == "LONG" else -hawkes_live
             flujo_agotado_cresta = mcw.evaluar_agotamiento_cresta_wald(
-                pos.max_pnl_pct_alcanzado, pnl_pct, ofi_5s, edad, lambda_w, kappa, pos.direccion
+                pos.max_pnl_pct_alcanzado, pnl_pct, ofi_5s, edad, lambda_w, kappa, pos.direccion,
+                vacio_l2_ratio=vacio_rat_l2, hawkes_dir=hawkes_dir_live,
             )
             if flujo_agotado_cresta:
                 pos.cosecha_activa = True
@@ -949,10 +952,11 @@ class GestorPosicionesChronosTriz:
             if m_live is not None
             else 0.0
         )
+        hawkes_f2 = (m_live.intensidad_hawkes if m_live is not None else pos.hawkes_entrada) * (1.0 if pos.direccion == "LONG" else -1.0)
         diamante_ok, px_diamante = medf.evaluar_activacion_escudo_diamante_fase2(
             pos.direccion, pos.precio_entrada, precio_actual, best_bid, best_ask,
             edad, pnl_pct, lambda_w, tick_size, fase2_ya_ejecutada=pos.cosecha_activa,
-            muro_opuesto_px=muro_op_l2, vacio_l2_ratio=vacio_rat_l2,
+            muro_opuesto_px=muro_op_l2, vacio_l2_ratio=vacio_rat_l2, hawkes_dir=hawkes_f2,
         )
         try:
             stall_ok = mdup.evaluar_cosecha_estancamiento_mfe(

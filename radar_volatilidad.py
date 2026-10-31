@@ -487,7 +487,7 @@ class RadarVolatilidadHFT:
                 return False, motivo_btc, None
 
             if (
-                not mef.evaluar_filtro_hurst_direccional("LONG", hurst, h_cap_long, h_cap_long)[0]
+                not mef.evaluar_filtro_hurst_direccional("LONG", hurst, h_cap_long, h_cap_long, ofi_actual=ofi_inst, hawkes_actual=est.intensidad_hawkes, aceleracion_lyapunov=acel_lyap, volatilidad_bv_raw=vol_bv_raw, irrev_lob=irrev_lob, vacio_l2_ratio=vacio_l_l2)[0]
                 and not mir.evaluar_override_climax_hurst(
                     "LONG", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst, irreversibilidad_lob=irrev_lob, cancel_net_l1=cancel_net_l1
                 )
@@ -679,7 +679,7 @@ class RadarVolatilidadHFT:
                     return False, "ANTI_SQUEEZE_STEP_LOCK", None
 
             if (
-                not mef.evaluar_filtro_hurst_direccional("SHORT", hurst, h_cap_short, h_cap_short)[0]
+                not mef.evaluar_filtro_hurst_direccional("SHORT", hurst, h_cap_short, h_cap_short, ofi_actual=ofi_inst, hawkes_actual=est.intensidad_hawkes, aceleracion_lyapunov=acel_lyap, volatilidad_bv_raw=vol_bv_raw, irrev_lob=irrev_lob, vacio_l2_ratio=vacio_s_l2)[0]
                 and not mir.evaluar_override_climax_hurst(
                     "SHORT", z_score, ofi_inst, est.intensidad_hawkes, acel_lyap, hurst, irreversibilidad_lob=irrev_lob, cancel_net_l1=cancel_net_l1
                 )

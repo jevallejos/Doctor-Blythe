@@ -255,6 +255,10 @@ class EjecutorSniperBybit:
                     edge_ratio_par=edge_s,
                     map_historico_usdt=14.5,
                 )
+                huella_init = nocional_usdt / max(1.0, (precio_orden * (q_l1_init + q_opp_init)) + nocional_usdt)
+                precio_orden = mcs.calcular_precio_penny_jump(
+                    best_bid, best_ask, tick_size, dir_norm, micro_price=micro_px, huella_l1_propia=huella_init
+                )
             if nocional_usdt < cfg.ORDEN_MINIMA_BYBIT_USDT:
                 nocional_usdt = cfg.ORDEN_MINIMA_BYBIT_USDT
 
@@ -577,8 +581,9 @@ class EjecutorSniperBybit:
             await self._colocar_sl_servidor_bybit(exchange, symbol, sl_srv, side=dir_norm, tick_size=tick_size)
 
             try:
+                hawkes_in_dir = float(senal.get("hawkes", 0.0)) if dir_norm == "LONG" else -float(senal.get("hawkes", 0.0))
                 tp_din = mcs.calcular_tp_dinamico_volatilidad(
-                    vol_bv, percentil_24h=pct_24h, vacio_l2_ratio=vacio_l2_in, symbol=symbol
+                    vol_bv, percentil_24h=pct_24h, vacio_l2_ratio=vacio_l2_in, symbol=symbol, hawkes_dir=hawkes_in_dir
                 )
             except TypeError:
                 tp_din = mcs.calcular_tp_dinamico_volatilidad(vol_bv)
