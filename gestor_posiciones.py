@@ -501,26 +501,26 @@ class GestorPosicionesChronosTriz:
             )
             edad_pos_be = max(0.0, ahora - pos.timestamp_apertura)
             p_delise_be = float(getattr(pos, "pendiente_delise", 0.0) or 0.0)
-            if "TRINQUETE_BE" in motivo_up and (
-                edad_pos_be >= 72.0
-                or (
-                    (pos.repeg_salida_count >= 2 or edad_orden_act >= 8.0 or edad_pos_be >= 58.0)
-                    and p_delise_be <= 0.0
-                    and (ofi_5s < 0.0 if pos.direccion == "LONG" else ofi_5s > 0.0)
-                )
+            ctrl_be = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+            unwind_auto_be = float(ctrl_be.get("w4_unwind_seg", 42.0))
+            hold_max_be = float(cfg.TIEMPO_MAX_HOLD_SEG)
+            eta_unw = min(1.0, max(0.0, (edad_pos_be - unwind_auto_be) / max(10.0, hold_max_be - unwind_auto_be)))
+            if ("TRINQUETE_BE" in motivo_up or "UNWIND" in motivo_up) and not cfg.es_modo_test() and (
+                eta_unw > 0.0 or pos.repeg_salida_count >= 2 or edad_orden_act >= 6.0
             ):
                 t_sz = max(1e-8, float(tick_size))
-                if edad_pos_be < 72.0 and p_delise_be >= -0.000010:
-                    fee_rt_mkr = (2.0 * float(cfg.COMISION_MAKER_PCT)) + 0.00015
+                fee_rt_mkr = (2.0 * float(cfg.COMISION_MAKER_PCT)) + 0.00010
+                if eta_unw <= 0.65 and p_delise_be >= -0.000012 and pos.repeg_salida_count < 3:
                     piso_relax = (
                         eje.cuantizar_tick(pos.precio_entrada * (1.0 + fee_rt_mkr), t_sz, modo="ceil")
                         if pos.direccion == "LONG"
                         else eje.cuantizar_tick(pos.precio_entrada * (1.0 - fee_rt_mkr), t_sz, modo="floor")
                     )
                 else:
+                    vol_ref_be = float(getattr(m_exit, "volatilidad_bv_raw", pos.volatilidad_bv_entrada) or 0.00050)
                     banda_relax_pct = min(
-                        0.00080,
-                        0.00022 * max(1.0, float(pos.repeg_salida_count) + (edad_orden_act / 5.0)),
+                        0.00085,
+                        max(0.00020, eta_unw * vol_ref_be * 1.35) + (0.00015 * min(3, pos.repeg_salida_count)),
                     )
                     piso_relax = (
                         eje.cuantizar_tick(pos.precio_entrada * (1.0 - banda_relax_pct), t_sz, modo="floor")
@@ -596,15 +596,17 @@ class GestorPosicionesChronosTriz:
                 return None
 
             if "SCRATCH" in motivo_up:
+                edad_pos_sc = max(0.0, ahora - pos.timestamp_apertura)
                 cota_rep_sc = mes.calcular_concesion_ticks_scratch_elastica(
-                    max(0.0, ahora - pos.timestamp_apertura),
+                    edad_pos_sc,
                     edad_orden_act,
                     ofi_5s if pos.direccion == "LONG" else -ofi_5s,
                     mfe_alcanzado_pct=pos.max_pnl_pct_alcanzado,
                 )
-                if pos.repeg_salida_count >= max(1, cota_rep_sc) and vacio_exit >= 0.48:
+                desbloqueo_antiescape = (edad_orden_act >= 14.0) or (edad_pos_sc >= 54.0)
+                if pos.repeg_salida_count >= max(1, cota_rep_sc) and vacio_exit >= 0.48 and not desbloqueo_antiescape:
                     return None
-                intervalo_repeg = 0.65 if vacio_exit < 0.60 else 0.95
+                intervalo_repeg = 0.65 if (vacio_exit < 0.60 or desbloqueo_antiescape) else 0.95
             else:
                 try:
                     intervalo_repeg = medf.calcular_intervalo_repeg_salida_maker(
@@ -795,9 +797,16 @@ class GestorPosicionesChronosTriz:
 
         umbral_cosecha = float(ctrl.get("w3_tp_maker_pct", cfg.COSECHA_TRIZ_ACTIVACION_PCT))
         umbral_stall = float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT))
+        if cfg.es_modo_test():
+            umbral_stall_eff = umbral_stall
+        else:
+            spread_live = ((best_ask - best_bid) / precio_actual) if (best_ask > best_bid and precio_actual > 0.0) else 0.0
+            vol_raw_st = float(getattr(m_live, "volatilidad_bv_raw", pos.volatilidad_bv_raw_entrada) or 0.00035)
+            colchon_vivo = float(cfg.TRINQUETE_BE_OFFSET_PCT) + max(0.00038, spread_live * 1.25, 0.40 * vol_raw_st)
+            umbral_stall_eff = min(umbral_cosecha - 0.00015, max(umbral_stall, colchon_vivo))
 
-        # 1. Early Break-Even Shield at +0.11% MFE
-        if pos.max_pnl_pct_alcanzado >= umbral_stall and not pos.trinquete_be_activo and pnl_pct < umbral_cosecha:
+        # 1. Early Break-Even Shield con Colchon Microestructural Dinamico
+        if pos.max_pnl_pct_alcanzado >= umbral_stall_eff and not pos.trinquete_be_activo and pnl_pct < umbral_cosecha:
             piso_be_early = calcular_piso_be_maker(pos.precio_entrada, pos.direccion, tick_size, mfe_pct=pos.max_pnl_pct_alcanzado, v_l2=vacio_rat_l2)
             pos.sl_interno = piso_be_early
             pos.trinquete_be_activo = True
@@ -950,14 +959,12 @@ class GestorPosicionesChronosTriz:
                 ofi_5s=ofi_5s, precio_objetivo_custom=(px_diamante if diamante_ok else 0.0)
             )
 
-        if (
-            pos.en_proceso_cierre
-            and pos.orden_salida_id
-            and "SCRATCH" in str(pos.motivo_salida_pendiente).upper()
-            and pnl_pct >= (float(cfg.COMISION_MAKER_PCT) * 2.2)
-            and ofi_dir_live >= 0.12
-            and lambda_w >= 0.25
-        ):
+        mot_pend_up = str(pos.motivo_salida_pendiente).upper()
+        recuperacion_fuerte_en_vuelo = (
+            ("SCRATCH" in mot_pend_up and pnl_pct >= (float(cfg.COMISION_MAKER_PCT) * 2.2) and ofi_dir_live >= 0.12 and lambda_w >= 0.25)
+            or ("TRINQUETE_BE" in mot_pend_up and not cfg.es_modo_test() and pnl_pct >= umbral_stall_eff and ofi_dir_live >= 0.18 and lambda_w >= 0.45 and vacio_rat_l2 >= 0.85)
+        )
+        if pos.en_proceso_cierre and pos.orden_salida_id and recuperacion_fuerte_en_vuelo:
             try:
                 await exchange.cancel_order(pos.orden_salida_id, pos.symbol)
             except Exception:

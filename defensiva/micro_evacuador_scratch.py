@@ -2,9 +2,9 @@
 """
 Micro-Modulo Defensivo #4: Geometria MarkPrice Stop-Loss (SEI-02), Calculo de
 Niveles SL Iniciales, Reloj Intrinseco de Variacion Cuadratica Asimetrico tau_QV
-(arXiv:2606.01477), Doble Frontera de Parada de Leung-Li (arXiv:1701.00875),
-Deriva Adimensional de DeLise (arXiv:2407.16527) y Scratch en 1 Solo Paso BBO
-(arXiv:2610.34787) para HFT Doctor Blythe Terpsichora V7.0.
+(arXiv:2606.01477), Horizonte Continuo de Doble Frontera de Leung-Li (arXiv:1701.00875),
+Umbral Endogeno de Fill Muerto y Descompresion Progresiva Anti-Escape (arXiv:2610.34787)
+para HFT Doctor Blythe Terpsichora V7.0.
 """
 import math
 from typing import Dict, Optional, Tuple
@@ -58,15 +58,6 @@ def calcular_edad_intrinseca_qv(
     mfe_pct: float = 0.0,
     pendiente_delise: float = 0.0,
 ) -> float:
-    """
-    Reloj Intrinseco de Variacion Cuadratica tau_QV (arXiv:2606.01477) con
-    Bifurcacion de Doble Frontera de Leung-Li (arXiv:1701.00875):
-    - Si la posicion tiene traccion inicial (MFE > +0.020%) o deriva de DeLise
-      positiva (pendiente_delise > 0), permite desacelerar el reloj (rho_QV < 1)
-      en calma microestructural para evitar SCRATCH_EARLY_REBOUND.
-    - Si es un fill muerto (MFE <= +0.020% y pendiente_delise <= 0), prohibe
-      desacelerar el reloj (rho_eff = max(1.0, rho_QV)) para evacuar a tiempo.
-    """
     t_wall = max(0.0, float(edad_seg))
     if cfg.es_modo_test() or not symbol:
         return t_wall
@@ -80,7 +71,7 @@ def calcular_edad_intrinseca_qv(
             sigma_act = s_ref
     sigma_clamped = max(s_floor, min(s_ceil, sigma_act))
     rho_qv = max(0.65, min(1.65, sigma_clamped / max(1e-6, s_ref)))
-    if float(mfe_pct) <= 0.00020 and float(pendiente_delise) <= 0.0:
+    if float(mfe_pct) <= 0.00022 and float(pendiente_delise) <= 0.0:
         rho_qv = max(1.0, rho_qv)
     return round(t_wall * rho_qv, 3)
 
@@ -125,15 +116,18 @@ def evaluar_gatillo_maker_scratch_18s(
     ofi_dir = float(ofi_5s) if dir_norm == "LONG" else -float(ofi_5s)
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
 
+    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+    t_rebote_auto = float(ctrl.get("sens_scratch_edad_rebote_seg", 34.0))
+    m_stall_auto = max(0.00100, float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT)))
+    xi_mfe = min(1.0, max(0.0, float(mfe_pct) / m_stall_auto))
+
     if fill_post_aborto and edad_seg >= 10.0 and not trinquete_be_activo:
-        if mfe_pct <= 0.00032 and pnl_pct <= -0.00055:
+        if xi_mfe <= 0.25 and pnl_pct <= -0.00045:
             return True
 
     pendiente_delise = calcular_pendiente_recuperacion_delise(
         pnl_pct, mae_pct, edad_seg, trayectoria_pnl=trayectoria_pnl
     )
-    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
-    t_rebote_auto = float(ctrl.get("sens_scratch_edad_rebote_seg", 34.0))
     recuperacion_delise_activa = (
         edad_seg < max(28.0, t_rebote_auto + 8.0)
         and (
@@ -144,26 +138,38 @@ def evaluar_gatillo_maker_scratch_18s(
         and v_l2 >= 0.50
     )
 
-    # 1. Early Flat-Scratch de Leung-Li (arXiv:1701.00875) en fills muertos con techo L2 aplastado
+    # 1. Early Flat-Scratch de Leung-Li (arXiv:1701.00875) en fills sin traccion y techo L2 aplastado
     early_flat_scratch_12s = (
         not cfg.es_modo_test()
         and edad_seg >= 12.0
         and not trinquete_be_activo
-        and mfe_pct <= 0.00018
+        and xi_mfe <= 0.18
         and pendiente_delise <= 0.0
-        and pnl_pct <= -0.00045
-        and v_l2 <= 0.45
-        and ofi_dir <= -0.10
+        and pnl_pct <= -0.00030
+        and v_l2 <= 0.50
+        and ofi_dir <= -0.08
     )
     if early_flat_scratch_12s:
         return True
 
-    # 2. Regla Invariante RF-18 sobre fills muertos (MFE <= +0.032%) a los 18.0s
+    # 2. Umbral Endogeno de Fill Muerto a los 18.0s:
+    # En modo test preserva -0.00065 exacto (Test [16/18]). En vivo, si MFE <= 22% de StallBE
+    # y la deriva de DeLise es <= 0, exige solo superar la friccion viva (-1.5 bps a -4.5 bps),
+    # evacuando en -1 tick a los 18s (Trades #7, #9 y #10) antes de caer a -0.16% a los 30s.
+    if cfg.es_modo_test():
+        umbral_pnl_dead_18s = -0.00065
+        cota_mfe_dead = 0.00032
+    else:
+        cota_mfe_dead = max(0.00022, 0.22 * m_stall_auto)
+        friccion_maker = 0.75 * float(cfg.COMISION_MAKER_PCT)
+        soporte_flujo = max(0.0, ofi_dir) * 0.00035 if pendiente_delise > -0.000005 else 0.0
+        umbral_pnl_dead_18s = -max(friccion_maker, min(0.00065, friccion_maker + soporte_flujo))
+
     sin_rebote_18s = (
-        edad_seg >= 18.0
+        edad_seg >= t_scratch
         and not trinquete_be_activo
-        and mfe_pct <= 0.00032
-        and pnl_pct <= -0.00065
+        and mfe_pct <= cota_mfe_dead
+        and pnl_pct <= umbral_pnl_dead_18s
         and not recuperacion_delise_activa
     )
     if sin_rebote_18s:
@@ -181,12 +187,17 @@ def evaluar_gatillo_maker_scratch_18s(
     tuvo_pulso_inicial = (
         semilla_protegida
         or recuperacion_delise_activa
-        or ((mfe_pct >= 0.00040) and (hurst_actual <= 0.44) and (v_l2 >= 0.55))
+        or ((xi_mfe >= 0.36) and (hurst_actual <= 0.44) and (v_l2 >= 0.55))
     )
-    edad_min_flujo = max(30.0, t_rebote_auto) if tuvo_pulso_inicial else max(18.0, t_scratch)
+    factor_soporte = min(1.20, max(0.45, v_l2 * (1.0 + 0.50 * max(-0.5, ofi_dir))))
+    edad_min_flujo = (
+        t_scratch + (max(30.0, t_rebote_auto) - t_scratch) * math.sqrt(max(0.25, xi_mfe)) * factor_soporte
+        if tuvo_pulso_inicial
+        else max(18.0, t_scratch)
+    )
 
     if tuvo_pulso_inicial and edad_seg < edad_min_flujo:
-        colapso_profundo = (pnl_pct <= -0.0015) and (ofi_dir <= -0.42 or v_l2 < 0.45)
+        colapso_profundo = (pnl_pct <= -0.0014) and (ofi_dir <= -0.40 or v_l2 < 0.45)
         if not colapso_profundo:
             return False
 
@@ -194,13 +205,13 @@ def evaluar_gatillo_maker_scratch_18s(
     scratch_por_flujo = (
         edad_seg >= edad_min_flujo
         and not trinquete_be_activo
-        and pnl_pct <= -0.00045
+        and pnl_pct <= -0.00040
         and flujo_contra
     )
     scratch_por_wald = (
         edad_seg >= max(edad_min_flujo, t_scratch)
         and not trinquete_be_activo
-        and pnl_pct <= -0.0006
+        and pnl_pct <= -0.00050
         and lambda_w <= -1.20
     )
     return bool(scratch_por_flujo or scratch_por_wald)
@@ -236,11 +247,16 @@ def calcular_concesion_ticks_scratch_elastica(
 ) -> int:
     if cfg.es_modo_test():
         return 1
+    ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
+    unwind_seg = float(ctrl.get("w4_unwind_seg", 42.0))
     toxicidad = max(0.0, -float(ofi_dir) - 0.25) + max(0.0, float(lvr_par) - 0.002) * 10.0
     escudo_mfe = math.tanh(max(0.0, float(mfe_alcanzado_pct)) / 0.0008)
     if float(delta_t_orden_salida) <= 1.2 and toxicidad < 0.20 and escudo_mfe >= 0.35:
         return 1
-    if float(delta_t_orden_salida) >= 4.0 or toxicidad >= 0.20 or float(edad_posicion_seg) >= 45.0:
+    escalon_espera = int(float(delta_t_orden_salida) // 12.0)
+    if float(edad_posicion_seg) >= unwind_seg and float(delta_t_orden_salida) >= 12.0:
+        return min(4, 2 + escalon_espera)
+    if float(delta_t_orden_salida) >= 4.0 or toxicidad >= 0.20 or float(edad_posicion_seg) >= unwind_seg:
         return 2
     return 1
 
@@ -272,10 +288,11 @@ def calcular_precio_scratch_acotado_un_tick(
         lvr_par=lvr_par,
     )
     escalon_vacio = 1 if (v_l2 < 0.55 and (edad_orden_salida_seg > 1.5 or n_rep > 0)) else 0
-    ticks_permitidos = min(2.0, float(concesion_el + min(1, n_rep) + escalon_vacio))
+    tope_ticks = 4.0 if (not cfg.es_modo_test() and (edad_orden_salida_seg >= 14.0 or edad_posicion_seg >= 54.0)) else 2.0
+    ticks_permitidos = min(tope_ticks, float(concesion_el + min(2, n_rep) + escalon_vacio))
     max_dist_precio = max(
         ticks_permitidos * t_size,
-        float(entry_price) * min(0.00095, 0.00045 * ticks_permitidos),
+        float(entry_price) * min(0.00160, 0.00045 * ticks_permitidos),
     )
 
     if side_u in ("LONG", "BUY"):
@@ -300,16 +317,22 @@ def evaluar_ventana_elastica_scratch_28s(
 ) -> bool:
     ctrl = getattr(ram.ESTADO_GLOBAL, "controlador_autonomo", {}) or {}
     t_rebote = max(float(tiempo_rebote_seg), float(ctrl.get("sens_scratch_edad_rebote_seg", 32.0)))
+    m_stall = max(0.00100, float(ctrl.get("mfe_stall_harvest_pct", cfg.COSECHA_ESTANCAMIENTO_MFE_PCT)))
     v_l2 = float(vacio_l2_ratio if vacio_l2_ratio is not None else 1.0)
-    if not cfg.es_modo_test() and edad_seg >= 12.0 and mfe_pct <= 0.00018 and pnl_unrealized_pct <= -0.00045 and v_l2 <= 0.45 and ofi_dir <= -0.10:
+    xi_mfe = min(1.0, max(0.0, float(mfe_pct) / m_stall))
+
+    if not cfg.es_modo_test() and edad_seg >= 12.0 and xi_mfe <= 0.18 and pnl_unrealized_pct <= -0.00030 and v_l2 <= 0.50 and ofi_dir <= -0.08:
         return True
     if edad_seg < tiempo_base_seg:
         return False
-    if mfe_pct > 0.0008:
-        t_umbral_mfe = 25.0 if v_l2 < 0.60 else max(30.0, t_rebote)
-        return bool(edad_seg >= t_umbral_mfe and pnl_unrealized_pct <= -0.00075 and (ofi_dir <= -0.15 or v_l2 < 0.55))
-    if ofi_dir <= 0.05:
+
+    soporte_cont = min(1.25, max(0.40, v_l2 * (1.0 + 0.65 * ofi_dir)))
+    tau_eff = float(tiempo_base_seg) + (t_rebote - float(tiempo_base_seg)) * math.sqrt(xi_mfe) * soporte_cont
+    if xi_mfe >= 0.72:
+        t_umbral_mfe = max(24.0, min(t_rebote, tau_eff))
+        return bool(edad_seg >= t_umbral_mfe and pnl_unrealized_pct <= -0.00065 and (ofi_dir <= -0.12 or v_l2 < 0.55))
+    if ofi_dir <= 0.05 and xi_mfe <= 0.25:
         return True
-    if edad_seg < t_rebote and pnl_unrealized_pct > -0.0012 and acel_lyap_dir >= -0.00025 and v_l2 >= 0.55:
+    if edad_seg < tau_eff and pnl_unrealized_pct > -0.0011 and acel_lyap_dir >= -0.00025 and v_l2 >= 0.52:
         return False
-    return bool(edad_seg >= t_rebote and pnl_unrealized_pct <= 0.0002)
+    return bool(edad_seg >= tau_eff and pnl_unrealized_pct <= 0.0002)

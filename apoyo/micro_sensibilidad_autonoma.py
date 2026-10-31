@@ -354,24 +354,28 @@ def auto_calibrar_sensibilidades_en_vivo(
             else:
                 perdidas_short += 1
 
-    if escapes_con_mfe_alto >= 1 or repeg_altos >= 2:
-        reduccion_u = (4.0 * escapes_con_mfe_alto) + (2.0 * min(2, repeg_altos))
-        ctrl["w4_unwind_seg"] = max(30.0, round(42.0 - reduccion_u, 1))
-        ctrl["mfe_stall_harvest_pct"] = 0.00095
-    else:
-        ctrl["w4_unwind_seg"] = float(cfg.obtener_aux("EARLY_UNWIND_TIEMPO_SEG", 42.0))
-        ctrl["mfe_stall_harvest_pct"] = (
-            0.00090 if scratches_con_rebote_posterior >= 1 else float(cfg.COSECHA_ESTANCAMIENTO_MFE_PCT)
-        )
-
     avg_cap_win = (sum(cap_ganadores) / len(cap_ganadores)) if cap_ganadores else 0.65
     tp_base = float(cfg.COSECHA_TRIZ_ACTIVACION_PCT)
     if runners_continuados > crestas_optimas and avg_cap_win >= 0.70 and escapes_con_mfe_alto == 0:
         ctrl["w3_tp_maker_pct"] = round(min(0.0018, tp_base + 0.00015), 5)
     elif escapes_con_mfe_alto >= 1 or avg_cap_win < 0.45:
-        ctrl["w3_tp_maker_pct"] = round(max(0.00125, tp_base - 0.00010), 5)
+        ctrl["w3_tp_maker_pct"] = round(max(0.00130, tp_base - 0.00010), 5)
     else:
         ctrl["w3_tp_maker_pct"] = round(tp_base, 5)
+
+    unwind_base_cfg = float(cfg.obtener_aux("EARLY_UNWIND_TIEMPO_SEG", 42.0))
+    reduccion_u = (
+        (4.0 * min(3, escapes_con_mfe_alto))
+        + (3.0 * min(3, escapes_inercia_muerta))
+        + (1.5 * min(3, repeg_altos))
+    )
+    ctrl["w4_unwind_seg"] = max(28.0, round(unwind_base_cfg - reduccion_u, 1))
+
+    tp_auto = float(ctrl["w3_tp_maker_pct"])
+    piso_colchon_be = float(cfg.TRINQUETE_BE_OFFSET_PCT) + 0.00040
+    ratio_stall_din = 0.78 - (0.025 * min(3, escapes_con_mfe_alto)) + (0.020 * min(3, scratches_con_rebote_posterior))
+    stall_din = max(piso_colchon_be, min(tp_auto - 0.00020, tp_auto * ratio_stall_din))
+    ctrl["mfe_stall_harvest_pct"] = round(max(0.00105, min(0.00140, stall_din)), 5)
 
     ctrl["sesgo_escudo_long"] = round(min(0.04, 0.01 * max(0, perdidas_long - 1)), 4)
     ctrl["sesgo_escudo_short"] = round(min(0.04, 0.01 * max(0, perdidas_short - 1)), 4)
